@@ -79,6 +79,11 @@ Amended later 2026-09-18: `Alt-Space` opens and focuses `☰` through the same
 path as a click, from any input layer. If the app bar is hidden, the
 accelerator reveals it first so the focused menu target remains visible.
 
+Amended 2026-09-19: Diff endpoint shortcuts now appear as **HEAD to Working
+tree** (`Space d d`), **HEAD~1 to HEAD** (`Space d l`), and **Commit~1 to
+Commit...** (`Space d c`). Capture reads **Save review point and use as
+Base...** (`Space d p`). Go's file pickers use lowercase `Space f f/i/r`.
+
 ## Context
 
 Fathomable already made the mouse a peer: pane headers and key bars take
@@ -154,8 +159,9 @@ content they affect.
   **Review** contains the review view and filters plus
   non-destructive thread creation/reply/edit/resolve actions. **Diff**
   begins with bold-`▌`, mutually exclusive **Standard diff**, **Unified diff**,
-  and **Diff off** choices. Base, Target, and **Head to WorkingTree** follow,
-  then a separator and **Save review point**, then a separator and **Ignore
+  and **Diff off** choices. Base, Target, **HEAD to Working tree**,
+  **HEAD~1 to HEAD**, and **Commit~1 to Commit...** follow, then a separator
+  and **Save review point and use as Base...**, then a separator and **Ignore
   whitespace**. Ignore whitespace remains checked but dim while Off. The
   removed Comparison controls popup, Start comparison at current HEAD, typed
   commit batches, and `:diff` have no menu rows or compatibility aliases. The

@@ -409,6 +409,8 @@ impl App {
             Action::ComparisonBase => self.pick_diff_side(false),
             Action::ComparisonTarget => self.pick_diff_side(true),
             Action::ComparisonHeadWorkingTree => self.select_head_working_tree(),
+            Action::ComparisonHeadParent => self.select_head_parent(),
+            Action::ComparisonCommitParent => self.pick_commit_parent(),
             Action::ComparisonWhitespace => self.toggle_whitespace(),
             Action::WorktreeNext => self.worktree_step(1),
             Action::WorktreePrev => self.worktree_step(-1),
@@ -417,6 +419,8 @@ impl App {
             Action::FilesReviews => self.files_toggle(Rule::Reviews),
             Action::FilesUntracked => self.files_toggle(Rule::Untracked),
             Action::FilesIgnored => self.files_toggle(Rule::Ignored),
+            Action::PaneScope => self.threads_pane_toggle_scope(),
+            Action::ReviewResolved => self.review_toggle_resolved(),
             Action::CommandLine => {
                 if place == Where::Tree {
                     self.toggle_tree_focus();

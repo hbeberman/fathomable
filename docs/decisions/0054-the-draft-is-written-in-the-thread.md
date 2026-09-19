@@ -44,6 +44,9 @@ Draft hints therefore read `submit Enter`, `submit + auto-resolve
 Ctrl-Enter`, `newline Shift-Enter`, `scroll Alt-k/Alt-j`, `$EDITOR Ctrl-e`,
 and `Esc`.
 
+Amended 2026-09-19: pane-independent thread workflows use `Space t`, so
+review-list reply and edit routes are `Space t r` and `Space t e`.
+
 ## Context
 
 [0013](0013-annotation-storage-and-ux.md) gave the viewer a comment box
@@ -98,7 +101,7 @@ the request left open; each took the recommended answer.
   This applies to line comments, file comments, replies, and edits,
   including navigation requested by an agent. Drafts remain in memory
   for the lifetime of their open documents; they are not saved to disk.
-- **From the review list**, `c`, `e`, `Space c r`, and `Space c e` do
+- **From the review list**, `c`, `e`, `Space t r`, and `Space t e` do
   what `Enter` does first: the list closes, the file opens with the
   thread expanded and the cursor on the message, and the draft is
   written there. When the draft closes, by submit, cancel, or clearing

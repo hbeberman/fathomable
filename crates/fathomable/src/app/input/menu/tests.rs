@@ -131,7 +131,7 @@ fn right_click_on_a_selection_keeps_it_and_the_menu_acts_on_it() -> anyhow::Resu
     assert_eq!(app.view().mode(), Mode::Select, "the selection stays");
     assert_eq!(app.menu().map(Menu::title), Some("selection"));
     let keys: Vec<String> = entries(&app)?.into_iter().map(|(k, _)| k).collect();
-    assert_eq!(keys, ["c", "Sp c c", "y", "Esc"]);
+    assert_eq!(keys, ["c", "Sp t c", "y", "Esc"]);
 
     // Hover is read from the pointer; a click on an entry runs it.
     let (x, y) = entry_cell(&app, "copy selection")?;
@@ -341,7 +341,7 @@ fn the_thread_menu_replies_and_deletes_at_once() -> anyhow::Result<()> {
     let reply = entries(&app)?
         .into_iter()
         .find(|(_, label)| label == "reply");
-    assert_eq!(reply.map(|(key, _)| key).as_deref(), Some("Sp c r"));
+    assert_eq!(reply.map(|(key, _)| key).as_deref(), Some("Sp t r"));
 
     let (x, y) = entry_cell(&app, "reply")?;
     left(&mut app, x, y);
@@ -376,6 +376,20 @@ fn the_which_key_menu_and_the_help_take_clicks() -> anyhow::Result<()> {
         .find(|&(x, y)| grid.entry_at(x, y) == Some(index))
         .context("the entry is drawn somewhere")?;
     left(&mut app, cell.0, cell.1);
+    assert_eq!(bindings::spell(app.prefix()), "Space f");
+
+    let shown = bindings::menu(Where::View, app.prefix());
+    let index = shown
+        .iter()
+        .position(|(k, _)| k == "f")
+        .context("Space f f")?;
+    let grid = draw::which_key_grid(&app, &shown);
+    let cell = (0..grid.width)
+        .flat_map(|x| (0..grid.height).map(move |y| (x, y)))
+        .map(|(x, y)| (grid.x + x, grid.y + y))
+        .find(|&(x, y)| grid.entry_at(x, y) == Some(index))
+        .context("the entry is drawn somewhere")?;
+    left(&mut app, cell.0, cell.1);
     assert!(matches!(app.popup(), Some(Popup::Picker(p)) if p.kind() == PickerKind::Files));
     assert!(app.prefix().is_empty());
     app.close_popup();
@@ -397,6 +411,41 @@ fn the_which_key_menu_and_the_help_take_clicks() -> anyhow::Result<()> {
     assert_eq!(bindings::spell(app.prefix()), "Space v");
     handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
 
+    Ok(())
+}
+
+#[test]
+fn a_which_key_section_separator_is_inert() -> anyhow::Result<()> {
+    let dir = fixture("which-key-separator")?;
+    let mut app = app(&dir)?;
+    annotate(&mut app)?;
+    handle_key(&mut app, key(' '));
+    handle_key(&mut app, key('d'));
+    let place = Where::View;
+    let rows = app.which_key_rows(place);
+    let separator = rows
+        .iter()
+        .position(|row| matches!(row, bindings::MenuRow::Separator))
+        .context("Diff submenu separator")?;
+    let shown = rows
+        .iter()
+        .map(bindings::MenuRow::display)
+        .collect::<Vec<_>>();
+    let grid = draw::which_key_grid(&app, &shown);
+    let cell = (0..grid.width)
+        .flat_map(|x| (0..grid.height).map(move |y| (x, y)))
+        .map(|(x, y)| (grid.x + x, grid.y + y))
+        .find(|&(x, y)| grid.entry_at(x, y) == Some(separator))
+        .context("separator is drawn somewhere")?;
+    let focus = app.focus();
+    let cursor = app.view().cursor();
+    let threads = app.thread_counts();
+
+    assert_eq!(left(&mut app, cell.0, cell.1), Effect::None);
+    assert_eq!(bindings::spell(app.prefix()), "Space d");
+    assert_eq!(app.focus(), focus);
+    assert_eq!(app.view().cursor(), cursor);
+    assert_eq!(app.thread_counts(), threads);
     Ok(())
 }
 

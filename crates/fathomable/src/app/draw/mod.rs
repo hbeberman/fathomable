@@ -359,19 +359,21 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         None => {
             // A which-key menu for the keys typed so far (ADR 0045).
             if let Some(place) = place(app).filter(|_| !app.prefix().is_empty()) {
-                let raw = app.which_key(place);
+                let raw = app.which_key_rows(place);
                 let enabled: Vec<bool> = raw
                     .iter()
-                    .map(|(chord, _)| app.which_key_enabled(place, *chord))
+                    .map(|row| {
+                        row.chord()
+                            .is_some_and(|chord| app.which_key_enabled(place, chord))
+                    })
                     .collect();
-                let entries: Vec<(String, String)> = raw
-                    .into_iter()
-                    .map(|(chord, label)| (chord.to_string(), label))
-                    .collect();
+                let entries: Vec<(String, String)> =
+                    raw.iter().map(bindings::MenuRow::display).collect();
                 let grid = which_key_grid(app, &entries);
                 let hover = app
                     .pointer()
-                    .and_then(|(column, row)| grid.entry_at(column, row));
+                    .and_then(|(column, row)| grid.entry_at(column, row))
+                    .filter(|&index| raw[index].chord().is_some());
                 draw_menu(
                     frame,
                     theme,
@@ -2082,6 +2084,13 @@ fn draw_menu(
             let Some((key, label)) = entries.get(index) else {
                 break;
             };
+            if key.is_empty() && label.is_empty() {
+                spans.push(Span::styled(
+                    "─".repeat(Grid::column_width(key_width, label_width)),
+                    theme.menu.add_modifier(Modifier::DIM),
+                ));
+                continue;
+            }
             let row_style = if hover == Some(index) {
                 theme.list_hover
             } else {
@@ -2561,6 +2570,7 @@ fn picker_roles(
         picker.kind(),
         super::PickerKind::ComparisonBase
             | super::PickerKind::ComparisonTarget
+            | super::PickerKind::ComparisonCommit
             | super::PickerKind::ComparisonTags(_)
             | super::PickerKind::ComparisonBranchCommits(_)
             | super::PickerKind::ComparisonReviewPoints
@@ -2734,6 +2744,7 @@ fn draw_picker(
         super::PickerKind::Recent => "recent".to_owned(),
         super::PickerKind::ComparisonBase => "comparison base".to_owned(),
         super::PickerKind::ComparisonTarget => "comparison target".to_owned(),
+        super::PickerKind::ComparisonCommit => "commit to compare with its parent".to_owned(),
         super::PickerKind::ComparisonTags(side) => format!("{} tags", side.label()),
         super::PickerKind::ComparisonBranches(side) => format!("{} branches", side.label()),
         super::PickerKind::ComparisonBranchCommits(side) => picker.scope().map_or_else(
@@ -2744,7 +2755,9 @@ fn draw_picker(
         super::PickerKind::ComparisonAdvanced(side) => {
             format!("{} advanced endpoints", side.label())
         }
-        super::PickerKind::ReviewPointName => "review point name (optional)".to_owned(),
+        super::PickerKind::ReviewPointName => {
+            "capture working tree and use as Base (name optional)".to_owned()
+        }
         super::PickerKind::ReviewPointDelete => "delete review point".to_owned(),
         super::PickerKind::Worktree => "worktree".to_owned(),
     };

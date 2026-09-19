@@ -26,6 +26,9 @@ a comment from source text and replies from a thread row. Standalone
 2026-09-16: Enter folds or unfolds a thread only while the text cursor
 rests on its expanded header or folded stub, without adding a hint.
 
+Amended 2026-09-19: pane-independent thread workflows use `Space t`;
+the explicit new-thread and reply routes are `Space t c` and `Space t r`.
+
 ## Context
 
 [0049](0049-inline-threads-and-the-rail.md) made `c` the key that
@@ -70,7 +73,7 @@ thread here, and every thread in the file.
   or an expanded thread's rows. On a selection or source line it starts
   a new thread, whether or not another thread covers that line. It never
   changes thread expansion. Standalone `C` and standalone `r` are
-  unbound; `Space c c` and `Space c r` remain the pane-independent
+  unbound; `Space t c` and `Space t r` remain the pane-independent
   explicit commands.
 - **The hints name `z`.** A stub's last row ends with `(z expand)`, the
   thread key bar reads `c reply · e edit · o resolve · z fold` while

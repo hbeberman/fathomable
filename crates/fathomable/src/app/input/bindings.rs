@@ -5,8 +5,8 @@
 //! A [`Binding`] pairs one [`Action`] with the key sequences that fire it
 //! in one [`Where`]. Dispatch looks a typed sequence up with [`lookup`];
 //! a sequence that is the start of a longer binding is a prefix and the
-//! viewer waits for the rest, showing [`menu_entries`] meanwhile. The
-//! the help popup groups and wraps [`BINDINGS`], and a pane header asks
+//! viewer waits for the rest, showing [`menu_rows`] meanwhile. The help
+//! popup groups and wraps [`BINDINGS`], and a pane header asks
 //! [`hint`] how a key is spelled, so no surface can name a key the table
 //! does not bind.
 
@@ -287,7 +287,7 @@ actions! {
     CopyFullPath,
     Comment,
     NewThread,
-    /// `Space c f`: a comment on the open file as a whole (ADR 0063).
+    /// `Space t f`: a comment on the open file as a whole (ADR 0063).
     FileComment,
     SourceView,
     DiffStandard,
@@ -298,6 +298,10 @@ actions! {
     ComparisonBase,
     ComparisonTarget,
     ComparisonHeadWorkingTree,
+    /// `Space d l`: compare the first parent of `HEAD` to `HEAD`.
+    ComparisonHeadParent,
+    /// `Space d c`: choose a commit and compare its first parent to it.
+    ComparisonCommitParent,
     /// `]w`: the next worktree (ADR 0070).
     WorktreeNext,
     /// `[w`: the previous worktree (ADR 0070).
@@ -310,7 +314,7 @@ actions! {
     FilesReviews,
     /// `Space F u`: hide untracked files in the files pane (ADR 0068).
     FilesUntracked,
-    /// `Space F g`: show ignored files in the files pane (ADR 0068).
+    /// `Space F i`: show ignored files in the files pane (ADR 0068).
     FilesIgnored,
     ChangeNext,
     ChangePrev,
@@ -387,6 +391,7 @@ pub(crate) struct Binding {
     pub(crate) action: Action,
     pub(crate) label: &'static str,
     pub(crate) group: &'static str,
+    menu_section: u8,
 }
 
 const fn bind(
@@ -402,6 +407,25 @@ const fn bind(
         action,
         label,
         group,
+        menu_section: 0,
+    }
+}
+
+const fn bind_in(
+    place: Where,
+    keys: &'static [Keys],
+    action: Action,
+    group: &'static str,
+    label: &'static str,
+    menu_section: u8,
+) -> Binding {
+    Binding {
+        keys,
+        place,
+        action,
+        label,
+        group,
+        menu_section,
     }
 }
 
@@ -702,24 +726,24 @@ pub(crate) const BINDINGS: &[Binding] = &[
     // ----- the Space menu (ADR 0056) -----
     bind(
         W::Any,
-        &[&[c(' '), c('f')]],
+        &[&[c(' '), c('f'), c('f')]],
         A::PickFile,
         "Space menu",
-        "open file",
+        "open files: open file",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('F'), c('i')]],
+        &[&[c(' '), c('f'), c('i')]],
         A::PickAnyFile,
         "Space menu",
-        "files: open file incl. ignored",
+        "open files: open file incl. ignored",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('F'), c('r')]],
+        &[&[c(' '), c('f'), c('r')]],
         A::PickRecent,
         "Space menu",
-        "files: recent files",
+        "open files: recent files",
     ),
     bind(
         W::Any,
@@ -744,7 +768,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('F'), c('g')]],
+        &[&[c(' '), c('F'), c('i')]],
         A::FilesIgnored,
         "Space menu",
         "files: show ignored",
@@ -753,28 +777,28 @@ pub(crate) const BINDINGS: &[Binding] = &[
     bind(W::Any, &[&[c('t')]], A::Review, "Threads", "open Threads"),
     bind(
         W::Any,
-        &[&[c(' '), c('c'), c('R')]],
+        &[&[c(' '), c('t'), c('R')]],
         A::ReviewRecentlyResolved,
         "Space menu",
         "threads: recently resolved",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('c'), c('h')]],
+        &[&[c(' '), c('t'), c('h')]],
         A::ReviewArchived,
         "Space menu",
         "threads: archived threads",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('c'), c('a')]],
+        &[&[c(' '), c('t'), c('a')]],
         A::ArchiveResolved,
         "Space menu",
         "threads: archive resolved",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('c'), c('A')]],
+        &[&[c(' '), c('t'), c('A')]],
         A::ClearBoard,
         "Space menu",
         "threads: clear board",
@@ -807,40 +831,45 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "Space menu",
         "panes: toggle Thread list",
     ),
-    bind(
+    bind_in(
         W::Any,
-        &[&[c(' '), c('c'), c('c')]],
+        &[&[c(' '), c('t'), c('c')]],
         A::NewThread,
         "Space menu",
         "threads: new thread",
+        1,
     ),
-    bind(
+    bind_in(
         W::Any,
-        &[&[c(' '), c('c'), c('r')]],
+        &[&[c(' '), c('t'), c('r')]],
         A::Reply,
         "Space menu",
         "threads: reply",
+        1,
     ),
-    bind(
+    bind_in(
         W::Any,
-        &[&[c(' '), c('c'), c('e')]],
+        &[&[c(' '), c('t'), c('e')]],
         A::EditNewestOwn,
         "Space menu",
         "threads: edit message",
+        1,
     ),
-    bind(
+    bind_in(
         W::Any,
-        &[&[c(' '), c('c'), c('d')]],
+        &[&[c(' '), c('t'), c('d')]],
         A::DeleteThread,
         "Space menu",
         "threads: delete thread",
+        1,
     ),
-    bind(
+    bind_in(
         W::Any,
-        &[&[c(' '), c('c'), c('f')]],
+        &[&[c(' '), c('t'), c('f')]],
         A::FileComment,
         "Space menu",
         "threads: file comment",
+        1,
     ),
     bind(
         W::Any,
@@ -849,19 +878,21 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "Space menu",
         "view: source view",
     ),
-    bind(
+    bind_in(
         W::Any,
         &[&[c(' '), c('v'), c('t')]],
         A::StubsToggle,
         "Space menu",
         "view: toggle thread stubs",
+        1,
     ),
-    bind(
+    bind_in(
         W::Any,
         &[&[c(' '), c('v'), c('r')]],
         A::StubResolvedToggle,
         "Space menu",
         "view: toggle resolved stubs",
+        1,
     ),
     bind(
         W::Any,
@@ -884,47 +915,69 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "Space menu",
         "diff: off",
     ),
-    bind(
+    bind_in(
         W::Any,
         &[&[c(' '), c('d'), c('b')]],
         A::ComparisonBase,
         "Space menu",
         "diff: pick base…",
+        1,
     ),
-    bind(
+    bind_in(
         W::Any,
         &[&[c(' '), c('d'), c('t')]],
         A::ComparisonTarget,
         "Space menu",
         "diff: pick target…",
+        1,
     ),
-    bind(
+    bind_in(
         W::Any,
         &[&[c(' '), c('d'), c('d')]],
         A::ComparisonHeadWorkingTree,
         "Space menu",
-        "diff: Head to WorkingTree",
+        "diff: HEAD to Working tree",
+        1,
     ),
-    bind(
+    bind_in(
+        W::Any,
+        &[&[c(' '), c('d'), c('l')]],
+        A::ComparisonHeadParent,
+        "Space menu",
+        "diff: HEAD~1 to HEAD",
+        1,
+    ),
+    bind_in(
         W::Any,
         &[&[c(' '), c('d'), c('c')]],
+        A::ComparisonCommitParent,
+        "Space menu",
+        "diff: Commit~1 to Commit…",
+        1,
+    ),
+    bind_in(
+        W::Any,
+        &[&[c(' '), c('d'), c('p')]],
         A::ComparisonSave,
         "Space menu",
         "diff: save review point",
+        2,
     ),
-    bind(
+    bind_in(
         W::Any,
         &[&[c(' '), c('d'), c('x')]],
         A::ComparisonDelete,
         "Space menu",
         "diff: delete review point…",
+        2,
     ),
-    bind(
+    bind_in(
         W::Any,
         &[&[c(' '), c('d'), c('w')]],
         A::ComparisonWhitespace,
         "Space menu",
         "diff: whitespace",
+        3,
     ),
     bind(
         W::Any,
@@ -1027,6 +1080,34 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Tree,
+        &[&[c('c')]],
+        A::FilesChanged,
+        "File list",
+        "only changed",
+    ),
+    bind(
+        W::Tree,
+        &[&[c('o')]],
+        A::FilesReviews,
+        "File list",
+        "only reviews",
+    ),
+    bind(
+        W::Tree,
+        &[&[c('u')]],
+        A::FilesUntracked,
+        "File list",
+        "hide untracked",
+    ),
+    bind(
+        W::Tree,
+        &[&[c('i')]],
+        A::FilesIgnored,
+        "File list",
+        "show ignored",
+    ),
+    bind(
+        W::Tree,
         &[&[k(K::Esc)]],
         A::Escape,
         "File list",
@@ -1067,6 +1148,20 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::ReviewResolved,
         "Thread list",
         "show or hide resolved threads",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('T'), c('s')]],
+        A::PaneScope,
+        "Space menu",
+        "thread list: this file, or the workspace",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('T'), c('x')]],
+        A::ReviewResolved,
+        "Space menu",
+        "thread list: show or hide resolved threads",
     ),
     bind(
         W::ThreadsPane,
@@ -1461,9 +1556,11 @@ pub(crate) const BINDINGS: &[Binding] = &[
 /// The prefixes that are submenus, with the word the parent menu and the
 /// breadcrumb row name them by (ADR 0049, ADR 0056).
 const SUBMENUS: &[(Keys, &str)] = &[
+    (&[c(' '), c('f')], "open files"),
     (&[c(' '), c('F')], "files"),
     (&[c(' '), c('p')], "panes"),
-    (&[c(' '), c('c')], "threads"),
+    (&[c(' '), c('t')], "threads"),
+    (&[c(' '), c('T')], "thread list"),
     (&[c(' '), c('v')], "view"),
     (&[c(' '), c('d')], "diff"),
     (&[c(' '), c('j')], "jump"),
@@ -1478,7 +1575,7 @@ fn submenu_word(typed: &[Chord]) -> Option<&'static str> {
 }
 
 /// The breadcrumb row of the which-key menu: the prefix as it is
-/// spelled, then the submenu's word (`Space c · threads`).
+/// spelled, then the submenu's word (`Space t · threads`).
 #[must_use]
 pub(crate) fn menu_title(typed: &[Chord]) -> String {
     match submenu_word(typed) {
@@ -1551,18 +1648,75 @@ pub(crate) fn menu(place: Where, typed: &[Chord]) -> Vec<(String, String)> {
 /// The which-key entries as chords, so a click on a drawn entry can be
 /// the key it shows typed (ADR 0050). `relabel` may give an action's
 /// entry a live label in place of the table's (ADR 0068).
+#[cfg(test)]
 #[must_use]
 pub(crate) fn menu_entries(
     place: Where,
     typed: &[Chord],
     relabel: impl Fn(Action) -> Option<&'static str>,
 ) -> Vec<(Chord, String)> {
-    let mut entries: Vec<(Chord, String)> = Vec::new();
+    menu_entries_with_sections(place, typed, relabel)
+        .into_iter()
+        .map(|(chord, label, _)| (chord, label))
+        .collect()
+}
+
+/// One actionable entry or visual separator in a which-key submenu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MenuRow {
+    Entry(Chord, String),
+    Separator,
+}
+
+impl MenuRow {
+    #[must_use]
+    pub(crate) const fn chord(&self) -> Option<Chord> {
+        match self {
+            Self::Entry(chord, _) => Some(*chord),
+            Self::Separator => None,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn display(&self) -> (String, String) {
+        match self {
+            Self::Entry(chord, label) => (chord.to_string(), label.clone()),
+            Self::Separator => (String::new(), String::new()),
+        }
+    }
+}
+
+/// Which-key rows, with separators between distinct submenu sections.
+#[must_use]
+pub(crate) fn menu_rows(
+    place: Where,
+    typed: &[Chord],
+    relabel: impl Fn(Action) -> Option<&'static str>,
+) -> Vec<MenuRow> {
+    let entries = menu_entries_with_sections(place, typed, relabel);
+    let mut rows = Vec::with_capacity(entries.len());
+    let mut section = None;
+    for (chord, label, next_section) in entries {
+        if typed.len() > 1 && section.is_some_and(|section| section != next_section) {
+            rows.push(MenuRow::Separator);
+        }
+        rows.push(MenuRow::Entry(chord, label));
+        section = Some(next_section);
+    }
+    rows
+}
+
+fn menu_entries_with_sections(
+    place: Where,
+    typed: &[Chord],
+    relabel: impl Fn(Action) -> Option<&'static str>,
+) -> Vec<(Chord, String, u8)> {
+    let mut entries: Vec<(Chord, String, u8)> = Vec::new();
     for binding in applicable(place) {
         for keys in binding.keys {
             if keys.len() > typed.len() && keys.starts_with(typed) {
                 let next = keys[typed.len()];
-                if !entries.iter().any(|(key, _)| *key == next) {
+                if !entries.iter().any(|(key, _, _)| *key == next) {
                     let label = if keys.len() == typed.len() + 1 {
                         // The breadcrumb row already names the submenu,
                         // so an entry inside one does not repeat it.
@@ -1574,7 +1728,7 @@ pub(crate) fn menu_entries(
                         let word = submenu_word(&keys[..=typed.len()]).unwrap_or("more");
                         format!("{word}…")
                     };
-                    entries.push((next, label));
+                    entries.push((next, label, binding.menu_section));
                 }
             }
         }
@@ -1615,8 +1769,8 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     use super::{
-        Action, BINDINGS, Chord, Key, Match, Where, ZELLIJ_LOCKS, c, hint, k, lookup, menu,
-        menu_spell, shift, spell,
+        Action, BINDINGS, Chord, Key, Match, MenuRow, Where, ZELLIJ_LOCKS, c, hint, k, lookup,
+        menu, menu_rows, menu_spell, shift, spell,
     };
 
     #[test]
@@ -1791,7 +1945,7 @@ mod tests {
     }
 
     /// The menu after `Space` lists each entry once with its next key,
-    /// and the submenus open under `F`, `p`, `c`, `v`, and `d`
+    /// and the submenus open under `f`, `F`, `p`, `t`, `T`, `v`, and `d`
     /// (ADR 0049, ADR 0056, ADR 0060).
     #[test]
     fn menus_come_from_the_table() {
@@ -1802,9 +1956,11 @@ mod tests {
                 .any(|(key, label)| key == "?" && label == "view keymap")
         );
         for (key, word) in [
+            ("f", "open files…"),
             ("F", "files…"),
             ("p", "panes…"),
-            ("c", "threads…"),
+            ("t", "threads…"),
+            ("T", "thread list…"),
             ("v", "view…"),
             ("d", "diff…"),
         ] {
@@ -1825,18 +1981,18 @@ mod tests {
         assert_eq!(lookup(Where::View, &[c(']'), c('f')]), Match::Miss);
         assert_eq!(lookup(Where::View, &[c('['), c('f')]), Match::Miss);
         assert_eq!(
-            keys(Where::View, &[c(' '), c('c')]),
+            keys(Where::View, &[c(' '), c('t')]),
             ["R", "h", "a", "A", "c", "r", "e", "d", "f"]
         );
+        assert_eq!(keys(Where::View, &[c(' '), c('T')]), ["s", "x"]);
         assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "r"]);
         assert_eq!(
             keys(Where::Review, &[c(' '), c('d')]),
-            ["s", "u", "o", "b", "t", "d", "c", "x", "w"]
+            ["s", "u", "o", "b", "t", "d", "l", "c", "p", "x", "w"]
         );
-        assert_eq!(
-            keys(Where::View, &[c(' '), c('F')]),
-            ["i", "r", "c", "o", "u", "g"]
-        );
+        assert_eq!(keys(Where::View, &[c(' '), c('F')]), ["c", "o", "u", "i"]);
+        assert_eq!(keys(Where::View, &[c(' '), c('f')]), ["f", "i", "r"]);
+        assert_eq!(lookup(Where::View, &[c(' '), c('c')]), Match::Miss);
         assert_eq!(lookup(Where::View, &[c(' '), c('w')]), Match::Miss);
         assert_eq!(
             lookup(Where::View, &[c('w')]),
@@ -1864,15 +2020,56 @@ mod tests {
         assert!(menu(Where::Draft, &[c(' ')]).is_empty());
     }
 
+    #[test]
+    fn pane_settings_share_local_and_remote_suffixes() {
+        for (suffix, action) in [
+            ('c', Action::FilesChanged),
+            ('o', Action::FilesReviews),
+            ('u', Action::FilesUntracked),
+            ('i', Action::FilesIgnored),
+        ] {
+            assert_eq!(lookup(Where::Tree, &[c(suffix)]), Match::Exact(action));
+            assert_eq!(
+                lookup(Where::View, &[c(' '), c('F'), c(suffix)]),
+                Match::Exact(action)
+            );
+        }
+        for (suffix, action) in [('s', Action::PaneScope), ('x', Action::ReviewResolved)] {
+            assert_eq!(
+                lookup(Where::ThreadsPane, &[c(suffix)]),
+                Match::Exact(action)
+            );
+            assert_eq!(
+                lookup(Where::View, &[c(' '), c('T'), c(suffix)]),
+                Match::Exact(action)
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_submenus_draw_section_separators() {
+        let rows = menu_rows(Where::View, &[c(' '), c('d')], |_| None);
+        assert_eq!(
+            rows.iter()
+                .filter(|row| matches!(row, MenuRow::Separator))
+                .count(),
+            3
+        );
+        assert!(!matches!(rows.first(), Some(MenuRow::Separator)));
+        assert!(!matches!(rows.last(), Some(MenuRow::Separator)));
+    }
+
     /// A submenu's entries drop the word the breadcrumb already says:
     /// `Space v r` reads "toggle resolved stubs", not
     /// "view: toggle resolved stubs".
     #[test]
     fn a_submenu_entry_does_not_repeat_the_submenu_word() {
         for (prefix, word) in [
+            (c('f'), "open files"),
             (c('F'), "files"),
             (c('p'), "panes"),
-            (c('c'), "threads"),
+            (c('t'), "threads"),
+            (c('T'), "thread list"),
             (c('v'), "view"),
             (c('d'), "diff"),
             (c('j'), "jump"),
@@ -1935,7 +2132,11 @@ mod tests {
             }
         }
         assert_eq!(super::menu_title(&[c(' ')]), "Space");
-        assert_eq!(super::menu_title(&[c(' '), c('c')]), "Space c · threads");
+        assert_eq!(super::menu_title(&[c(' '), c('t')]), "Space t · threads");
+        assert_eq!(
+            super::menu_title(&[c(' '), c('T')]),
+            "Space T · thread list"
+        );
         assert_eq!(super::menu_title(&[c('g')]), "g");
     }
 
@@ -2006,7 +2207,7 @@ mod tests {
         );
         assert_eq!(
             hint(Where::View, Action::Reply).as_deref(),
-            Some("Space c r")
+            Some("Space t r")
         );
         assert_eq!(
             lookup(Where::View, &[c('r')]),

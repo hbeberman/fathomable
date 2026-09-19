@@ -48,6 +48,11 @@ A later 2026-09-18 amendment restores `Space d d` only as the direct
 current-`HEAD`-to-working-tree selector. It does not restore this decision's
 former diff toggle or comparison popup.
 
+Shortcut amended 2026-09-19 by
+[0087](0087-global-comparisons-and-board-history.md): `Space d l` compares
+`HEAD~1` to `HEAD`, `Space d c` picks one commit and compares its first
+parent, and `Space d p` saves and selects a review point.
+
 The original decision, key table, config example, and consequences below are
 historical rationale. They describe removed last-seen/checkpoint behavior and
 must not be read as the current keymap or configuration contract. The active

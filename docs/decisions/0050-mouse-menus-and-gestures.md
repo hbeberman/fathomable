@@ -94,6 +94,9 @@ cannot be hovered or invoked. Only the title word takes hover; the File
 header's path and counts and the Reviews header's scope and counts are
 passive.
 
+Amended 2026-09-19: displayed thread-workflow shortcuts use `Space t`
+instead of `Space c`; File-list settings use `Space F c/o/u/i`.
+
 ## Context
 
 The mouse has been first-class since [0007](0007-key-grammar-and-mouse.md):
@@ -135,9 +138,9 @@ same day; the choices are below.
   target of its own.
 - **The entries**, in the text, in this order and only those that apply:
   - over a selection: `comment on selection` (`c`), `new thread on
-    selection` (`Space c c`), `copy selection` (`y`), `clear selection` (`Esc`);
+    selection` (`Space t c`), `copy selection` (`y`), `clear selection` (`Esc`);
   - on a stub or an expanded thread's rows: `expand thread` / `fold
-    thread` (`z`), `reply` (`c`), `resolve` / `reopen` (`o`), `edit
+    thread` (`z`), `reply` (`c`), `resolve` / `reopen` (`r`), `edit
     message` (`e`, when the message under the cursor or the user's
     newest is theirs), `delete thread` (`dd`);
   - on a rendered link: `copy link` (`gy`), `open link` (`gx`);
@@ -147,13 +150,13 @@ same day; the choices are below.
     nothing before.
 
   In the Files pane: a file offers `open` (`Enter`), `file comment`
-  (`Space c f`), `copy path` (`y`), and `copy full path` (`Y`); a directory
+  (`Space t f`), `copy path` (`y`), and `copy full path` (`Y`); a directory
   offers `expand` or `collapse` (`Enter`) and the two path-copy actions.
   The pointed row becomes the tree cursor before the menu opens. Save review
   point stays in the global **Diff** menu; review navigation and pane filters
   are not item actions.
   In the threads pane and the review list: `go to` (`Enter`), `reply`
-  (`c`), `resolve` / `reopen` (`o`), `edit message` (`e`), `delete
+  (`c`), `resolve` / `reopen` (`r`), `edit message` (`e`), `delete
   thread` (`dd`).
 - **Delete from the menu deletes at once.** `dd` needs two presses
   because a stray key must not delete ([0034](0034-deleting-threads.md));

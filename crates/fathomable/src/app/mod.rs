@@ -174,6 +174,8 @@ pub(crate) enum PickerKind {
     ComparisonBase,
     /// The target endpoint of the viewer-wide comparison.
     ComparisonTarget,
+    /// A commit whose first parent becomes Base and which becomes Target.
+    ComparisonCommit,
     /// Tags offered for one comparison side.
     ComparisonTags(ComparisonSide),
     /// Local and remote-tracking branches offered for one comparison side.
@@ -192,11 +194,12 @@ pub(crate) enum PickerKind {
     Worktree,
 }
 
-/// Which side a nested comparison picker will replace.
+/// How a nested comparison picker applies its selected commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ComparisonSide {
     Base,
     Target,
+    CommitParent,
 }
 
 impl ComparisonSide {
@@ -204,6 +207,7 @@ impl ComparisonSide {
         match self {
             Self::Base => PickerKind::ComparisonBase,
             Self::Target => PickerKind::ComparisonTarget,
+            Self::CommitParent => PickerKind::ComparisonCommit,
         }
     }
 
@@ -211,6 +215,7 @@ impl ComparisonSide {
         match self {
             Self::Base => "base",
             Self::Target => "target",
+            Self::CommitParent => "commit",
         }
     }
 }
@@ -328,7 +333,9 @@ impl PickerState {
 
     fn commit_search_request(&mut self) -> Option<CommitSearch> {
         let revision = match self.kind {
-            PickerKind::ComparisonBase | PickerKind::ComparisonTarget => None,
+            PickerKind::ComparisonBase
+            | PickerKind::ComparisonTarget
+            | PickerKind::ComparisonCommit => None,
             PickerKind::ComparisonBranchCommits(_) => self.scope.clone(),
             _ => {
                 self.requery();
@@ -583,7 +590,7 @@ pub(crate) struct App {
     docs: Vec<Doc>,
     highlights: highlight::Queue,
     current: Option<usize>,
-    /// Documents by index, most recently shown first (`Space F r`).
+    /// Documents by index, most recently shown first (`Space f r`).
     recent: Vec<usize>,
     jumplist: jumplist::Jumplist,
     /// The exact comparison stop reached by the last `J` or `K`.
@@ -637,7 +644,7 @@ pub(crate) struct App {
     focus: Focus,
     popup: Option<Popup>,
     menu_bar: menu_bar::MenuBar,
-    /// The `Space f` files (ADR 0028), patched as paths come and go.
+    /// The `Space f f` files (ADR 0028), patched as paths come and go.
     file_index: file_index::FileIndex,
     /// The same with ignored files, for `I`.
     all_index: file_index::FileIndex,
@@ -1684,7 +1691,7 @@ impl App {
     }
 
     fn on_change(&mut self, relative: &Path, absolute: &Path) {
-        // A new file is one `Space f` away (ADR 0028).
+        // A new file is one `Space f f` away (ADR 0028).
         self.file_index.seen(&mut self.workspace, relative);
         self.all_index.seen(&mut self.workspace, relative);
         let loaded = self.docs.iter().position(|doc| doc.relative == relative);
@@ -2553,6 +2560,7 @@ impl App {
                 .collect(),
             PickerKind::ComparisonBase => self.comparison_choices(false),
             PickerKind::ComparisonTarget => self.comparison_choices(true),
+            PickerKind::ComparisonCommit => self.comparison_commit_choices(),
             PickerKind::ComparisonTags(_) => self.comparison_tag_choices(),
             PickerKind::ComparisonBranches(_) => self.comparison_branch_choices(),
             PickerKind::ComparisonBranchCommits(_) => Vec::new(),
@@ -2680,6 +2688,7 @@ impl App {
                 picker.kind,
                 PickerKind::ComparisonBase
                     | PickerKind::ComparisonTarget
+                    | PickerKind::ComparisonCommit
                     | PickerKind::ComparisonBranchCommits(_)
                     | PickerKind::ReviewPointName
             ) && !picker.input().trim().is_empty()
@@ -2699,7 +2708,9 @@ impl App {
                 self.open(Path::new(&path));
             }
             Some((
-                kind @ (PickerKind::ComparisonBase | PickerKind::ComparisonTarget),
+                kind @ (PickerKind::ComparisonBase
+                | PickerKind::ComparisonTarget
+                | PickerKind::ComparisonCommit),
                 item,
                 input,
             )) => {

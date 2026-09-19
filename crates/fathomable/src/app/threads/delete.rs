@@ -45,7 +45,7 @@ impl App {
         }
     }
 
-    /// `Space c d`: delete the cursor's thread outright (ADR 0049).
+    /// `Space t d`: delete the cursor's thread outright (ADR 0049).
     pub(crate) fn thread_delete_here(&mut self) {
         match self.thread_cursor().thread().cloned() {
             Some(id) => self.delete_thread(&id),

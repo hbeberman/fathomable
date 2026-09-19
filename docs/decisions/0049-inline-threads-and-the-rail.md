@@ -60,11 +60,14 @@ Shortcut amended 2026-09-18: the resolved-stub toggle that
 `Space v r`, with no compatibility alias. The key tables below retain the
 pre-0060 map they originally decided.
 
+Thread shortcuts amended 2026-09-19: pane-independent thread workflows now
+use `Space t`; the old `Space c` references below remain historical.
+
 - `dd` on an expanded thread's rows deletes the **thread**, not the
   message under the cursor: the store has no message-delete event
   ([0034](0034-deleting-threads.md) has only thread tombstones). `e` edits
   the message under the cursor when it is the user's, else the user's
-  newest; `Space c e` edits the user's newest message from any pane.
+  newest; `Space t e` edits the user's newest message from any pane.
 - The checkpoint header and pickers name a checkpoint by its age (`5m
   ago`, `yesterday 14:02`, else the UTC date), not a local clock time:
   the app has no time zone. A checkpoint whose content equals the

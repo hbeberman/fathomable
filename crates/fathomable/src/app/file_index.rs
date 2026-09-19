@@ -3,7 +3,7 @@
 //!
 //! A walk of the tree costs a `readdir` per directory, tens of
 //! milliseconds on a large repository, and every agent write used to
-//! drop the index so `Space f` paid it again. Now a path that appears
+//! drop the index so `Space f f` paid it again. Now a path that appears
 //! joins the index where the walk would have put it, a path that goes
 //! leaves it, and only a change to the ignore rules or a lost-events
 //! rescan walks again.

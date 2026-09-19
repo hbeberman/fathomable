@@ -369,7 +369,7 @@ impl App {
         }
     }
 
-    /// `Space c e`: edit the newest message of the cursor's thread that
+    /// `Space t e`: edit the newest message of the cursor's thread that
     /// the user wrote, wherever the highlight is (ADR 0049). The comment
     /// is always the user's.
     pub(crate) fn thread_edit_newest_own(&mut self) {

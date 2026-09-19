@@ -13,6 +13,7 @@ use ratatui::backend::TestBackend;
 use super::handle_key;
 use crate::app::input::bindings::Action;
 use crate::app::menu_bar::{Focused, Root};
+use crate::app::threads::pane::PaneScope;
 use crate::app::threads::{ComposeTarget, ThreadState};
 use crate::app::{App, Focus, Popup};
 
@@ -184,9 +185,9 @@ fn alt_space_reveals_and_focuses_the_application_menu_over_a_popup() -> anyhow::
     Ok(())
 }
 
-/// Thread actions follow the Phase C key grammar.
+/// Thread actions use the lowercase thread-workflow leader.
 #[test]
-fn space_c_acts_on_the_thread_here_from_any_pane() -> anyhow::Result<()> {
+fn space_t_acts_on_the_thread_here_from_any_pane() -> anyhow::Result<()> {
     let dir = fixture("threads")?;
     let mut app = source_app(&dir)?;
     annotate(&mut app, 3, "three");
@@ -194,7 +195,7 @@ fn space_c_acts_on_the_thread_here_from_any_pane() -> anyhow::Result<()> {
     app.view_mut().goto_source_line(3);
     let id = app.marks()[0].id().clone();
 
-    press(&mut app, " cr");
+    press(&mut app, " tr");
     assert_eq!(compose_target(&app), Some(ComposeTarget::Reply(id.clone())));
     app.compose_insert("answer");
     app.compose_submit();
@@ -203,7 +204,7 @@ fn space_c_acts_on_the_thread_here_from_any_pane() -> anyhow::Result<()> {
     // the text.
     assert_eq!(app.focus(), Focus::View);
 
-    press(&mut app, " ce");
+    press(&mut app, " te");
     assert_eq!(
         compose_target(&app),
         Some(ComposeTarget::Edit {
@@ -244,14 +245,14 @@ fn space_c_acts_on_the_thread_here_from_any_pane() -> anyhow::Result<()> {
     );
     press(&mut app, "r");
     assert_eq!(app.marks()[0].kind(), ThreadState::Active);
-    press(&mut app, " cd");
+    press(&mut app, " td");
     assert_eq!(app.marks().len(), 1);
     assert_eq!(app.marks()[0].range().map(|r| r.start()), Some(5));
     assert_eq!(app.focus(), Focus::View);
 
-    // `Space c c` starts a new thread on the cursor line.
+    // `Space t c` starts a new thread on the cursor line.
     app.view_mut().goto_source_line(4);
-    press(&mut app, " cc");
+    press(&mut app, " tc");
     assert!(matches!(
         compose_target(&app),
         Some(ComposeTarget::New(range)) if range.start() == 4
@@ -289,6 +290,22 @@ fn bare_f_and_t_switch_main_views_and_s_changes_review_scope() -> anyhow::Result
     app.start_new_comment();
     press(&mut app, "tRrwWFT");
     assert_eq!(app.compose_draft(), Some("tRrwWFT"));
+    Ok(())
+}
+
+#[test]
+fn space_t_uppercase_changes_thread_list_settings_without_moving_focus() -> anyhow::Result<()> {
+    let dir = fixture("thread-list-settings")?;
+    let mut app = source_app(&dir)?;
+    annotate(&mut app, 3, "three");
+    let focus = app.focus();
+
+    press(&mut app, " Ts");
+    assert_eq!(app.sidebar_scope(), PaneScope::Workspace);
+    assert_eq!(app.focus(), focus);
+    press(&mut app, " Tx");
+    assert!(app.review().resolved);
+    assert_eq!(app.focus(), focus);
     Ok(())
 }
 
@@ -582,9 +599,9 @@ fn the_menu_shows_a_breadcrumb_for_the_prefix() -> anyhow::Result<()> {
     let text = screen(&app)?;
     assert!(text.contains(" Space "), "the Space menu names its prefix");
     assert!(text.contains("threads…"), "the submenu entry is named");
-    press(&mut app, "c");
+    press(&mut app, "t");
     let text = screen(&app)?;
-    assert!(text.contains(" Space c · threads "), "{text}");
+    assert!(text.contains(" Space t · threads "), "{text}");
     assert!(text.contains("new thread"), "{text}");
     press(&mut app, "r");
     assert!(matches!(app.popup(), Some(Popup::Compose(_))) || app.message().is_some());

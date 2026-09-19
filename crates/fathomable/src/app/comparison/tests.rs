@@ -260,7 +260,7 @@ fn explicit_modes_use_the_space_d_bindings() -> anyhow::Result<()> {
     assert!(!app.view().diff_view());
     press(&mut app, " do");
     assert_eq!(app.diff_mode(), DiffMode::Off);
-    press(&mut app, " dc");
+    press(&mut app, " dp");
     assert_eq!(
         app.review_points
             .as_ref()
@@ -271,6 +271,163 @@ fn explicit_modes_use_the_space_d_bindings() -> anyhow::Result<()> {
     assert!(
         app.message()
             .is_some_and(|message| message.contains("review point"))
+    );
+    Ok(())
+}
+
+#[test]
+fn head_parent_shortcut_selects_one_immutable_pair() -> anyhow::Result<()> {
+    let dir = repository("comparison-head-parent")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let first = Workspace::discover(&root)?
+        .head_commit()
+        .context("first commit")?;
+    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
+    let second = Workspace::discover(&root)?
+        .head_commit()
+        .context("second commit")?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+    let refreshes = app.comparison.refresh_count();
+
+    press(&mut app, " dl");
+
+    assert_eq!(
+        app.comparison.refresh_count(),
+        refreshes.wrapping_add(1),
+        "the endpoint pair is refreshed atomically"
+    );
+    assert_eq!(
+        app.comparison.base(),
+        &ComparisonEndpoint::Commit(CommitId::parse(&first)?)
+    );
+    assert_eq!(
+        app.comparison.target(),
+        &ComparisonEndpoint::Commit(CommitId::parse(&second)?)
+    );
+    assert_eq!(
+        app.comparison_menu_pair(),
+        ("HEAD~1".to_owned(), "HEAD".to_owned())
+    );
+    drop(app);
+
+    let restored = AppBuilder::at(&root).unopened().build()?;
+    assert_eq!(
+        restored.comparison.base(),
+        &ComparisonEndpoint::Commit(CommitId::parse(&first)?)
+    );
+    assert_eq!(
+        restored.comparison.target(),
+        &ComparisonEndpoint::Commit(CommitId::parse(&second)?)
+    );
+    assert_eq!(
+        restored.comparison_menu_pair(),
+        ("HEAD~1".to_owned(), "HEAD".to_owned())
+    );
+    Ok(())
+}
+
+#[test]
+fn commit_parent_picker_selects_the_chosen_commit_and_first_parent() -> anyhow::Result<()> {
+    let dir = repository("comparison-commit-parent")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let first = Workspace::discover(&root)?
+        .head_commit()
+        .context("first commit")?;
+    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
+    let second = Workspace::discover(&root)?
+        .head_commit()
+        .context("second commit")?;
+    git::commit_and_stage(&root, &[("a.md", "three\n")])?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+    let refreshes = app.comparison.refresh_count();
+
+    press(&mut app, " dc");
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::Picker(picker)) if picker.kind() == PickerKind::ComparisonCommit
+    ));
+    press(&mut app, &second[..8]);
+    press_key(&mut app, KeyCode::Enter);
+
+    assert_eq!(
+        app.comparison.refresh_count(),
+        refreshes.wrapping_add(1),
+        "the endpoint pair is refreshed atomically"
+    );
+    assert_eq!(
+        app.comparison.base(),
+        &ComparisonEndpoint::Commit(CommitId::parse(&first)?)
+    );
+    assert_eq!(
+        app.comparison.target(),
+        &ComparisonEndpoint::Commit(CommitId::parse(&second)?)
+    );
+    Ok(())
+}
+
+#[test]
+fn nested_tag_picker_retains_commit_parent_intent() -> anyhow::Result<()> {
+    let dir = repository("comparison-tag-parent")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let first = Workspace::discover(&root)?
+        .head_commit()
+        .context("first commit")?;
+    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
+    let tagged = Workspace::discover(&root)?
+        .head_commit()
+        .context("tagged commit")?;
+    git::tag(&root, "review-base")?;
+    git::commit_and_stage(&root, &[("a.md", "three\n")])?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+
+    press(&mut app, " dc");
+    press_key(&mut app, KeyCode::Down);
+    press_key(&mut app, KeyCode::Enter);
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::Picker(picker))
+            if picker.kind()
+                == PickerKind::ComparisonTags(crate::app::ComparisonSide::CommitParent)
+    ));
+    press(&mut app, "review-base");
+    press_key(&mut app, KeyCode::Enter);
+
+    assert_eq!(
+        app.comparison.base(),
+        &ComparisonEndpoint::Commit(CommitId::parse(&first)?)
+    );
+    assert_eq!(
+        app.comparison.target(),
+        &ComparisonEndpoint::Commit(CommitId::parse(&tagged)?)
+    );
+    Ok(())
+}
+
+#[test]
+fn parentless_head_does_not_change_the_comparison() -> anyhow::Result<()> {
+    let dir = repository("comparison-parentless")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+    let before = (
+        app.comparison.base().clone(),
+        app.comparison.target().clone(),
+    );
+    let refreshes = app.comparison.refresh_count();
+
+    press(&mut app, " dl");
+
+    assert_eq!(app.comparison.refresh_count(), refreshes);
+    assert_eq!(
+        (app.comparison.base(), app.comparison.target()),
+        (&before.0, &before.1)
+    );
+    assert!(
+        app.message()
+            .is_some_and(|message| message.contains("has no parent"))
     );
     Ok(())
 }
@@ -662,8 +819,9 @@ fn review_point_picker_accepts_an_optional_name() -> anyhow::Result<()> {
         .unopened()
         .review_points(dir.0.join("points"))
         .build()?;
+    app.set_comparison_target(ComparisonEndpoint::Index);
 
-    press(&mut app, " dcBefore fixes");
+    press(&mut app, " dpBefore fixes");
     assert!(matches!(
         app.popup(),
         Some(Popup::Picker(picker)) if picker.kind() == PickerKind::ReviewPointName
@@ -676,6 +834,75 @@ fn review_point_picker_accepts_an_optional_name() -> anyhow::Result<()> {
         .list();
     assert_eq!(points.len(), 1);
     assert_eq!(points[0].name(), Some("Before fixes"));
+    let id = points[0].id().to_owned();
+    assert_eq!(app.comparison.base(), &ComparisonEndpoint::ReviewPoint(id));
+    assert_eq!(app.comparison.target(), &ComparisonEndpoint::WorkingTree);
+    assert_eq!(
+        app.comparison().map(fathomable_core::diff::Comparison::len),
+        Some(0)
+    );
+    Ok(())
+}
+
+#[test]
+fn saving_a_point_restores_diff_mode_and_selects_working_tree() -> anyhow::Result<()> {
+    let dir = repository("comparison-point-select-off")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .review_points(dir.0.join("points"))
+        .build()?;
+    app.select_diff_mode(DiffMode::Off);
+
+    app.save_review_point(None);
+
+    assert_eq!(app.diff_mode(), DiffMode::Standard);
+    assert!(matches!(
+        app.comparison.base(),
+        ComparisonEndpoint::ReviewPoint(_)
+    ));
+    assert_eq!(app.comparison.target(), &ComparisonEndpoint::WorkingTree);
+    Ok(())
+}
+
+#[test]
+fn failed_preference_write_keeps_the_new_point_selected_for_this_viewer() -> anyhow::Result<()> {
+    use std::os::unix::fs::symlink;
+
+    let dir = repository("comparison-point-preference-failure")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    fs::write(root.join("a.md"), "point\n")?;
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .review_points(dir.0.join("points"))
+        .build()?;
+    let preference = app.comparison.preference.clone();
+    let original = fs::read(&preference)?;
+    let unrelated = root.join("unrelated");
+    fs::write(&unrelated, "unchanged")?;
+    let temporary = preference.with_extension(format!("{}.tmp", std::process::id()));
+    symlink(&unrelated, &temporary)?;
+
+    app.save_review_point(Some("local"));
+
+    let point = app
+        .review_points
+        .as_ref()
+        .and_then(|store| store.list().first().cloned())
+        .context("saved point")?;
+    assert_eq!(
+        app.comparison.base(),
+        &ComparisonEndpoint::ReviewPoint(point.id().to_owned())
+    );
+    assert_eq!(app.comparison.target(), &ComparisonEndpoint::WorkingTree);
+    assert_eq!(fs::read(preference)?, original);
+    assert!(
+        app.message()
+            .is_some_and(|message| message.contains("selected for this viewer")
+                && message.contains("preference was not saved"))
+    );
     Ok(())
 }
 

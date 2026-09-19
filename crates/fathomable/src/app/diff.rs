@@ -152,6 +152,15 @@ impl App {
         });
     }
 
+    /// Open the commit picker that compares one commit with its first parent.
+    pub(crate) fn pick_commit_parent(&mut self) {
+        if !self.workspace.is_git() {
+            self.notice("commit comparison is unavailable outside a Git repository");
+            return;
+        }
+        self.open_picker(PickerKind::ComparisonCommit);
+    }
+
     /// Toggle whitespace handling for all comparison surfaces.
     pub(crate) fn toggle_whitespace(&mut self) {
         if self.diff_mode == DiffMode::Off {
@@ -186,6 +195,7 @@ impl App {
         let side = match kind {
             PickerKind::ComparisonBase => ComparisonSide::Base,
             PickerKind::ComparisonTarget => ComparisonSide::Target,
+            PickerKind::ComparisonCommit => ComparisonSide::CommitParent,
             _ => return,
         };
         match item {
@@ -230,6 +240,13 @@ impl App {
         match kind {
             PickerKind::ComparisonBase => self.set_comparison_base_aliased(endpoint, alias),
             PickerKind::ComparisonTarget => self.set_comparison_target_aliased(endpoint, alias),
+            PickerKind::ComparisonCommit => {
+                let ComparisonEndpoint::Commit(id) = endpoint else {
+                    self.notice("choose a commit");
+                    return;
+                };
+                self.select_commit_parent(&id, alias);
+            }
             _ => {}
         }
     }

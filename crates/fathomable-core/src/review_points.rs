@@ -4,9 +4,10 @@
 //! A [`ReviewPointStore`] records a deliberate, repository-wide workspace
 //! state. Git supplies unchanged committed content; the store keeps changed
 //! eligible bytes once per digest and records deletions as tombstones. A
-//! point is published only after every required blob and its manifest log
-//! record are durable. Capture never writes the checkout, index, refs, or
-//! Git object database.
+//! point is reported published only after every required blob and its manifest
+//! log record are durable. A manifest write failure with an ambiguous outcome
+//! is reported as such. Capture never writes the checkout, index, refs, or Git
+//! object database.
 //!
 //! # Examples
 //!
@@ -477,6 +478,8 @@ impl ReviewPointStore {
     ///
     /// Returns an error when workspace traversal is incomplete or the store
     /// cannot persist durable blobs and its manifest log.
+    /// [`ReviewPointError::CommitUncertain`] means callers must reload before
+    /// claiming whether the point was published.
     #[expect(
         clippy::too_many_lines,
         reason = "capture keeps the pre-publication manifest validation in one transaction"
@@ -841,7 +844,9 @@ impl ReviewPointStore {
         let unlock = lock.unlock();
         let points = match result {
             Ok(points) => {
-                unlock?;
+                if let Err(error) = unlock {
+                    tracing::warn!(%error, "review-point manifest lock release failed");
+                }
                 points
             }
             Err(error) => {
@@ -1078,10 +1083,10 @@ pub enum ReviewPointError {
         /// The inactive point identifier.
         point: String,
     },
-    /// The manifest write failed after its durable outcome became uncertain.
-    #[error("review point {point} deletion outcome is uncertain: {detail}")]
+    /// A manifest write failed after its durable outcome became uncertain.
+    #[error("review point {point} update outcome is uncertain: {detail}")]
     CommitUncertain {
-        /// The point whose deletion must be reloaded or retried.
+        /// The point whose capture or deletion must be reloaded before retrying.
         point: String,
         /// The underlying append, flush, or sync failure.
         detail: String,
@@ -1481,10 +1486,17 @@ fn publish_locked(
     }
     let mut points = replay_log(file)?;
     file.seek(SeekFrom::End(0))?;
-    file.write_all(line)?;
-    file.flush()?;
-    file.sync_all()?;
-    sync_directory(dir)?;
+    if let Err(error) = file
+        .write_all(line)
+        .and_then(|()| file.flush())
+        .and_then(|()| file.sync_all())
+        .and_then(|()| sync_directory(dir))
+    {
+        return Err(ReviewPointError::CommitUncertain {
+            point: point.id.clone(),
+            detail: error.to_string(),
+        });
+    }
     points.insert(point.id.clone(), point.clone());
     Ok(points)
 }
@@ -1614,6 +1626,37 @@ mod tests {
                 .any(|issue| issue.kind() == CaptureIssueKind::Unsupported)
         );
         assert_eq!(store.len(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_append_failure_reports_an_uncertain_capture()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("review-point-capture-uncertain")?;
+        let state = dir.0.join("state");
+        fs::create_dir(&state)?;
+        let manifest = state.join(INDEX_FILE);
+        fs::write(&manifest, [])?;
+        let mut read_only = File::open(manifest)?;
+        let point = ReviewPoint {
+            id: "uncertain-point".to_owned(),
+            name: None,
+            created: 0,
+            checkout: dir.0.clone(),
+            workspace_key: dir.0.clone(),
+            head: None,
+            entries: Vec::new(),
+            issues: Vec::new(),
+        };
+
+        let error = publish_locked(&state, &mut read_only, &point, &[], b"{}\n")
+            .err()
+            .ok_or("a read-only manifest accepted the append")?;
+
+        assert!(matches!(
+            error,
+            ReviewPointError::CommitUncertain { point, .. } if point == "uncertain-point"
+        ));
         Ok(())
     }
 

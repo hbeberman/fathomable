@@ -49,6 +49,13 @@ status counts, and navigation are removed rather than retained behind Off.
 Transient counted file-edit toasts remain; Off hides only those toasts while
 their timers continue, and plain notifications remain visible.
 
+Presentation amended 2026-09-19: `Space d l` selects the resolved current
+`HEAD` and its first parent; `Space d c` picks one commit and selects that
+commit with its first parent. Root commits are rejected without changing the
+pair. `Space d p` captures a review point and immediately selects that exact
+point as Base with Working tree as Target. `Space t` replaces `Space c` for
+repository-board workflows.
+
 Supersedes the last-seen and per-file checkpoint comparison model of
 [0015](0015-follow-mode.md), [0020](0020-reanchoring-across-restarts.md),
 [0049](0049-inline-threads-and-the-rail.md),
@@ -163,9 +170,13 @@ The **Diff** menu begins with three mutually exclusive `▌` choices:
   omit Base-only paths. An already open Base-only path retains its label,
   displays `not present in Target`, and has no Base body.
 
-Base, Target, and **Head to WorkingTree** follow those mode rows. The direct
-action pins the current `HEAD` as Base and selects the working tree as Target.
-Save review point and Ignore whitespace each begin a separate section.
+Base, Target, **HEAD to Working tree**, **HEAD~1 to HEAD**, and **Commit~1 to
+Commit...** follow those mode rows. The direct HEAD action pins the current
+`HEAD` as Base and selects the working tree as Target. The parent actions
+first resolve one immutable commit identity, derive its first parent, and
+select the parent-to-commit pair atomically; a root commit leaves both
+endpoints unchanged. Save review point and Ignore whitespace each begin a
+separate section.
 Off retains Base, whitespace, the only-changed Files filter, and the last
 Standard/Unified mode. Changed-only and Ignore whitespace are dormant while
 Off: their marks are hidden, rows are disabled, and direct keys report `diff
@@ -253,7 +264,7 @@ commit-to-working-tree pair keeps the commit and names the moving checkout.
 
 ### Explicit workspace review points
 
-`Space d c` saves a review point for the workspace. Capture is deliberate;
+`Space d p` saves a review point for the workspace. Capture is deliberate;
 comments, file switches, idle time, startup, commits, and quit never save
 one.
 
@@ -270,10 +281,12 @@ file because there is no committed baseline.
 
 Capture reads each working file once, verifies observable file and `HEAD`
 stability, writes required blobs durably, then publishes the manifest under
-the cooperating store lock. Read errors, races, unsupported content, and
-missing required objects prevent publication. Known ignore-policy exclusions
-are recorded on an otherwise selectable point. Capture does not write the
-checkout, index, refs, or Git object database.
+the cooperating store lock. Read errors, races, unsupported content, missing
+required objects, and failures before the manifest append prevent publication.
+An append, flush, or sync failure reports an uncertain outcome and tells the
+reader to reload before retrying rather than claiming the point was not saved.
+Known ignore-policy exclusions are recorded on an otherwise selectable point.
+Capture does not write the checkout, index, refs, or Git object database.
 
 Review-point directories and all manifest/blob files follow the
 [private-state contract](0009-cli-and-diagnostics.md#persistent-state-privacy),
@@ -291,8 +304,12 @@ and never substitutes the current `HEAD` or working file.
 
 A review point selected as the base compares directly to the working tree,
 including a reversal that disappears from a commit-to-working-tree net
-diff. Review points are not valid targets, and saving another point does not
-select it.
+diff. Review points are not valid targets. A successful `Space d p` capture
+selects the exact returned point as Base and Working tree as Target without
+re-querying by name or time. Capture, comparison, and preference-persistence
+outcomes are reported separately: a point remains selected for the running
+viewer if only preference persistence fails, while comparison failure leaves
+the saved point available without claiming selection.
 
 Lifecycle amended 2026-09-18: `Space d x` and **Delete review point...** open
 a searchable repository-wide point picker. Selection opens a separate
@@ -399,17 +416,17 @@ operator decision about the named old state; startup never deletes it.
 Archive is orthogonal to active, resolution-proposed, and resolved
 lifecycle. It is not resolution, deletion, or a fourth lifecycle glyph.
 
-- `Space c a` archives all threads that are still resolved when the store
+- `Space t a` archives all threads that are still resolved when the store
   lock is held.
-- `Space c A` opens **Clear board...**. The confirmation names
+- `Space t A` opens **Clear board...**. The confirmation names
   active/proposed and resolved counts and states that the board is shared
   across the repository and all worktrees. It archives exactly the
   acknowledged slate. A new thread is excluded; a changed acknowledged
   entry causes updated counts to be shown for confirmation again.
-- `Space c R` opens **Recently resolved**, newest actual resolution first.
+- `Space t R` opens **Recently resolved**, newest actual resolution first.
   Generic metadata edits do not reorder it. Reopen removes an entry;
   resolving again returns it at its new resolution time.
-- `Space c h` opens **Archived threads**. `u` restores the selected record
+- `Space t h` opens **Archived threads**. `u` restores the selected record
   with its lifecycle and history intact. A restored resolved thread remains
   resolved; no one-shot permission returns.
 

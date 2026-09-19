@@ -445,14 +445,17 @@ fn inside(area: ratatui::layout::Rect, column: usize, row: usize) -> bool {
 /// A click on a which-key entry is that key typed (ADR 0050).
 fn which_key_click(app: &mut App, column: usize, row: usize) -> Option<Effect> {
     let place = keys::place(app).filter(|_| !app.prefix().is_empty())?;
-    let entries = app.which_key(place);
+    let entries = app.which_key_rows(place);
     let shown: Vec<(String, String)> = entries
         .iter()
-        .map(|(chord, label)| (chord.to_string(), label.clone()))
+        .map(super::bindings::MenuRow::display)
         .collect();
     let grid = draw::which_key_grid(app, &shown);
     let index = grid.entry_at(column, row)?;
-    Some(keys::typed(app, place, entries[index].0))
+    Some(match entries[index].chord() {
+        Some(chord) => keys::typed(app, place, chord),
+        None => Effect::None,
+    })
 }
 
 fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {

@@ -55,6 +55,12 @@ Files to reveal and center a destination, including while the pane is hidden.
 The four filters remain authoritative: an excluded destination creates no row
 and leaves the highlight unchanged until a later listing admits it.
 
+Amended 2026-09-19: `Space F` is settings-only. Its `c/o/u/i` suffixes mean
+only changed, only reviews, hide untracked, and show ignored; the same keys
+work bare while Files has focus. File-opening workflows live under lowercase
+`Space f`: `f` opens the ordinary picker, `i` includes ignored paths, and `r`
+opens recent files.
+
 ## Context
 
 The files pane lists every non-ignored file under the workspace, with a
@@ -96,9 +102,11 @@ pane's has.
 Space F c    only changed      /  all files
 Space F o    only reviews      /  all files
 Space F u    hide untracked    /  show untracked
-Space F g    show ignored      /  hide ignored
-Space F i    open incl. ignored                      (unchanged)
-Space F r    recent files                            (unchanged)
+Space F i    show ignored      /  hide ignored
+
+Space f f    open file
+Space f i    open incl. ignored
+Space f r    recent files
 ```
 
 - **Only changed** lists the files that differ from `HEAD` as the
@@ -116,14 +124,14 @@ Space F r    recent files                            (unchanged)
   these rules, as in [0017](0017-git-status-navigation.md) (amended
   2026-09-14); every new status updates them even with no filter enabled.
 - **Show ignored** lists what `.gitignore` hides, as the picker at
-  `Space F i` finds it; `.git` itself stays hidden. It changes what the
+  `Space f i` finds it; `.git` itself stays hidden. It changes what the
   tree reads, so the pane re-reads its listings when it flips. An
   ignored file is never a changed one, so *only changed* wins when both
   are on.
 - All four are **session toggles** starting off, with no config block.
-  They work from any pane, since they change what the pane shows, not
-  what its cursor does. Toggling while the files pane is hidden changes
-  the pane all the same and a status-line notice names the new state.
+  `Space F c/o/u/i` works from any pane, and bare `c/o/u/i` mirrors it while
+  Files has focus. Toggling while Files is hidden changes the pane all the
+  same and a status-line notice names the new state.
 - Rules compose by intersection. A review-bearing file must also satisfy
   *only changed*, untracked, ignored, and selected-comparison snapshot rules
   that are active. Directories appear only when they lead to an admitted file.
@@ -174,10 +182,10 @@ Space F r    recent files                            (unchanged)
 
 ### Amendments
 
-- 0056's *Fewer entries*: the ignored toggle returns, as `Space F g`
-  and a filter on the pane, not a key on it; the picker at `Space F i`
-  stays.
-- 0056's map: `Space F` is `c` / `o` / `u` / `g` / `i` / `r`.
+- 0056's *Fewer entries*: the ignored toggle is `Space F i`, and all four
+  settings also have direct pane keys. Pickers move to lowercase `Space f`.
+- 0056's map: `Space F` is `c` / `o` / `u` / `i`; `Space f` is
+  `f` / `i` / `r`.
 - 0050's Files title opens the four pane settings. Row context menus stay
   item-local, and right-click on the header remains inert.
 - 0017's tree bullet: the pane may list a subset; the letters, the

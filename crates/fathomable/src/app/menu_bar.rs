@@ -683,13 +683,23 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             Row::Item(Item::action(
                 app,
                 Action::ComparisonHeadWorkingTree,
-                "Head to WorkingTree",
+                "HEAD to Working tree",
+            )),
+            Row::Item(Item::action(
+                app,
+                Action::ComparisonHeadParent,
+                "HEAD~1 to HEAD",
+            )),
+            Row::Item(Item::action(
+                app,
+                Action::ComparisonCommitParent,
+                "Commit~1 to Commit…",
             )),
             Row::Separator,
             Row::Item(Item::action(
                 app,
                 Action::ComparisonSave,
-                "Save review point",
+                "Save review point and use as Base…",
             )),
             Row::Item(Item::action(
                 app,
@@ -776,6 +786,7 @@ fn action_available(app: &App, action: Action) -> bool {
                 thread.lifecycle() != fathomable_core::annotations::Lifecycle::Resolved
             }),
         Action::ComparisonSave => app.review_points.is_some(),
+        Action::ComparisonHeadParent | Action::ComparisonCommitParent => app.workspace.is_git(),
         Action::ComparisonDelete => app
             .review_points
             .as_ref()
@@ -1447,7 +1458,7 @@ mod tests {
         assert_eq!(rows(&app, Root::Go).len(), 13);
         assert_eq!(rows(&app, Root::Review).len(), 16);
         let diff_rows = rows(&app, Root::Diff);
-        assert_eq!(diff_rows.len(), 12);
+        assert_eq!(diff_rows.len(), 14);
         let diff_labels = diff_rows
             .iter()
             .filter_map(super::Row::item)
@@ -1461,8 +1472,10 @@ mod tests {
                 "Diff off",
                 "Pick base…",
                 "Pick target…",
-                "Head to WorkingTree",
-                "Save review point",
+                "HEAD to Working tree",
+                "HEAD~1 to HEAD",
+                "Commit~1 to Commit…",
+                "Save review point and use as Base…",
                 "Delete review point…",
                 "Ignore whitespace",
             ]
@@ -1482,8 +1495,8 @@ mod tests {
         );
         assert_eq!(submenu_rows(&app, super::Submenu::Help).len(), 4);
         let go = rows(&app, Root::Go);
-        assert_eq!(go[0].item().map(|item| item.hint.as_str()), Some("Sp f"));
-        assert_eq!(go[1].item().map(|item| item.hint.as_str()), Some("Sp F i"));
+        assert_eq!(go[0].item().map(|item| item.hint.as_str()), Some("Sp f f"));
+        assert_eq!(go[1].item().map(|item| item.hint.as_str()), Some("Sp f i"));
         assert!(
             go.iter()
                 .filter_map(super::Row::item)
@@ -1534,15 +1547,17 @@ mod tests {
                 ("Diff off", true),
                 ("Pick base…", false),
                 ("Pick target…", false),
-                ("Head to WorkingTree", false),
-                ("Save review point", false),
+                ("HEAD to Working tree", false),
+                ("HEAD~1 to HEAD", false),
+                ("Commit~1 to Commit…", false),
+                ("Save review point and use as Base…", false),
                 ("Delete review point…", false),
                 ("Ignore whitespace", false),
             ]
         );
         assert!(items[3].enabled, "Base is the intentional restore route");
-        assert!(items[8].checked, "the whitespace preference is retained");
-        assert!(!items[8].enabled, "but cannot run while Off");
+        assert!(items[10].checked, "the whitespace preference is retained");
+        assert!(!items[10].enabled, "but cannot run while Off");
         app.open_title_menu(Root::Diff);
         let screen = testing::screen(&app)?.join("\n");
         assert!(screen.contains("▌ Diff off"), "{screen}");
@@ -1774,7 +1789,7 @@ mod tests {
     fn displayed_multi_chord_runs_from_an_open_title_menu() -> anyhow::Result<()> {
         let mut app = shown_app("menu-bar-shortcut")?;
         testing::click(&mut app, 12, 0);
-        testing::press(&mut app, " f");
+        testing::press(&mut app, " ff");
         assert!(matches!(
             app.popup(),
             Some(crate::app::Popup::Picker(picker))
@@ -1811,7 +1826,7 @@ mod tests {
     fn getting_started_closes_before_a_thread_draft_opens() -> anyhow::Result<()> {
         let mut app = shown_app("getting-started-action")?;
         app.open_getting_started();
-        testing::press(&mut app, " cf");
+        testing::press(&mut app, " tf");
         assert!(!app.getting_started());
         assert!(matches!(app.popup(), Some(crate::app::Popup::Compose(_))));
         Ok(())
@@ -2001,7 +2016,7 @@ mod tests {
         assert!(
             testing::screen(&app)?
                 .iter()
-                .any(|row| row.contains("Sp F i")),
+                .any(|row| row.contains("Sp f i")),
             "the longest Go hint is not clipped"
         );
         app.close_title_menu();

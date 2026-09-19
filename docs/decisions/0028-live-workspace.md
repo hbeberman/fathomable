@@ -28,6 +28,9 @@ still carries the active viewer and its thread marks, but the path projection
 is checkout-local and no longer overwrites one global board path shared by
 other worktrees.
 
+File shortcuts amended 2026-09-19: the ignored-inclusive picker is
+`Space f i`, and the ordinary live index opens with `Space f f`.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,
@@ -72,12 +75,12 @@ Settled in a question round on 2026-08-28; the choices are below.
 - Paths the tree would not normally show — the ignore rules of the
   workspace plus `watch.ignore` — are not watched, so build output
   churning under `target/` is free at the kernel, event-loop, and render
-  layers. `Space F g` can browse ignored entries from a directory
+  layers. `Space f i` can browse ignored entries from a directory
   snapshot but does not recursively live-monitor ignored trees. An
   ignored file that has been opened is watched narrowly and still
   reloads, including while another file is in front.
 - `R` stays as the manual re-read (it also drops the picker indexes);
-  a new file is one `Space f` away because an automatic refresh patches
+  a new file is one `Space f f` away because an automatic refresh patches
   the picker indexes (2026-09-06, `app/file_index.rs`): a path that
   appears joins them where the walk would have put it, a directory that
   arrives whole is walked, a path that goes leaves them, and only a

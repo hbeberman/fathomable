@@ -45,10 +45,18 @@ revealing the app bar first if it is hidden. Hover never focuses.
 
 The **File list** title menu has four session filters: **only changed**,
 **only reviews**, **hide untracked**, and **show ignored**. `Space F c`,
-`Space F o`, `Space F u`, and `Space F g` toggle them from any pane. Only
+`Space F o`, `Space F u`, and `Space F i` toggle them from any pane. The same
+`c`, `o`, `u`, and `i` keys work while File list has focus. Only
 reviews means files with an active or resolution-proposed, non-archived thread
 in the current workspace. Filters combine, and the File list header names active
 filters compactly as `c`, `r`, `u`, and `i`.
+
+`Space f` contains file-opening workflows: `f` opens the ordinary picker, `i`
+includes ignored paths, and `r` lists files opened during this viewer session.
+`Space F` contains only settings that change what File list shows. `Space t`
+contains thread workflows, while `Space T s` and `Space T x` change Thread-list
+scope and resolved visibility without moving focus. Section rules in mixed
+leader menus separate modes, endpoint presets, durable actions, and settings.
 
 The focused pane marks its name with a purple `▎`; filenames, counts, filters,
 and controls remain neutral. The selected list row keeps its blue active or
@@ -97,13 +105,15 @@ the table below is a quick reference, not the full list.
 | `/` `n` `N` | search, next match, previous match |
 | `v` `V` `y` | select characters, select lines, copy |
 | `gf` | follow a file reference or URL |
-| `Space f` | file picker |
+| `Space f f` `Space f i` `Space f r` | file picker / including ignored / recent files |
 | `Space F c` `Space F o` | only changed / only reviews in File list |
-| `Space F u` `Space F g` | hide untracked / show ignored in File list |
+| `Space F u` `Space F i` | hide untracked / show ignored in File list |
+| `Space T s` `Space T x` | Thread-list scope / show resolved |
 | `Space d s` `Space d u` `Space d o` | Standard / Unified / Off diff mode |
 | `Space d d` | compare the current HEAD to the working tree |
+| `Space d l` `Space d c` | compare HEAD or a chosen commit with its first parent |
 | `Space d w` | ignore whitespace |
-| `Space d c` `Space d x` | save / delete a review point |
+| `Space d p` `Space d x` | save-and-select / delete a review point |
 | `Space v s` | source / rendered view for configured Markdown files |
 | `Space v t` `Space v r` | toggle thread stubs / resolved stubs |
 | `w` `W` | focus the next / previous displayed pane |
@@ -114,7 +124,7 @@ the table below is a quick reference, not the full list.
 | `Shift-Right` `L` / `Shift-Left` `H` | next / previous changed file, at its first diff |
 | `Tab` `Shift-Tab` | next / previous open review thread across the workspace |
 | `]w` `[w` | next / previous worktree |
-| `c` `Space c f` | line comment or reply / file comment |
+| `c` `Space t f` | line comment or reply / file comment |
 | `r` `R` | resolve or reopen / toggle one-shot auto-resolve |
 | `z` `Z` | fold/unfold the nearest directory / all directories in File list; threads elsewhere |
 | `Enter` `Ctrl-Enter` | submit draft / submit with auto-resolve enabled |
@@ -184,11 +194,14 @@ Target.
 
 A fresh Git workspace compares a pinned `HEAD` to the working tree. Committing
 does **not** advance that Base; choose the new commit explicitly. The Diff menu
-begins with Standard, Unified, and Off, then Base, Target, and **Head to
-WorkingTree**. That action, or `Space d d`, pins the current `HEAD` as Base and
-selects the working tree as Target. Save/Delete review point follow a
-separator, and Ignore whitespace follows another. There is no comparison-control popup,
-**Start comparison at current HEAD**, or `:diff`.
+begins with Standard, Unified, and Off, then Base, Target, and **HEAD to Working
+tree**. That action, or `Space d d`, pins the current `HEAD` as Base and selects
+the working tree as Target. `Space d l` selects the immutable `HEAD~1` to
+`HEAD` pair. `Space d c` opens a commit-only picker and compares the chosen
+commit with its first parent; root commits are rejected explicitly. Save/Delete
+review point follow a separator, and Ignore whitespace follows another. There
+is no comparison-control popup, **Start comparison at current HEAD**, or
+`:diff`.
 
 Rendered/Source is available in Standard and Off only for files matched by
 `markdown.extensions` or `markdown.names`, including custom extensions and
@@ -202,9 +215,13 @@ Normal comparison provenance moves out of the bottom status line when the
 menu-bar endpoint controls actually render; stale/error status remains, and
 provenance returns there when the controls are hidden or too narrow.
 
-`Space d c` saves an optionally named **review point** without changing Git.
-Choose it under the base picker's **Review points...** to see changes since
-that save. Saving a point does not select it automatically. See
+`Space d p` captures the active checkout's working tree as an optionally named,
+immutable **review point** without changing Git, then selects that exact point
+as Base against the working tree. The resulting comparison is normally empty;
+later edits show what changed since the save. Capture ignores File-list filters,
+and reported exclusions remain part of the point. A manifest write failure can
+leave publication uncertain; reload before retrying when the notice says so.
+Choose any saved point under the base picker's **Review points...**. See
 [comparison and review-point details](decisions/0087-global-comparisons-and-board-history.md).
 
 `Space d x` or **Diff > Delete review point...** opens the repository-wide
@@ -228,7 +245,7 @@ hidden File list catches up when shown.
 
 ### Review discussions
 
-Select lines and press `c`, or use `Space c f` for a file-wide comment.
+Select lines and press `c`, or use `Space t f` for a file-wide comment.
 Threads retain their original excerpt even if edits move or detach them.
 Keep comments focused; each new message is limited to 1024 UTF-8 bytes.
 

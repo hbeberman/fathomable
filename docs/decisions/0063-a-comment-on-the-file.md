@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: A comment on the file
-description: A thread may be on a file as a whole rather than on lines of it; `Space c f` starts one, an agent's `thread_start` starts one by omitting `line`, the record carries no range, anchor, or snippet, the viewer shows it as a stub above the first line, and every list names it by its path alone.
+description: A thread may be on a file as a whole rather than on lines of it; `Space t f` starts one, an agent's `thread_start` starts one by omitting `line`, the record carries no range, anchor, or snippet, the viewer shows it as a stub above the first line, and every list names it by its path alone.
 resource: crates/fathomable/src/app/threads/file.rs
 related_resources:
   - crates/fathomable-core/src/annotations.rs
@@ -28,6 +28,9 @@ Context backfill amended 2026-09-15 by
 context-free and `Store::relocate` still refuses them. The
 `Store::record_context` reference below describes the retired historical
 backfill API.
+
+Amended 2026-09-19: the thread workflow leader moved from `Space c` to
+`Space t`; create on file is now `Space t f`.
 
 ## Context
 
@@ -67,11 +70,11 @@ carry that warning, and the bridge is crossed when it is reached.
   `Store::relocate` and `record_context` refuse it with an error that
   says the thread is on the file, and the viewer's re-anchoring passes
   over it.
-- **`Space c f` starts one.** The draft opens in a block of its own
+- **`Space t f` starts one.** The draft opens in a block of its own
   above the first line, headed `comment on <path>`, and submits as a
   file thread on the open file; from any pane it means the file the
-  text shows. The `Space c` menu reads `c r o e d f`. `C` keeps its
-  meaning.
+  text shows. The `Space t` menu includes the thread workflows; `C` is
+  unbound.
 - **The viewer shows it above line 1.** A `RowAnchor::Top` places its
   stub before the first row, and it folds, expands, replies, edits,
   resolves, and deletes like any thread. Its expanded header reads
@@ -102,7 +105,7 @@ carry that warning, and the bridge is crossed when it is reached.
   format prints the path alone.
 - `fathomable_core::layout::RowAnchor` gains `Top`, and
   `with_rows_after` inserts a block on it before every other row.
-- A new `app/threads/file.rs` holds `Space c f` and what the viewer
+- A new `app/threads/file.rs` holds `Space t f` and what the viewer
   needs to know about a file thread; `stubs.rs`, `words.rs`, and
   `draft.rs` use it.
 - `mcp/start.rs` checks a file item as it checks a path: a path that

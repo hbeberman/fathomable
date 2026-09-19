@@ -1,7 +1,7 @@
 // @okf-doc: /decisions/0063-a-comment-on-the-file.md
 //! A comment on the file as a whole (ADR 0063).
 //!
-//! A thread need not be on lines: `Space c f` writes a comment on the
+//! A thread need not be on lines: `Space t f` writes a comment on the
 //! open file itself, and an agent's `thread_start` does the same by
 //! naming no line. Such a thread has no range, no anchor, and no
 //! snippet; it is never edited, detached, or re-anchored; its stub
@@ -31,7 +31,7 @@ pub(crate) fn toast_place_at(path: &Path, range: Option<LineRange>) -> String {
 }
 
 impl App {
-    /// `Space c f`: a draft on the open file as a whole, written in a
+    /// `Space t f`: a draft on the open file as a whole, written in a
     /// block above the first line.
     pub(crate) fn start_file_comment(&mut self) {
         if !self.can_annotate() {
@@ -62,17 +62,17 @@ mod tests {
         app.compose_submit();
     }
 
-    /// `Space c f` writes a comment on the file in a block above the
+    /// `Space t f` writes a comment on the file in a block above the
     /// first line; the thread has no lines, stands above L1 as a stub,
     /// says `file` where another says `detached`, comes first in every
     /// order, and folds on `z`.
     #[test]
-    fn space_c_f_comments_on_the_file_as_a_whole() -> anyhow::Result<()> {
+    fn space_t_f_comments_on_the_file_as_a_whole() -> anyhow::Result<()> {
         let dir = testing::workspace("file-comment", testing::README)?;
         let mut app = source_app(&dir)?;
         annotate(&mut app, 3, "on alpha");
         app.view_mut().goto_source_line(5);
-        press(&mut app, " cf");
+        press(&mut app, " tf");
         assert!(matches!(
             app.draft().map(Compose::target),
             Some(ComposeTarget::OnFile)

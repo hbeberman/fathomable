@@ -64,6 +64,15 @@ Amended later 2026-09-18: `Space d d` is restored with one direct meaning:
 pin the current `HEAD` as Base and select the working tree as Target. It does
 not toggle presentation or reopen the removed comparison controls.
 
+Amended 2026-09-19: lowercase leaders name workflows and uppercase leaders
+name sidebar panes. `Space f f/i/r` opens ordinary, ignored-inclusive, and
+recent file pickers; `Space F c/o/u/i` changes File-list settings and those
+same suffixes work bare while File list has focus. Thread workflows move from
+`Space c` to `Space t`; `Space T s/x` changes Thread-list scope and resolved
+visibility without moving focus. Mixed leader menus draw section rules from
+binding metadata. `Space d l/c/p` means HEAD-parent comparison, picked
+commit-parent comparison, and save-and-select review point.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,
@@ -118,7 +127,7 @@ is possible while the map is prose.
   how a key is spelled, so a hint cannot name a key that is not bound
   there. The status line shows the prefix as the table spells it.
   (Amended 2026-09-04 by [0049](0049-inline-threads-and-the-rail.md): the which-key
-  menu leads with a row naming the prefix and its group word, `Space c
+  menu leads with a row naming the prefix and its group word, `Space t
   · threads`, and re-renders at every level. Amended 2026-09-14 by
   [0078](0078-all-keys-stays-reachable.md): help reads `BINDINGS`
   directly, wraps into one or two lanes, and scrolls instead of creating

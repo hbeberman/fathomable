@@ -6,7 +6,7 @@
 //! captures. Deleting the selected Base reconciles it without changing Target.
 
 use super::App;
-use fathomable_core::review_points::ReviewPoint;
+use fathomable_core::review_points::{CaptureResult, ReviewPoint, ReviewPointError};
 
 impl App {
     /// Reload point metadata before a point-dependent user action.
@@ -47,7 +47,7 @@ impl App {
         Ok(Some(id))
     }
 
-    /// Ask for an optional name before saving a workspace review point.
+    /// Ask for an optional name before capturing and selecting a review point.
     pub(crate) fn request_review_point(&mut self) {
         if self.annotation_draft_blocks("saving a review point") {
             return;
@@ -59,7 +59,7 @@ impl App {
         self.open_picker(super::PickerKind::ReviewPointName);
     }
 
-    /// Save a workspace review point without changing the selected comparison.
+    /// Capture the working tree and select that immutable point as Base.
     pub(crate) fn save_review_point(&mut self, name: Option<&str>) {
         if self.annotation_draft_blocks("saving a review point") {
             return;
@@ -68,12 +68,38 @@ impl App {
             self.notice("review points unavailable; see the log");
             return;
         };
-        match store.capture(&mut self.workspace, name) {
+        let result = store.capture(&mut self.workspace, name);
+        self.finish_review_point_capture(result);
+    }
+
+    fn finish_review_point_capture(&mut self, result: Result<CaptureResult, ReviewPointError>) {
+        match result {
             Ok(result) if result.published() => {
                 if let Some(point) = result.point() {
-                    self.push_toast(format!("review point saved: {}", point.id()));
+                    let id = point.id().to_owned();
+                    let short = id.chars().take(8).collect::<String>();
+                    let label = point.name().unwrap_or("Unnamed").to_owned();
+                    let exclusions = result.issues().len();
+                    let (available, persisted) = self.select_review_point(id);
+                    let excluded = if exclusions == 0 {
+                        String::new()
+                    } else {
+                        format!("; {exclusions} excluded")
+                    };
+                    if available && persisted {
+                        self.push_toast(format!(
+                            "Saved {label} [{short}]{excluded}; comparing to Working tree"
+                        ));
+                    } else if available {
+                        self.notice(format!(
+                            "Saved {label} [{short}]{excluded}; comparison selected for this viewer, but its preference was not saved"
+                        ));
+                    } else {
+                        self.push_toast(format!(
+                            "Saved {label} [{short}]{excluded}; comparison unavailable"
+                        ));
+                    }
                 }
-                self.refresh_comparison();
             }
             Ok(result) => {
                 let detail = result
@@ -82,6 +108,10 @@ impl App {
                     .map_or("capture was not published", |issue| issue.detail());
                 self.notice(format!("review point not saved: {detail}"));
             }
+            Err(ReviewPointError::CommitUncertain { point, detail }) => self.notice(format!(
+                "review point {} save outcome is uncertain; reload before retrying: {detail}",
+                point.chars().take(8).collect::<String>()
+            )),
             Err(error) => self.notice(format!("cannot save review point: {error}")),
         }
     }
@@ -121,6 +151,43 @@ mod tests {
         git::commit_and_stage(&root, &[("README.md", "base\n")])?;
         fs::write(root.join("README.md"), "point\n")?;
         Ok((dir, root))
+    }
+
+    #[test]
+    fn saved_point_is_reported_when_its_comparison_is_unavailable() -> anyhow::Result<()> {
+        let (dir, root) = fixture("review-point-save-comparison-failure")?;
+        fs::write(root.join("README.md"), "base\n")?;
+        let points = dir.0.join("points");
+        let mut app = AppBuilder::at(&root)
+            .unopened()
+            .review_points(&points)
+            .build()?;
+        let result = app
+            .review_points
+            .as_mut()
+            .context("review-point store")?
+            .capture(&mut app.workspace, Some("saved"))?;
+        let id = result.point().context("published point")?.id().to_owned();
+        let objects = root.join(".git/objects");
+        fs::rename(&objects, root.join(".git/objects-away"))?;
+        fs::create_dir(&objects)?;
+
+        app.finish_review_point_capture(Ok(result));
+
+        assert!(
+            app.review_points
+                .as_ref()
+                .is_some_and(|store| store.get(&id).is_some())
+        );
+        assert_eq!(app.comparison.base(), &ComparisonEndpoint::ReviewPoint(id));
+        assert!(app.comparison.error().is_some());
+        assert!(
+            app.toasts()
+                .last()
+                .is_some_and(|toast| toast.text().contains("Saved saved")
+                    && toast.text().contains("comparison unavailable"))
+        );
+        Ok(())
     }
 
     #[test]

@@ -28,6 +28,7 @@ const COMMIT_PICKER_LIMIT: usize = 500;
 #[serde(rename_all = "kebab-case", tag = "kind", content = "name")]
 pub(crate) enum EndpointAlias {
     Head,
+    HeadParent,
     Tag(String),
 }
 
@@ -305,13 +306,14 @@ impl State {
         target_alias: Option<EndpointAlias>,
         workspace: &mut Workspace,
         review_points: Option<&ReviewPointStore>,
-    ) {
+    ) -> bool {
         self.base = base;
         self.base_alias = base_alias;
         self.target = target;
         self.target_alias = target_alias;
+        self.persisted = false;
         self.refresh(workspace, review_points);
-        self.persist();
+        self.persisted || self.persist_result()
     }
 
     /// Retain a Target without evaluating it against Base.
@@ -337,6 +339,12 @@ impl State {
 
     /// Persist this viewer's preference outside the repository.
     pub(crate) fn persist(&mut self) {
+        let _ = self.persist_result();
+    }
+
+    /// Persist this viewer's preference and report whether it reached disk.
+    fn persist_result(&mut self) -> bool {
+        self.persisted = false;
         let preference = Preference {
             base: endpoint_string(&self.base),
             target: endpoint_string(&self.target),
@@ -348,22 +356,26 @@ impl State {
             ),
         };
         let Ok(bytes) = serde_json::to_vec_pretty(&preference) else {
-            return;
+            return false;
         };
         if let Some(parent) = self.preference.parent()
             && let Err(error) = self.dirs.prepare_state_dir(parent)
         {
             tracing::warn!(%error, path = %parent.display(), "cannot create comparison preference directory");
-            return;
+            return false;
         }
 
         let temporary = self
             .preference
             .with_extension(format!("{}.tmp", std::process::id()));
         match write_atomic(&temporary, &self.preference, &bytes) {
-            Ok(()) => self.persisted = true,
+            Ok(()) => {
+                self.persisted = true;
+                true
+            }
             Err(error) => {
                 tracing::warn!(%error, path = %self.preference.display(), "cannot persist comparison preference");
+                false
             }
         }
     }
@@ -474,6 +486,7 @@ fn alias_matches(
     };
     let revision = match alias {
         EndpointAlias::Head => "HEAD".to_owned(),
+        EndpointAlias::HeadParent => "HEAD~1".to_owned(),
         EndpointAlias::Tag(name) => format!("refs/tags/{name}"),
     };
     workspace
@@ -589,6 +602,7 @@ impl App {
     ) -> String {
         match (endpoint, alias) {
             (ComparisonEndpoint::Commit(_), Some(EndpointAlias::Head)) => "HEAD".to_owned(),
+            (ComparisonEndpoint::Commit(_), Some(EndpointAlias::HeadParent)) => "HEAD~1".to_owned(),
             (ComparisonEndpoint::Commit(_), Some(EndpointAlias::Tag(name))) => {
                 format!("Tag {name}")
             }
@@ -647,6 +661,26 @@ impl App {
             choices.push("Review points...".to_owned());
         }
         choices.push("Advanced...".to_owned());
+        if self.workspace.head_commit().is_some() {
+            match self.workspace.recent_commits(0, COMMIT_PICKER_LIMIT) {
+                Ok(commits) => choices.extend(commits.iter().map(commit_picker_row)),
+                Err(error) => self.notice(format!("cannot list HEAD commits: {error}")),
+            }
+        }
+        choices
+    }
+
+    /// Commits eligible for a first-parent comparison.
+    pub(crate) fn comparison_commit_choices(&mut self) -> Vec<String> {
+        if !self.workspace.is_git() {
+            return Vec::new();
+        }
+        let mut choices = Vec::new();
+        if self.workspace.head_commit().is_some() {
+            choices.push("HEAD".to_owned());
+        }
+        choices.push("Tags...".to_owned());
+        choices.push("Branches...".to_owned());
         if self.workspace.head_commit().is_some() {
             match self.workspace.recent_commits(0, COMMIT_PICKER_LIMIT) {
                 Ok(commits) => choices.extend(commits.iter().map(commit_picker_row)),
@@ -888,21 +922,23 @@ impl App {
         }
     }
 
-    /// Pin Base to the current `HEAD` and select the working tree as Target.
-    pub(crate) fn select_head_working_tree(&mut self) {
-        if self.annotation_draft_blocks("changing comparison") {
-            return;
-        }
+    fn select_comparison_endpoints(
+        &mut self,
+        base: ComparisonEndpoint,
+        base_alias: Option<EndpointAlias>,
+        target: ComparisonEndpoint,
+        target_alias: Option<EndpointAlias>,
+    ) -> (bool, bool) {
         let restore = (self.diff_mode == DiffMode::Off).then_some(self.last_active_diff_mode);
-        let (base, alias) = head_endpoint(&self.workspace);
-        self.comparison.set_endpoints_aliased(
+        let persisted = self.comparison.set_endpoints_aliased(
             base,
-            alias,
-            ComparisonEndpoint::WorkingTree,
-            None,
+            base_alias,
+            target,
+            target_alias,
             &mut self.workspace,
             self.review_points.as_ref(),
         );
+        let available = self.comparison.error().is_none();
         if let Some(error) = self.comparison.error().map(str::to_owned) {
             self.notice(error);
         } else if let Some(mode) = restore {
@@ -910,6 +946,72 @@ impl App {
         } else {
             self.apply_refreshed_comparison(false);
         }
+        (available, persisted)
+    }
+
+    /// Pin Base to the current `HEAD` and select the working tree as Target.
+    pub(crate) fn select_head_working_tree(&mut self) {
+        if self.annotation_draft_blocks("changing comparison") {
+            return;
+        }
+        let (base, alias) = head_endpoint(&self.workspace);
+        let _ =
+            self.select_comparison_endpoints(base, alias, ComparisonEndpoint::WorkingTree, None);
+    }
+
+    /// Compare one immutable commit with its first parent.
+    pub(crate) fn select_commit_parent(
+        &mut self,
+        target: &CommitId,
+        target_alias: Option<EndpointAlias>,
+    ) {
+        if self.annotation_draft_blocks("changing comparison") {
+            return;
+        }
+        let commit = match self.workspace.resolve_revision(target.as_str()) {
+            Ok(commit) => commit,
+            Err(error) => {
+                self.notice(format!("cannot read selected commit: {error}"));
+                return;
+            }
+        };
+        let Some(parent) = commit.parents().next() else {
+            self.notice(format!("commit {} has no parent", commit.short()));
+            return;
+        };
+        let base_alias =
+            matches!(target_alias, Some(EndpointAlias::Head)).then_some(EndpointAlias::HeadParent);
+        let _ = self.select_comparison_endpoints(
+            ComparisonEndpoint::Commit(parent),
+            base_alias,
+            ComparisonEndpoint::Commit(commit.id()),
+            target_alias,
+        );
+    }
+
+    /// Compare the first parent of the current `HEAD` with `HEAD`.
+    pub(crate) fn select_head_parent(&mut self) {
+        if self.annotation_draft_blocks("changing comparison") {
+            return;
+        }
+        let target = match self.workspace.resolve_revision("HEAD") {
+            Ok(commit) => commit.id(),
+            Err(error) => {
+                self.notice(format!("HEAD~1 to HEAD is unavailable: {error}"));
+                return;
+            }
+        };
+        self.select_commit_parent(&target, Some(EndpointAlias::Head));
+    }
+
+    /// Use a newly captured immutable review point as Base against Working tree.
+    pub(crate) fn select_review_point(&mut self, id: String) -> (bool, bool) {
+        self.select_comparison_endpoints(
+            ComparisonEndpoint::ReviewPoint(id),
+            None,
+            ComparisonEndpoint::WorkingTree,
+            None,
+        )
     }
 
     /// Cached selected-comparison facts for navigation and rendering.

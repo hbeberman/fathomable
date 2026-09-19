@@ -42,6 +42,9 @@ the sidebar, so that pane also offers `restore u`; archived threads are not
 newly exposed inline. The old row-specific cleanup behavior below is
 superseded.
 
+Amended 2026-09-19: thread workflows move from `Space c` to `Space t`; all
+suffixes and direct pane key behavior below are unchanged.
+
 Builds on [0085](0085-thread-lifecycle-and-auto-resolve.md) and supersedes
 the state words and counts of [0032](0032-placement-and-state.md),
 [0066](0066-one-circle-language.md), and
@@ -161,8 +164,8 @@ total thread count.
 - The old `Space r` review route retires.
 - Bare `r` resolves or reopens the cursor thread.
 - Bare `R` enables or disables one-shot auto-resolve.
-- `Space c r` remains the pane-independent reply command.
-- The old bare `o` and `Space c o` resolution commands retire.
+- `Space t r` remains the pane-independent reply command.
+- The old bare `o` and `Space t o` resolution commands retire.
 - `Tab`, `Shift-Tab`, `]r`, and `[r` retire with waiting traversal.
 - Draft, picker, search, and command input continue to receive their input
   rather than these normal-mode actions.

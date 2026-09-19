@@ -234,7 +234,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     refused a detached thread without a line; [0082](decisions/0082-three-tool-review-core.md)
     later allowed ID-only replies without relocation; failures name the call
     that fixes them ([0055](decisions/0055-six-tools.md)).
-47. **The leader, trimmed.** The `Space` menu drops the tree actions,
+47. **The leader, trimmed (historical map).** The `Space` menu drops the tree actions,
     the change-queue clear, and `Space c n`; `Space w` is Helix's
     window submenu (`h j k l w`) and `Space w w` cycles the panes;
     unmatched continuations cancel without a menu entry;
@@ -286,7 +286,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     written before the first tag is owed a reader
     ([0062](decisions/0062-one-version-no-compatibility.md)).
 54. **A comment on the file.** A thread may be on a file as a whole:
-    `Space c f` starts one, `thread_start` without `line` starts one,
+    `Space t f` starts one, `thread_start` without `line` starts one,
     the record carries no range, anchor, or snippet, the viewer shows
     it as a stub above the first line with `file` as its placement
     word, and every list names it by its path alone
@@ -323,8 +323,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     ([0067](decisions/0067-the-texts-key-bar.md)).
 59. **What the files pane shows.** Four session toggles under `Space F`
     filter the files pane: only changed files (`c`), only files with open
-    reviews (`o`), hide untracked files (`u`), and show ignored files (`g`),
-    from any pane; the popup's
+    reviews (`o`), hide untracked files (`u`), and show ignored files (`i`),
+    from any pane, with the same bare keys while File list has focus.
+    Lowercase `Space f f/i/r` owns file-opening workflows; the popup's
     entries and the right-click menu say what a press does now; the
     pane's header row moves onto `ui.header` and names the active
     filters after the repo's counts
@@ -446,7 +447,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     one factual layout with dim lifecycle status and direct cleanup actions,
     hoverable action-first footers own cursor lifecycle controls, sidebar
     threads retain two-row cards from the same facts, lifecycle counts no
-    longer overlap, and `t`, `r`, and `R` form the direct review grammar
+    longer overlap, `Space t` owns thread workflows, `Space T s/x` changes
+    Thread-list settings, and `t`, `r`, and `R` form the direct review grammar
     ([0086](decisions/0086-one-thread-summary-and-its-actions.md)).
 78. **Global comparisons and deliberate board history.** One pinned
     checkout-wide comparison and a session-global Standard/Unified/Off mode
@@ -459,7 +461,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     actions. File and history headers expose the mode, active app bars show
     Base to Target, Off shows Target only, and removed comparison controls,
     commit batches, and `:diff` have no compatibility aliases. `Space d d`
-    directly reselects current HEAD to working tree
+    directly reselects current HEAD to working tree, `Space d l/c` selects
+    immutable first-parent comparisons, and `Space d p` saves a review point
+    and selects it as Base against Working tree
     ([0087](decisions/0087-global-comparisons-and-board-history.md)).
 79. **Bundled license notices.** Help > Licenses displays offline first- and
     third-party attribution embedded in the executable;

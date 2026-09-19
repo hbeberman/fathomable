@@ -37,6 +37,10 @@ Selection amended 2026-09-14 by [0079](0079-list-focus-language.md):
 files and all picker results use shared active and remembered list
 styles; `ui.sidebar.selected` and `ui.picker.selected` below are retired.
 
+File shortcuts amended 2026-09-19: `Space f f` opens the ordinary picker,
+`Space f i` opens the ignored-inclusive picker, and `Space f r` opens recent
+files. Uppercase `Space F` now contains File-list settings only.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,
@@ -154,7 +158,7 @@ choices were captured in a question round on 2026-08-26.
 
 ### Picker
 
-- `Space f` opens a centred popup: an input line on top, the ranked list
+- `Space f f` opens a centred popup: an input line on top, the ranked list
   below, the best match selected. Typing filters immediately; `Ctrl-n`/`Ctrl-p`
   (since 2026-09-03 `Ctrl-j`/`Ctrl-k`, [0045](0045-bindings-are-data.md))
   are taken by zellij, so `Up`/`Down` and `Ctrl-j`/`Ctrl-k` move, `Enter`
@@ -165,7 +169,7 @@ choices were captured in a question round on 2026-08-26.
   Helix users get the same `^`, `$`, `!`, and `'` syntax. The 0001 table is
   amended. It runs synchronously on the main thread over the index; the
   index is a plain `Vec<String>` of root-relative paths built by walking
-  the workspace when the picker first opens and reused afterwards; `Space F`
+  the workspace when the picker first opens and reused afterwards; `Space f i`
   builds a second index that skips ignore filtering. `R` in the sidebar
   drops both indexes.
 - Matched characters are highlighted with `ui.picker.match`; the selected

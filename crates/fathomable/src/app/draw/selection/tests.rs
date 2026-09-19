@@ -304,7 +304,7 @@ fn overlays_and_key_prefixes_release_the_files_cursor_without_moving_it() -> any
     let before = app.tree().context("files pane")?.cursor();
     let y = u16::try_from(before + 1)?;
 
-    for keys in [" ", " ?", " f", " Fr", " Fi"] {
+    for keys in [" ", " ?", " f", " fr", " fi"] {
         press(&mut app, keys);
         assert_eq!(
             super::Navigation::for_pane(&app, Focus::Tree),

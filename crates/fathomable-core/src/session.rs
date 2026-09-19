@@ -423,6 +423,10 @@ mod tests {
         assert!(!json.contains("name"), "{json}");
         assert!(!json.contains("socket"), "{json}");
         assert_eq!(serde_json::from_str::<Record>(&json)?, record);
+        let old_named = json.replacen('{', r#"{"name":"left","#, 1);
+        let loaded = serde_json::from_str::<Record>(&old_named)?;
+        assert_eq!(loaded, record);
+        assert!(!serde_json::to_string(&loaded)?.contains("name"));
         Ok(())
     }
 }

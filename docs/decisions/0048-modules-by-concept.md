@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Modules by concept
-description: The app crate's modules are grouped by the concept they serve — threads, draw, input, jump, agents, run — rather than by the milestone that added them; decision records point at the concept module they changed through related_resources, which need no backlink, so a record need not own a new file.
+description: The app crate's modules are grouped by the concept they serve — threads, draw, input, jump, run — rather than by the milestone that added them; decision records point at the concept module they changed through related_resources, which need no backlink, so a record need not own a new file.
 related_resources:
   - crates/fathomable/src/app/mod.rs
   - crates/fathomable/src/app/run.rs
@@ -24,8 +24,9 @@ Status: accepted (2026-09-03)
 
 Module inventory amended 2026-09-15 by
 [0082](0082-three-tool-review-core.md): the auto-jump module is removed.
-The small `app/agents.rs` boundary remains only for the visible,
-not-yet-implemented human wake action.
+The small `app/agents.rs` boundary initially remained only for the visible,
+not-yet-implemented human wake action. Amended later 2026-09-18: that wake
+placeholder and the now-empty module are removed too.
 
 ## Context
 

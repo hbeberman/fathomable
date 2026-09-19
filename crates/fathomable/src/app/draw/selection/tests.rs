@@ -8,7 +8,7 @@ use ratatui::layout::Position;
 use ratatui::style::{Color, Style};
 
 use crate::app::draw::{self, Theme};
-use crate::app::testing::{self, press, press_key};
+use crate::app::testing::{self, click, press, press_key};
 use crate::app::{App, Focus, PickerKind, PickerState};
 
 fn render(app: &App, theme: &Theme) -> anyhow::Result<Buffer> {
@@ -76,16 +76,17 @@ fn marker_count(buffer: &Buffer) -> usize {
 
 fn assert_pane_title(buffer: &Buffer, x: u16, y: u16, name: &str, theme: &Theme, focused: bool) {
     assert_eq!(buffer[(x, y)].symbol(), if focused { "▏" } else { " " });
-    let expected = if focused {
-        theme.pane_focus.fg
-    } else {
-        theme.text.fg
-    };
+    if focused {
+        assert_eq!(Some(buffer[(x, y)].fg), theme.pane_focus.fg);
+    }
     for (offset, character) in name.chars().enumerate() {
         let cell = &buffer[(x + 1 + u16::try_from(offset).unwrap_or(u16::MAX), y)];
         assert_eq!(cell.symbol(), character.to_string());
-        assert_eq!(Some(cell.fg), expected, "{name:?} cell {offset}");
+        assert_eq!(Some(cell.fg), theme.popup_key.fg, "{name:?} cell {offset}");
     }
+    let trailing = &buffer[(x + 1 + u16::try_from(name.len()).unwrap_or(u16::MAX), y)];
+    assert_eq!(trailing.symbol(), " ");
+    assert_eq!(Some(trailing.fg), theme.popup_key.fg);
 }
 
 #[test]
@@ -125,6 +126,32 @@ fn pane_titles_show_exactly_one_focus_marker_and_suspend_it_for_overlays() -> an
         app.close_popup();
         app.close_review();
     }
+    Ok(())
+}
+
+#[test]
+fn inactive_main_panes_return_the_footer_row_to_content() -> anyhow::Result<()> {
+    let dir = testing::workspace("inactive-main-footer", testing::README)?;
+    let mut app = testing::source_app(&dir)?;
+    app.show_tree();
+    app.view_mut().goto_source_line(3);
+    app.start_new_comment();
+    app.compose_insert("footer ownership");
+    app.compose_submit();
+    app.open_review();
+
+    let theme = Theme::from_core(&CoreTheme::resolve("default-dark", |_| Ok(None))?);
+    let x = u16::try_from(app.sidebar_width())?;
+    let y = u16::try_from(app.pane_top() + app.pane_rows() - 1)?;
+    let focused = render(&app, &theme)?;
+    assert_eq!(Some(focused[(x, y)].bg), theme.header.bg);
+
+    app.window_files();
+    let inactive = render(&app, &theme)?;
+    assert_ne!(Some(inactive[(x, y)].bg), theme.header.bg);
+
+    click(&mut app, usize::from(x) + 3, usize::from(y));
+    assert_eq!(app.focus(), Focus::Review);
     Ok(())
 }
 

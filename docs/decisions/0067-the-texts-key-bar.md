@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The text's key bar
-description: A key bar on `ui.header` replaces the bottom text row while it has something to say, carrying the thread cursor's keys, the draft's keys while one is open, `Z` for the file, and a focus tip while another pane has the keys; the text never moves for it; the thread header, the stub, the draft's author row, and the review list's entry header give up their keys to the bars, the cursor's stub is marked bold instead, the diff header alone keeps its keys, and `ui.hint` retires.
+description: A key bar on `ui.header` replaces the bottom text row while File is focused and has something to say, carrying thread, draft, diff, and file actions; focus moving elsewhere returns that row to content.
 resource: crates/fathomable/src/app/draw/bar.rs
 related_resources:
   - crates/fathomable/src/app/draw/header.rs
@@ -63,6 +63,13 @@ session mode, so the historical Escape-close comparison hint below is removed.
 Off gates comparison, Git-status, and live-change bar actions. Thread and draft
 bar behavior remains current.
 
+Amended again 2026-09-18 by
+[0091](0091-pane-focus-navigation.md): the File and Threads focus tips retire.
+Their bottom action bars are reserved only while that pane is focused; an
+active File draft keeps its bar. Focus moving elsewhere returns the row to
+pane content and a content click focuses the pane directly. Temporary
+overlays suppress the underlying actions without relaying out the pane.
+
 ## Context
 
 [0059](0059-headers-and-the-key-bar.md) moved the review list's keys
@@ -100,11 +107,10 @@ resolve. This record undoes both, the same day, for one rule.
   text row while it has something to say: a draft is open, a thread is
   under the cursor, or the file has a thread to fold. It takes no row
   of its own and the text never moves for it, as the threads pane's bar
-  replaces that pane's bottom row (0066); with nothing to say the row
-  is text. It is built from the binding table like the others. While
-  another pane has the keys it reads `click or Space w l to focus`,
-  and a click on it focuses the text. In a diff the checkpoint strip
-  keeps the row under the text; the bar sits on the text row above it.
+  replaces that pane's bottom row (0066). With nothing to say, or while
+  another pane owns navigation, the row is text. It is built from the
+  binding table like the others. In a diff the checkpoint strip keeps the
+  row under the text; the bar sits on the text row above it.
 - **What it says** while the text has the keys, under 0064's rule that
   every hint drawn works now:
   - With a draft open, the draft's keys: `submit Enter` (`save Enter` for an
@@ -150,9 +156,8 @@ resolve. This record undoes both, the same day, for one rule.
 - **`ui.hint` retires.** Nothing draws it once the stub's hint is gone;
   a theme that sets it is refused as it would be for any unknown key
   ([0062](0062-one-version-no-compatibility.md)).
-- **The review list's tip** reads `click or Space w l to focus`. 0059
-  said `Space w h`, which goes left to the sidebar; `Space w l` is the
-  key that reaches the text column.
+- **The review list's inactive row** is content rather than a focus tip.
+  Clicking that content focuses Threads through the normal list interaction.
 
 ### Amendments
 
@@ -172,11 +177,12 @@ resolve. This record undoes both, the same day, for one rule.
   file's stubs and returns a `Header::bar`. `Header::bar`, the hint
   constructors, and the thread and draft hint lists in `header.rs` open
   to the module.
-- `App::text_bar_shown` says whether the bar has something to say and
-  `text_bar_row` which screen row it covers; `text_rows` is unchanged.
-  `draw` paints the bar over the column after the text. Since 2026-09-14,
-  the view's scrolling height subtracts this covered row and is updated
-  on navigation, stub/draft changes, and relayout.
+- `App::text_bar_shown` says whether File is focused and the bar has something
+  to say, or an active draft needs its controls; `text_bar_row`
+  says which screen row it covers and `text_rows` is unchanged. `draw`
+  paints the bar over the column after the text. Since 2026-09-14, the
+  view's scrolling height subtracts this covered row and is updated on
+  navigation, stub/draft changes, and relayout.
 - `expanded_header` and `entry_header` take no focus and no cursor;
   `draft_header` is words alone and `draft_hints` is the list the bar
   reads. `stub_line` loses `hinted` and gains the bold mark.

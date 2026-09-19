@@ -140,7 +140,9 @@ fn review_mouse(
     row: usize,
     screen_row: usize,
 ) -> Effect {
-    let bar = app.pane_rows().saturating_sub(1);
+    let footer_shown = app.focus() == Focus::Review;
+    let bar_row = app.pane_rows().saturating_sub(1);
+    let body_end = app.pane_rows().saturating_sub(usize::from(footer_shown));
     match kind {
         MouseEventKind::ScrollDown => app.review_scroll(WHEEL_LINES),
         MouseEventKind::ScrollUp => app.review_scroll(-WHEEL_LINES),
@@ -160,11 +162,7 @@ fn review_mouse(
                 app.open_reviews_settings_menu(screen_row);
             }
         }
-        MouseEventKind::Down(MouseButton::Left) if row == bar => {
-            if app.focus() != Focus::Review {
-                app.focus_pane(Focus::Review);
-                return Effect::None;
-            }
+        MouseEventKind::Down(MouseButton::Left) if footer_shown && row == bar_row => {
             let rows = app.review_rows(app.column_width());
             let footer = header::review_footer(app, &rows.entries);
             if let Some(action) = footer.action_at(app.column_width(), column - app.sidebar_width())
@@ -202,7 +200,7 @@ fn review_mouse(
             }
             app.review_click(list_row);
         }
-        MouseEventKind::Down(MouseButton::Right) if row >= 1 && row < bar => {
+        MouseEventKind::Down(MouseButton::Right) if row >= 1 && row < body_end => {
             app.open_review_menu(row - 1, column, screen_row);
         }
         _ => {}

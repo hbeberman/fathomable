@@ -961,7 +961,7 @@ mod tests {
 
         let cells = buffer(&app)?;
         let theme = Theme::from_core(&CoreTheme::resolve("default-dark", |_| Ok(None))?);
-        for column in 0..10 {
+        for column in 0..11 {
             assert_eq!(
                 Some(cells[(column, u16::try_from(row)?)].bg),
                 theme.list_hover.bg,
@@ -969,7 +969,7 @@ mod tests {
             );
         }
         assert_eq!(
-            Some(cells[(10, u16::try_from(row)?)].bg),
+            Some(cells[(11, u16::try_from(row)?)].bg),
             theme.header.bg,
             "hover stops at the title hit region"
         );

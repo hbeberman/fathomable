@@ -1973,7 +1973,7 @@ impl App {
             .max(1)
     }
 
-    /// Whether the text's key bar replaces the bottom text row.
+    /// Whether File reserves its bottom text row for the key bar.
     pub(crate) fn text_bar_shown(&self) -> bool {
         self.has_document()
             && !self.getting_started()
@@ -1981,6 +1981,7 @@ impl App {
             && !self.review_list().is_open()
             && self.info().is_none()
             && self.text_rows() >= 2
+            && (self.draft().is_some() || self.focus == Focus::View)
     }
 
     /// The screen row the text's key bar replaces: the bottom text row.

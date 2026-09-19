@@ -10,13 +10,13 @@ use crate::app::input::bindings::{Action, Where};
 use crate::app::threads::words::Words;
 use crate::app::{App, Focus};
 
-/// The text's key bar, or the focus tip while another pane owns the keys.
+/// The text's key bar while the File pane owns navigation.
 pub(crate) fn text_bar(app: &App) -> Header {
     if let Some(compose) = app.draft() {
         return Header::bar(draft_hints(compose));
     }
     if !app.pane_has_navigation(Focus::View) {
-        return Header::bar(vec![HintOf::new("", "click or f to focus", &[])]);
+        return Header::bar(Vec::new());
     }
     let place = Where::View;
     let mut hints = Vec::new();
@@ -333,8 +333,8 @@ mod tests {
     /// The bar carries the thread cursor's keys and only those that work
     /// (ADR 0064): `edit e` on the user's own message, `expand z` on a
     /// stub and `fold z` on an expanded thread, `Z` for the file; the
-    /// thread header is its words alone; another pane's focus leaves the
-    /// focus tip.
+    /// thread header is its words alone; another pane's focus returns the
+    /// bottom row to the file.
     #[test]
     fn the_bar_reads_the_cursor_threads_keys() -> anyhow::Result<()> {
         let (_dir, mut app, mine, theirs) = app_with_two_threads()?;
@@ -400,14 +400,12 @@ mod tests {
         app.view_mut().goto_source_line(1);
         assert_eq!(bar(&app)?.trim(), "comment c · threads (⇧)Tab");
 
-        // Another pane's focus: the tip. A click on the tip focuses the
-        // text, and one on a hint runs it.
+        // Another pane's focus returns the bottom row to the text.
         app.toggle_tree_focus();
-        assert_eq!(bar(&app)?.trim(), "click or f to focus");
-        let row = app.text_bar_row();
-        let sidebar = app.sidebar_width();
-        click(&mut app, sidebar + 3, row);
+        assert!(!app.text_bar_shown());
+        app.focus_pane(Focus::View);
         assert_eq!(app.focus(), Focus::View);
+        assert!(app.text_bar_shown());
         app.view_mut().goto_source_line(3);
         assert!(
             !bar(&app)?.contains("reply"),
@@ -430,6 +428,16 @@ mod tests {
         assert!(app.draft().is_none());
 
         archive_resolved_cursor(&mut app, &mine)?;
+
+        // Clicking the reclaimed content row focuses File, where the action
+        // bar returns.
+        app.toggle_tree_focus();
+        assert!(!app.text_bar_shown());
+        let row = app.text_bar_row();
+        let sidebar = app.sidebar_width();
+        click(&mut app, sidebar + 3, row);
+        assert_eq!(app.focus(), Focus::View);
+        assert!(app.text_bar_shown());
 
         // The bar replaces the bottom text row; the text has as many rows
         // as it had with no bar (ADR 0067).

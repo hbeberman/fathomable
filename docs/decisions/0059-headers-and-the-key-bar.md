@@ -60,6 +60,14 @@ File header, with the selected root-relative directory path beside `File`.
 Directory statistics sit in the body below it; there is no second,
 directory-specific header or pane identity.
 
+Amended 2026-09-18 by [0091](0091-pane-focus-navigation.md): File and Threads
+reserve their bottom action bars only while focused (or while File contains
+an active draft). Focus moving to another pane gives that row back to content
+instead of drawing a focus tip; a temporary overlay suppresses actions
+without relaying out the pane behind it. All four pane-title buttons use the
+muted-blue `ui.popup.key` foreground and include one trailing clickable cell;
+the focused pane's leading `▏` alone retains `ui.pane.focus`.
+
 ## Context
 
 The review list of [0049](0049-inline-threads-and-the-rail.md) drew its
@@ -115,8 +123,8 @@ unchanged.
   e edit · o resolve · k/j threads · l/h messages · Esc`. The list is
   the same eleven, in the same order, with the same rules for when
   `edit`, `threads`, and `messages` appear; the bar drops hints from
-  its end when it is too narrow, as the header did. Unfocused, the bar
-  reads `click or Space w h to focus`.
+  its end when it is too narrow, as the header did. When unfocused, the
+  bar is absent and the list uses that row for content.
 - The bar is a `Header` with an empty left part and left-aligned hints,
   so the mouse of [0050](0050-mouse-menus-and-gestures.md) reads it as
   it read the header: a click on a hint runs it, a pair splits at its
@@ -159,10 +167,11 @@ unchanged.
   read a header's layout from.
 - `fathomable-core::theme::Key` gains `UiHeader`; both built-in themes
   set it; the draw `Theme` carries `header`.
-- `draw_review` lays out header, entries, and key bar; the list's
-  visible-row count and scroll take two chrome rows; `review_mouse`
-  reads the bottom row as the key bar and the top row's sort word as
-  a click on the sort.
+- `draw_review` lays out header, entries, and key bar; the focused list's
+  visible-row count and scroll take two chrome rows, while the inactive list
+  uses only its header. `review_mouse` reads the bottom row as the key bar
+  only while Threads retains focus and reads the top row's sort word as a
+  click on the sort.
 - The guide's review list section and its mouse paragraph say where
   the keys are, and §7 names `ui.header` among the theme keys.
 - The wording `proposed` stays everywhere it was; a later record may

@@ -406,7 +406,7 @@ fn the_header_shortens_scope_and_hovers_only_the_title() -> anyhow::Result<()> {
         },
     );
     let (theme, buffer) = sidebar_buffer(&app)?;
-    for column in 0..12 {
+    for column in 0..13 {
         assert_eq!(
             Some(buffer[(column, u16::try_from(row)?)].bg),
             theme.list_hover.bg,
@@ -414,7 +414,7 @@ fn the_header_shortens_scope_and_hovers_only_the_title() -> anyhow::Result<()> {
         );
     }
     assert_eq!(
-        Some(buffer[(12, u16::try_from(row)?)].bg),
+        Some(buffer[(13, u16::try_from(row)?)].bg),
         theme.header.bg,
         "hover stops at the title hit region"
     );

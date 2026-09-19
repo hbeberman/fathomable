@@ -3090,8 +3090,8 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         rows: all, entries, ..
     } = app.review_rows(width);
     let now = fathomable_core::clock::now();
-    // The header, the entries between, and the key bar on the last row
-    // (ADR 0059); one row shows the header alone.
+    // The header, the entries between, and the key bar on the last row while
+    // Threads retains focus (ADR 0059); one row shows the header alone.
     let header = review_header(app);
     let title_hovered = app.review().view == ReviewView::Board
         && app.pointer().is_some_and(|(column, row)| {
@@ -3111,7 +3111,8 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         control_hovered,
         app.pane_has_navigation(Focus::Review),
     )];
-    let body = rows.saturating_sub(2);
+    let footer_shown = app.focus() == Focus::Review;
+    let body = rows.saturating_sub(1 + usize::from(footer_shown));
     let scroll = list.scroll().min(all.len().saturating_sub(body));
     for row in all.iter().skip(scroll).take(body) {
         let context = ListRender {
@@ -3122,7 +3123,7 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         };
         lines.push(list_row(&context, row));
     }
-    if rows >= 2 {
+    if footer_shown && rows >= 2 {
         lines.resize_with(rows - 1, Line::default);
         let footer = review_footer(app, &entries);
         let footer_row = usize::from(area.y) + rows - 1;

@@ -1185,7 +1185,8 @@ fn the_reviews_title_opens_checked_settings_below_the_header() -> anyhow::Result
     assert!(header_text.contains("Threads"), "{header_text:?}");
     assert!(header_text.contains("workspace"), "{header_text:?}");
 
-    left(&mut app, sidebar + 1, header_row);
+    let header = header::review_header(&app);
+    left(&mut app, sidebar + header.left_width() - 1, header_row);
     assert_eq!(app.focus(), Focus::Review);
     assert_eq!(app.menu().map(Menu::title), Some("Threads"));
     let settings = app
@@ -1221,7 +1222,6 @@ fn the_reviews_title_opens_checked_settings_below_the_header() -> anyhow::Result
     left(&mut app, cell.0, cell.1);
     assert!(app.review().resolved);
 
-    let header = header::review_header(&app);
     assert!(
         (0..app.column_width())
             .all(|column| { header.action_at(app.column_width(), column).is_none() }),
@@ -1233,7 +1233,7 @@ fn the_reviews_title_opens_checked_settings_below_the_header() -> anyhow::Result
         "passive header cells do not open a menu"
     );
 
-    left(&mut app, sidebar + 1, header_row);
+    left(&mut app, sidebar + header.title_width() - 1, header_row);
     let cell = entry_cell(&app, "open file")?;
     left(&mut app, cell.0, cell.1);
     assert!(!app.review_list().is_open());
@@ -1257,7 +1257,7 @@ fn the_file_title_opens_navigation_and_display_settings() -> anyhow::Result<()> 
     left(&mut app, sidebar + header.title_width() + 1, header_row);
     assert!(app.menu().is_none(), "the filename is passive");
 
-    left(&mut app, sidebar + 1, header_row);
+    left(&mut app, sidebar + header.title_width() - 1, header_row);
     assert_eq!(app.menu().map(Menu::title), Some("File"));
     let settings = app
         .menu()

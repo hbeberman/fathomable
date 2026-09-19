@@ -14,10 +14,9 @@
 //! Every header row draws on `ui.header`.
 //!
 //! A key hint is drawn only where pressing that key now, with the focus
-//! and cursor as they are, runs the action it names (ADR 0064): a bar
-//! whose keys would not work here says how to focus the pane instead.
-//! The binding table says what a key is called; each builder here says
-//! whether it works.
+//! and cursor as they are, runs the action it names (ADR 0064). An inactive
+//! pane gives its footer row back to content. The binding table says what a
+//! key is called; each builder here says whether it works.
 
 use std::path::Path;
 
@@ -743,16 +742,19 @@ impl Header {
                     theme.header
                 };
                 let title = text.strip_prefix(' ').unwrap_or(text);
-                let accent = if focused {
+                let marker = if focused {
                     theme.pane_focus
                 } else {
-                    theme.text
+                    theme.popup_key
                 };
                 spans.push(Span::styled(
                     if focused { "▏" } else { " " },
-                    on_surface(surface, accent),
+                    on_surface(surface, marker),
                 ));
-                spans.push(Span::styled(title.to_owned(), on_surface(surface, accent)));
+                spans.push(Span::styled(
+                    title.to_owned(),
+                    on_surface(surface, theme.popup_key),
+                ));
                 continue;
             }
             let style = if hovered && index == 0 {
@@ -828,9 +830,8 @@ impl ConfirmationControls {
 
 fn tone_style(theme: &Theme, tone: Tone) -> ratatui::style::Style {
     match tone {
-        Tone::Key => theme.popup_key,
+        Tone::Key | Tone::Pane => theme.popup_key,
         Tone::Info => theme.info,
-        Tone::Pane => theme.text,
         Tone::Mark(state) => mark_style(theme, state),
         Tone::Added => theme.diff_plus,
         Tone::Removed => theme.diff_minus,
@@ -950,15 +951,15 @@ pub(crate) fn review_header(app: &App) -> Header {
         };
         counts.insert(0, HintOf::responsive_word(scope, compact, Tone::Info));
         Header::counted_with_tail(
-            vec![(" Threads".to_owned(), Tone::Pane)],
+            vec![(" Threads ".to_owned(), Tone::Pane)],
             counts,
             vec![HintOf::diff_mode(app.diff_mode())],
         )
     } else {
         Header::counted_with_tail(
             vec![
-                (" Threads".to_owned(), Tone::Pane),
-                (format!("  {}", review.view.title()), Tone::Info),
+                (" Threads ".to_owned(), Tone::Pane),
+                (format!(" {}", review.view.title()), Tone::Info),
             ],
             counts,
             vec![HintOf::diff_mode(app.diff_mode())],
@@ -986,8 +987,8 @@ pub(crate) fn file_header(app: &App) -> Header {
     );
     let mut header = Header::counted_with_tail(
         vec![
-            (" File".to_owned(), Tone::Pane),
-            (format!("  {filename}"), Tone::Info),
+            (" File ".to_owned(), Tone::Pane),
+            (format!(" {filename}"), Tone::Info),
         ],
         counts,
         vec![HintOf::diff_mode(app.diff_mode())],
@@ -996,8 +997,7 @@ pub(crate) fn file_header(app: &App) -> Header {
     header
 }
 
-/// The review list's key bar on its bottom row (ADR 0059, ADR 0066):
-/// the list keys while it has focus, else how to focus it.
+/// The review list's key bar on its bottom row while it owns navigation.
 pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
     let place = Where::Review;
     let hints = if app.pane_has_navigation(Focus::Review) {
@@ -1062,7 +1062,7 @@ pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
         hints.push(HintOf::keyed(place, Action::Escape, ""));
         hints
     } else {
-        vec![HintOf::new("", "click or t to focus", &[])]
+        Vec::new()
     };
     Header::bar(hints)
 }
@@ -1074,7 +1074,7 @@ pub(crate) fn threads_pane_header(app: &App) -> Header {
     let scope = app.sidebar_scope();
     let file_only = scope == crate::app::threads::pane::PaneScope::File;
     Header::counted_with_tail(
-        vec![(" Thread list".to_owned(), Tone::Pane)],
+        vec![(" Thread list ".to_owned(), Tone::Pane)],
         vec![HintOf::responsive_word(
             scope.word(),
             scope.short_word(),
@@ -1106,7 +1106,11 @@ pub(crate) fn files_pane_header(app: &App) -> Header {
             counts.push(HintOf::word(format!("-{}", total.removed), Tone::Removed));
         }
     }
-    Header::counted_with_tail(vec![(" File list".to_owned(), Tone::Pane)], filters, counts)
+    Header::counted_with_tail(
+        vec![(" File list ".to_owned(), Tone::Pane)],
+        filters,
+        counts,
+    )
 }
 
 /// The Thread-list footer: local actions while the pane owns navigation.
@@ -1295,7 +1299,7 @@ mod tests {
     fn pane_titles_fit_even_when_the_title_is_wider_than_the_pane() -> anyhow::Result<()> {
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
         let theme = Theme::from_core(&core);
-        for title in [" File list", " Thread list", " 界界"] {
+        for title in [" File list ", " Thread list ", " 界界 "] {
             let header = Header::new(vec![(title.to_owned(), Tone::Pane)], Vec::new());
             for width in 0..=16 {
                 for focused in [false, true] {
@@ -1312,15 +1316,14 @@ mod tests {
     }
 
     #[test]
-    fn pane_focus_marks_only_the_reserved_cell_and_name_without_moving_content()
-    -> anyhow::Result<()> {
+    fn pane_titles_use_the_button_accent_without_moving_focus_content() -> anyhow::Result<()> {
         for name in fathomable_core::theme::BUILTIN_NAMES {
             let core = fathomable_core::theme::Theme::resolve(name, |_| Ok(None))?;
             let theme = Theme::from_core(&core);
             let header = Header::counted_with_tail(
                 vec![
-                    (" File".to_owned(), Tone::Pane),
-                    ("  README.md".to_owned(), Tone::Info),
+                    (" File ".to_owned(), Tone::Pane),
+                    (" README.md".to_owned(), Tone::Info),
                 ],
                 vec![HintOf::word("+3".to_owned(), Tone::Added)],
                 vec![HintOf::diff_mode(DiffMode::Standard)],
@@ -1338,17 +1341,10 @@ mod tests {
             assert_eq!(inactive.spans[0].content, " ");
             assert_eq!(focused.spans[0].content, "▏");
             assert_eq!(focused.spans[0].style.fg, theme.pane_focus.fg);
-            assert_eq!(focused.spans[1].content, "File");
-            assert_eq!(focused.spans[1].style.fg, theme.pane_focus.fg);
-            assert_ne!(focused.spans[2].style.fg, theme.pane_focus.fg);
-            assert!(
-                focused
-                    .spans
-                    .iter()
-                    .filter(|span| span.style.fg == theme.pane_focus.fg)
-                    .all(|span| span.content == "▏" || span.content == "File"),
-                "{name}: {focused:?}"
-            );
+            assert_eq!(focused.spans[1].content, "File ");
+            assert_eq!(inactive.spans[1].style.fg, theme.popup_key.fg);
+            assert_eq!(focused.spans[1].style.fg, theme.popup_key.fg);
+            assert_ne!(focused.spans[2].style.fg, theme.popup_key.fg);
         }
         Ok(())
     }

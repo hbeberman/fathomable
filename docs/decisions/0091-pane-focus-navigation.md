@@ -19,6 +19,13 @@ Amended later 2026-09-18: in File list, `z` on a file toggles its immediate
 parent directory and moves the cursor there when folding, so the next `z`
 unfolds that same directory. A root-level file remains unchanged.
 
+Amended again 2026-09-18: all four pane names are muted-blue
+`ui.popup.key` buttons with one trailing clickable cell. The leading `▏`
+alone keeps `ui.pane.focus` while focused. File and Threads show their
+bottom action bars only while focused (or File has an active draft), returning
+the row to content instead of showing an inactive focus tip. Temporary
+overlays suppress pane actions without relaying out the pane behind them.
+
 Supersedes the window-focus contract in
 [0056](0056-the-leader-trimmed.md), amends the pane names in
 [0057](0057-the-sidebar.md) and [0081](0081-the-menu-bar.md), extends the
@@ -87,11 +94,13 @@ focus the pane without replacing the title-menu target.
 
 ### One visible navigation owner
 
-Every pane header reserves its first cell for a `▏` marker. When
+Every pane header reserves its first cell for a `▏` marker. Each pane name
+uses the muted-blue `ui.popup.key` foreground and includes one trailing cell
+in its click and hover region, matching the menu bar's button spacing. When
 `App::pane_has_navigation` says that pane is the current normal keyboard
-owner, the marker and pane name use `ui.pane.focus`; all other title content
-stays neutral. The reserved cell keeps filenames, counts, filters, status,
-and controls at the same columns when focus changes.
+owner, the marker uses `ui.pane.focus`; all other title content stays neutral.
+The reserved cell keeps filenames, counts, filters, status, and controls at
+the same columns when focus changes.
 
 The treatment applies to File, File list, Threads, and Thread list, including
 empty panes and File directory, information, no-document, and Threads
@@ -116,9 +125,12 @@ surface alone, `28×5` with File list, `28×6` with Thread list, and `28×8`
 with both sidebar lists. Hiding the app bar subtracts one required row. These
 thresholds include the persistent status row and enough pane chrome and body
 space to keep every displayed pane visible.
-The sidebar leaves at least 20 main columns. Thread list shows its action
-footer only while it owns navigation and otherwise gives that row back to
-entries. At minimum File height, the footer yields to a deletion banner
+The sidebar leaves at least 20 main columns. File and Threads reserve their
+action footer while focused and otherwise give that row back to content; an
+active File draft keeps its controls. Thread list shows its action footer only
+while it owns navigation and otherwise gives that row back to entries.
+Temporary overlays suppress main-pane actions without relaying out the pane
+behind them. At minimum File height, the footer yields to a deletion banner
 rather than hiding all content.
 
 When the terminal is below that minimum, pane contents and their hit regions

@@ -93,13 +93,18 @@ Rules:
 ### Rust toolchain roles
 
 `[workspace.package].rust-version` declares the minimum supported Rust version
-(MSRV), initially **1.97**. Members inherit it. This is a supported floor for
+(MSRV), currently **1.95**. Members inherit it. This is a supported floor for
 building and testing the Linux workspace with the committed `Cargo.lock`,
 not a claim that older compilers cannot possibly compile the source. The
 floor rises only when an intentional source or dependency change requires it,
 with the manifest, CI, and documentation updated together. A release-compiler
 update alone does not raise the MSRV. Lowering the floor likewise requires
 evidence from the source and locked dependency graph.
+
+The current floor matches the declared requirement of `kdl` 6.7.1 in the
+committed dependency graph. All workspace targets, tests, and doctests support
+Rust 1.95.0; the former 1.97 floor came from the development-toolchain pin,
+not a source or dependency requirement.
 
 `rust-toolchain.toml` selects **stable** for normal development and source
 installation. Rustup's installed stable channel is updated explicitly with

@@ -15,7 +15,7 @@ It never edits your checkout or Git data. Install it on Linux using the
 [README](../README.md#install); contributor tooling is separate in
 [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-Source builds support Rust 1.97 or newer and default to stable Rust. The
+Source builds support Rust 1.95 or newer and default to stable Rust. The
 minimum supported compiler and the compiler used for attributed release
 builds are separate; see the
 [toolchain policy](decisions/0001-dependency-policy.md#rust-toolchain-roles).

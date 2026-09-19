@@ -13,7 +13,7 @@ are refused, not automatically migrated or deleted. See the
 
 ## Install
 
-Building needs Rust **1.97 or newer**, a C linker, and Git. The checkout
+Building needs Rust **1.95 or newer**, a C linker, and Git. The checkout
 defaults to stable Rust; the minimum is checked independently in CI.
 Run the package commands for your distribution, then install Rust and Fathomable:
 

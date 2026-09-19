@@ -58,7 +58,7 @@ that under PEP 668, which is why the distro package is listed above.
 
 ### Rust compiler support
 
-The workspace supports Rust **1.97 or newer** with its committed lockfile.
+The workspace supports Rust **1.95 or newer** with its committed lockfile.
 `Cargo.toml` declares this minimum independently of the development channel
 (`stable` in `rust-toolchain.toml`) and the exact release compiler
 (`rust_standard_library.release` in `licenses/manifest.json`). Updating the

@@ -11,7 +11,7 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 # Supported compiler floor (ADR 0001), independent of development/release tooling.
-rust-version = "1.97"
+rust-version = "1.95"
 authors = ["Project contributors"]
 license = "MIT"
 license-file = "LICENSE"

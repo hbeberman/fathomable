@@ -2822,11 +2822,7 @@ fn picker_layout_in(area: Rect, picker: &PickerState) -> PickerLayout {
         width: popup.width.saturating_sub(2),
         height: popup.height.saturating_sub(2),
     };
-    let rename = matches!(
-        picker.kind(),
-        super::PickerKind::ComparisonReviewPoints | super::PickerKind::ReviewPointManage
-    )
-    .then(|| {
+    let rename = (picker.kind() == super::PickerKind::ComparisonReviewPoints).then(|| {
         let width = body.width.min(15);
         Rect {
             x: body.right().saturating_sub(width),

@@ -140,10 +140,7 @@ fn key_event(app: &mut App, key: KeyEvent) -> Effect {
         && matches!(
             app.popup(),
             Some(Popup::Picker(picker))
-                if matches!(
-                    picker.kind(),
-                    PickerKind::ComparisonReviewPoints | PickerKind::ReviewPointManage
-                )
+                if picker.kind() == PickerKind::ComparisonReviewPoints
         )
     {
         app.clear_message();

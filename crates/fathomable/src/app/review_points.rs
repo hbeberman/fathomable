@@ -649,15 +649,11 @@ impl App {
         ));
     }
 
-    /// Start renaming the highlighted point in either point picker.
+    /// Start renaming the highlighted comparison review point.
     pub(crate) fn rename_selected_review_point(&mut self) {
         let selected = match self.popup.as_ref() {
             Some(super::Popup::Picker(picker))
-                if matches!(
-                    picker.kind(),
-                    super::PickerKind::ComparisonReviewPoints
-                        | super::PickerKind::ReviewPointManage
-                ) =>
+                if picker.kind() == super::PickerKind::ComparisonReviewPoints =>
             {
                 picker
                     .selected_item()

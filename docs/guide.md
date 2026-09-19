@@ -270,9 +270,9 @@ Choose any saved point under the base picker's **Review points...**. See
 `Space d r` or **Diff > Manage review points...** opens the searchable
 repository-wide point list. Enter or click a row to open its action card:
 `r` renames, `d` enters the separately guarded deletion confirmation, and
-`Esc` returns to the list. Press `Ctrl-r` on a highlighted point in either this
-manager or the comparison **Review points...** picker for direct rename; the
-visible rename hint is clickable too.
+`Esc` returns to the list. In the comparison **Review points...** picker,
+`Ctrl-r` renames the highlighted point directly; the visible rename hint is
+clickable too.
 
 The one-line rename editor starts with the current name. Enter submits and Esc
 returns without changing it; blank or whitespace-only input clears the name.

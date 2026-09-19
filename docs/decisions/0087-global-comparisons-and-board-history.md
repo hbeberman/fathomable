@@ -337,9 +337,9 @@ a searchable repository-wide point manager. Enter or a row click opens a
 point card with bounded identity, capture-time, baseline, and file-count facts.
 The card's `r` action edits the name and `d` opens a separate destructive
 confirmation; `y` confirms deletion and Esc returns without crossing either
-boundary. `Ctrl-r` renames the highlighted point directly in both the manager
-and comparison Review points picker, and each picker exposes that action as a
-clickable hint. A pending new line or file annotation blocks management so
+boundary. The comparison Review points picker also exposes `Ctrl-r` and a
+clickable hint for direct rename; the manager keeps rename on the selected
+point's card. A pending new line or file annotation blocks management so
 displayed source and provenance cannot be silently rebound.
 
 Names are trimmed on new writes; blank or whitespace-only input means unnamed.

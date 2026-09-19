@@ -73,6 +73,11 @@ fn ctrl_r(app: &mut App) {
     );
 }
 
+fn manager_rename(app: &mut App) {
+    app.picker_confirm();
+    key(app, KeyCode::Char('r'));
+}
+
 fn click(app: &mut App, column: usize, row: usize) {
     mouse::handle_mouse(
         app,
@@ -99,6 +104,20 @@ fn manager_opens_action_card_and_rename_edits_prefilled_unicode_name() -> anyhow
         app.picker_char(character);
     }
     select_point(&mut app, point.id())?;
+    ctrl_r(&mut app);
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::Picker(picker)) if picker.kind() == PickerKind::ReviewPointManage
+    ));
+    let layout = match app.popup() {
+        Some(Popup::Picker(picker)) => draw::picker_layout(&app, picker),
+        _ => anyhow::bail!("manager picker"),
+    };
+    assert!(
+        !(0..app.pane_rows())
+            .flat_map(|row| (0..app.size().0).map(move |column| (column, row)))
+            .any(|(column, row)| layout.rename_at(column, row))
+    );
     app.picker_confirm();
     assert!(matches!(
         app.popup(),
@@ -132,7 +151,7 @@ fn manager_opens_action_card_and_rename_edits_prefilled_unicode_name() -> anyhow
             .is_some_and(|toast| toast.text().contains("Renamed review point"))
     );
 
-    ctrl_r(&mut app);
+    manager_rename(&mut app);
     key(&mut app, KeyCode::Home);
     key(&mut app, KeyCode::Delete);
     key(&mut app, KeyCode::Delete);
@@ -161,7 +180,7 @@ fn rename_preserves_a_full_length_name_without_appending_a_manifest_line() -> an
 
     app.request_review_point_manage();
     select_point(&mut app, point.id())?;
-    ctrl_r(&mut app);
+    manager_rename(&mut app);
     assert!(matches!(
         app.popup(),
         Some(Popup::ReviewPointRename(rename)) if rename.editor().text() == name
@@ -191,7 +210,7 @@ fn undersized_rename_popup_ignores_edits_and_submit_but_keeps_escape_and_quit() 
 
     app.request_review_point_manage();
     select_point(&mut app, point.id())?;
-    ctrl_r(&mut app);
+    manager_rename(&mut app);
     let (width, height) = app.minimum_pane_size();
     app.resize(width.saturating_sub(1), height);
     assert!(!app.panes_fit());
@@ -214,7 +233,7 @@ fn undersized_rename_popup_ignores_edits_and_submit_but_keeps_escape_and_quit() 
     app.resize(width, height);
     app.request_review_point_manage();
     select_point(&mut app, point.id())?;
-    ctrl_r(&mut app);
+    manager_rename(&mut app);
     app.resize(width.saturating_sub(1), height);
     key(&mut app, KeyCode::Char('q'));
     assert!(matches!(app.popup(), Some(Popup::ConfirmQuit)));
@@ -235,7 +254,7 @@ fn rename_errors_reload_and_reselect_the_stable_id() -> anyhow::Result<()> {
 
     app.request_review_point_manage();
     select_point(&mut app, first.id())?;
-    ctrl_r(&mut app);
+    manager_rename(&mut app);
     if let Some(Popup::ReviewPointRename(rename)) = app.popup.as_mut() {
         rename.editor = fathomable_core::editor::Buffer::from_text("second");
     }
@@ -246,7 +265,7 @@ fn rename_errors_reload_and_reselect_the_stable_id() -> anyhow::Result<()> {
             .is_some_and(|message| message.contains("already in use"))
     );
 
-    ctrl_r(&mut app);
+    manager_rename(&mut app);
     if let Some(Popup::ReviewPointRename(rename)) = app.popup.as_mut() {
         rename.editor = fathomable_core::editor::Buffer::from_text("x".repeat(129));
     }
@@ -257,7 +276,7 @@ fn rename_errors_reload_and_reselect_the_stable_id() -> anyhow::Result<()> {
             .is_some_and(|message| message.contains("at most 128"))
     );
 
-    ctrl_r(&mut app);
+    manager_rename(&mut app);
     if let Some(Popup::ReviewPointRename(rename)) = app.popup.as_mut() {
         rename.editor = fathomable_core::editor::Buffer::from_text("bad\nname");
     }

@@ -34,7 +34,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 git clone https://github.com/hbeberman/fathomable
 cd fathomable
-cargo install --path crates/fathomable --locked
+cargo +stable install --path crates/fathomable --locked
 # Ensure ~/.cargo/bin is in PATH
 fathomable --version
 ```

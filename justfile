@@ -75,7 +75,7 @@ test-commit-hooks:
     prek run --config prek.toml --all-files commit-hooks
 
 install:
-    cargo install --path crates/fathomable --locked
+    cargo +stable install --path crates/fathomable --locked
 
 release:
     scripts/check-licenses.sh

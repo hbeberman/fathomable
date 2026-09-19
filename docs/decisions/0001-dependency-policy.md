@@ -110,7 +110,10 @@ not a source or dependency requirement.
 installation. Rustup's installed stable channel is updated explicitly with
 `rustup update stable`; entering the checkout does not install a specific
 numbered release. An explicit `cargo +VERSION` or `RUSTUP_TOOLCHAIN` can
-select another supported compiler.
+select another supported compiler for ordinary Cargo commands. `just install`
+explicitly selects stable with `cargo +stable install`, rather than relying on
+the checkout or caller's toolchain selection. Use `cargo +VERSION install`
+directly to install with another supported compiler.
 
 CI builds all workspace targets and runs tests, including doctests, with the
 locked dependencies on both the declared MSRV and current stable. These jobs

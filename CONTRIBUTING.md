@@ -77,6 +77,8 @@ python3 scripts/rust-toolchain.py msrv cargo test --workspace --all-features --l
 Formatting, Clippy, and warnings-denied rustdoc run with the recorded release
 compiler, keeping their output consistent across developer machines. Ordinary
 `cargo build`, `cargo test`, and `cargo install` use your selected compiler.
+`just install` explicitly selects stable, including when a toolchain override
+is set in the environment.
 See the [toolchain policy](docs/decisions/0001-dependency-policy.md#rust-toolchain-roles).
 
 Hook installation is explicit opt-in: building or installing the product
@@ -261,8 +263,9 @@ frame pointers, at perf's configured maximum depth, or where symbols are
 unavailable. This CPU profile does not add kernel symbols or measure off-CPU
 waiting.
 
-`just install` runs `cargo install --path crates/fathomable --locked`;
+`just install` runs `cargo +stable install --path crates/fathomable --locked`;
 end users can run that Cargo command directly without installing `just`.
+Replace `+stable` with another supported version to install using that compiler.
 
 ### Release builds
 

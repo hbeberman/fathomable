@@ -27,11 +27,12 @@ multi-tenant service, an agent sandbox, or an HTTP MCP service
 A review of this checkout does not cover a separate Kyber product, deployment,
 or customer-data pipeline.
 
-Sensitive assets include source text and paths, annotation excerpts and
-messages, external-editor drafts, saved review-point content, diagnostic and
-crash output, session metadata, and the user's authority over thread lifecycle.
-Follow copied data as well as originals: deleting or restricting a checkout
-does not erase its persisted excerpts, snapshots, logs, or backups.
+Sensitive assets include current, deleted, and historical source text and
+paths; annotation excerpts and messages; external-editor drafts; saved
+review-point content; diagnostic and crash output; session metadata; and the
+user's authority over thread lifecycle. Follow copied data as well as
+originals: deleting or restricting a checkout does not erase its Git objects,
+persisted excerpts, snapshots, logs, or backups.
 
 ## Actors and trust assumptions
 
@@ -60,8 +61,9 @@ that Fathomable confines these external programs.
 | Boundary | Contract to preserve |
 | --- | --- |
 | Workspace to application | The viewed workspace is input; application state lives outside it ([charter](charter.md)). |
-| MCP to checkout source | Fresh agent-driven source reads stay within the bound checkout at the actual read, including symlink resolution. This is not a sandbox for the human viewer or Git ([confined reads](decisions/0061-agents-start-threads.md#checkout-confined-reads)). |
-| MCP to repository history | The server binds one repository and checkout. Linked worktrees intentionally share discussion history; stored history is not a fresh source read ([MCP core](decisions/0082-three-tool-review-core.md), [board history](decisions/0087-global-comparisons-and-board-history.md)). |
+| MCP to checkout source | Fresh working-tree and placement reads stay within the bound checkout at the actual read, including symlink resolution. This is not a sandbox for the human viewer or Git ([confined reads](decisions/0061-agents-start-threads.md#checkout-confined-reads)). |
+| MCP to immutable Git source | A per-call commit source reads regular blobs from one exact tree in the already-bound local repository. It does not use checkout paths, fetch, run an external process, check out files, or mutate refs; deleted and historical content remains sensitive ([commit sources](decisions/0092-per-call-commit-sources.md)). |
+| MCP to repository history | The server binds one repository and checkout and revalidates that identity before selected object access. Linked worktrees intentionally share discussion and object history; stored history is not a fresh source read. Local refs and objects remain within the same-UID and repository-integrity trust assumptions ([MCP core](decisions/0082-three-tool-review-core.md), [board history](decisions/0087-global-comparisons-and-board-history.md)). |
 | Caller to annotation write | Anonymous reads are supported; writes require the supported harness identity channel. Identity does not choose the repository ([identity](decisions/0080-automatic-chat-identity.md), [MCP core](decisions/0082-three-tool-review-core.md)). |
 | Agent reply to user authority | Reading grants nothing. Auto-resolution requires a user-granted one-shot permission; consuming it and recording the result are atomic per item, including replay behavior ([lifecycle](decisions/0085-thread-lifecycle-and-auto-resolve.md)). |
 
@@ -91,7 +93,14 @@ them:
   content without assuming that rendering libraries or agent hosts solve it.
 - Invalid input, denied access, partial writes, races, and exhausted resources
   produce explicit, bounded failures rather than misleading success or leaked
-  content. Examine limits before allocation or expensive work.
+  content. Examine limits before allocation or expensive work. Commit-selected
+  starts reject absent or non-regular entries, binary and invalid UTF-8 text,
+  and apply one 64 MiB raw-blob budget per call; that bound does not cover
+  pre-existing board loading or current-checkout projection.
+- A selected full commit ID identifies an immutable local object, not trusted
+  remote provenance or retention. `HEAD` is pinned once per call, selected
+  cursors and retries use the echoed full ID, and unavailable objects fail
+  without fetching or substituting working-tree bytes.
 - Diagnostics and disclosure reports minimize sensitive data. Dependency and
   distribution checks supplement, rather than replace, boundary review
   ([dependency monitoring](dependency-monitoring.md)).

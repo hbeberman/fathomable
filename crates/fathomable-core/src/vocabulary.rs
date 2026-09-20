@@ -27,6 +27,8 @@ pub const IDS: &str = "ids";
 pub const WORKTREE: &str = "worktree";
 /// A repository-relative file path.
 pub const PATH: &str = "path";
+/// An optional immutable source selected for a tool call.
+pub const SOURCE: &str = "source";
 /// A first line.
 pub const LINE: &str = "line";
 /// A last line.
@@ -55,7 +57,7 @@ pub const STATUS_ALL: &str = "all";
 /// Read threads in the checkout bound when the MCP server starts.
 pub const THREADS: Tool = Tool {
     name: "threads",
-    params: &[STATUS, PATH, SINCE, AFTER, LIMIT, IDS],
+    params: &[SOURCE, STATUS, PATH, SINCE, AFTER, LIMIT, IDS],
 };
 /// Answer one or more threads.
 pub const THREAD_REPLY: Tool = Tool {
@@ -65,7 +67,7 @@ pub const THREAD_REPLY: Tool = Tool {
 /// Start one or more threads on lines of a file.
 pub const THREAD_START: Tool = Tool {
     name: "thread_start",
-    params: &[COMMENTS],
+    params: &[SOURCE, COMMENTS],
 };
 
 /// Every tool, in the order the guide lists them.

@@ -108,6 +108,63 @@ pub fn commit_and_stage(root: &Path, files: &[(&str, &str)]) -> Result<(), GitEr
     stage(root, files)
 }
 
+/// Commit and stage one flat path with arbitrary regular-file bytes.
+///
+/// # Errors
+///
+/// Returns [`GitError`] when the repository objects or index cannot be written.
+pub fn commit_bytes_and_stage(root: &Path, path: &str, bytes: &[u8]) -> Result<(), GitError> {
+    commit_single_entry(root, path, bytes, gix::objs::tree::EntryKind::Blob)
+}
+
+/// Commit and stage one flat symbolic-link entry without creating the link.
+///
+/// # Errors
+///
+/// Returns [`GitError`] when the repository objects or index cannot be written.
+pub fn commit_symlink_and_stage(root: &Path, path: &str, target: &str) -> Result<(), GitError> {
+    commit_single_entry(
+        root,
+        path,
+        target.as_bytes(),
+        gix::objs::tree::EntryKind::Link,
+    )
+}
+
+fn commit_single_entry(
+    root: &Path,
+    path: &str,
+    bytes: &[u8],
+    kind: gix::objs::tree::EntryKind,
+) -> Result<(), GitError> {
+    if path.is_empty() || path.contains('/') {
+        return Err(GitError(
+            "single-entry fixture path must be one non-empty component".to_owned(),
+        ));
+    }
+    let repo = git(gix::open_opts(root, open_options()))?;
+    let blob = git(repo.write_blob(bytes))?.detach();
+    let tree = git(repo.write_object(gix::objs::Tree {
+        entries: vec![gix::objs::tree::Entry {
+            mode: kind.into(),
+            filename: path.into(),
+            oid: blob,
+        }],
+    }))?
+    .detach();
+    let parent = repo.head_id().ok().map(gix::Id::detach);
+    let author = signature("2 +0000");
+    git(repo.commit_as(author, author, "HEAD", "raw commit", tree, parent))?;
+    let state = git(gix::index::State::from_tree(
+        &tree,
+        &repo.objects,
+        gix::validate::path::component::Options::default(),
+    ))?;
+    let mut file = gix::index::File::from_state(state, repo.index_path());
+    git(file.write(gix::index::write::Options::default()))?;
+    Ok(())
+}
+
 /// Create a lightweight tag named `name` at `HEAD`.
 ///
 /// # Errors

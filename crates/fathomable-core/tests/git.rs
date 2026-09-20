@@ -9,7 +9,8 @@ use std::fs;
 use std::os::unix::ffi::OsStringExt;
 use std::path::Path;
 
-use fathomable_core::workspace::Workspace;
+use fathomable_core::diff::FileMode;
+use fathomable_core::workspace::{CommitId, Workspace};
 use fathomable_testing::TempDir;
 use fathomable_testing::git::{init, open_options, stage, write_tree};
 
@@ -27,6 +28,74 @@ fn commit(root: &Path, files: &[(&str, &str)]) -> Result<(), Box<dyn Error>> {
     let parent = repo.head_id().ok().map(gix::Id::detach);
     repo.commit_as(signature, signature, "HEAD", "commit", tree, parent)?;
     Ok(())
+}
+
+fn commit_source_modes(root: &Path) -> Result<CommitId, Box<dyn Error>> {
+    let repo = gix::open_opts(root, open_options())?;
+    let parent = repo.head_id()?.detach();
+    let regular = repo.write_blob(b"regular\n")?.detach();
+    let executable = repo.write_blob(b"#!/bin/sh\n")?.detach();
+    let symlink = repo.write_blob(b"regular.md")?.detach();
+    let nested = repo.write_blob(b"nested\n")?.detach();
+    let subtree = repo
+        .write_object(gix::objs::Tree {
+            entries: vec![gix::objs::tree::Entry {
+                mode: gix::objs::tree::EntryKind::Blob.into(),
+                filename: "nested.md".into(),
+                oid: nested,
+            }],
+        })?
+        .detach();
+    let mut entries = vec![
+        gix::objs::tree::Entry {
+            mode: gix::objs::tree::EntryKind::Blob.into(),
+            filename: "regular.md".into(),
+            oid: regular,
+        },
+        gix::objs::tree::Entry {
+            mode: gix::objs::tree::EntryKind::BlobExecutable.into(),
+            filename: "executable.sh".into(),
+            oid: executable,
+        },
+        gix::objs::tree::Entry {
+            mode: gix::objs::tree::EntryKind::Link.into(),
+            filename: "link.md".into(),
+            oid: symlink,
+        },
+        gix::objs::tree::Entry {
+            mode: gix::objs::tree::EntryKind::Tree.into(),
+            filename: "dir".into(),
+            oid: subtree,
+        },
+        gix::objs::tree::Entry {
+            mode: gix::objs::tree::EntryKind::Commit.into(),
+            filename: "module".into(),
+            oid: parent,
+        },
+        gix::objs::tree::Entry {
+            mode: gix::objs::tree::EntryKind::Blob.into(),
+            filename: "wrong-kind.md".into(),
+            oid: subtree,
+        },
+    ];
+    entries.sort();
+    let tree = repo.write_object(gix::objs::Tree { entries })?.detach();
+    let signature = gix::actor::SignatureRef {
+        name: "test".into(),
+        email: "test@example.com".into(),
+        time: "1 +0000",
+    };
+    let selected = repo
+        .commit_as(
+            signature,
+            signature,
+            "HEAD",
+            "source modes",
+            tree,
+            Some(parent),
+        )?
+        .detach();
+    Ok(CommitId::parse(selected.to_hex().to_string())?)
 }
 
 #[test]
@@ -84,6 +153,96 @@ fn plain_directory_has_no_diff_base() -> TestResult {
     assert!(!workspace.is_git());
     assert_eq!(workspace.head_text(Path::new("a.md"))?, None);
     assert_eq!(workspace.head_text_bounded(Path::new("a.md"), 1)?, None);
+    Ok(())
+}
+
+#[test]
+fn commit_source_exact_lookup_does_not_peel_objects() -> TestResult {
+    let dir = TempDir::new("git-exact-commit")?;
+    init(&dir.0)?;
+    commit(&dir.0, &[("a.md", "one\n")])?;
+    let repo = gix::open_opts(&dir.0, open_options())?;
+    let head = repo.head_id()?.detach();
+    let tag = repo
+        .write_object(gix::objs::Tag {
+            target: head,
+            target_kind: gix::objs::Kind::Commit,
+            name: "selected".into(),
+            tagger: None,
+            message: "selected source\n".into(),
+            signature: None,
+        })?
+        .detach();
+    let blob = repo.write_blob(b"not a commit")?.detach();
+    let workspace = Workspace::discover(&dir.0)?;
+    let head = CommitId::parse(head.to_hex().to_string())?;
+
+    assert_eq!(workspace.commit(&head)?.id(), head);
+    for object in [tag, blob] {
+        let id = CommitId::parse(object.to_hex().to_string())?;
+        let error = workspace
+            .commit(&id)
+            .err()
+            .ok_or("non-commit object was accepted")?;
+        assert!(error.to_string().contains("commit object"), "{error}");
+    }
+    Ok(())
+}
+
+#[test]
+fn commit_source_blob_loader_enforces_modes_kind_and_bound() -> TestResult {
+    let dir = TempDir::new("git-commit-blob")?;
+    init(&dir.0)?;
+    commit(&dir.0, &[("parent.md", "parent\n")])?;
+    let selected = commit_source_modes(&dir.0)?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+
+    let blob = workspace
+        .commit_blob(&selected, Path::new("regular.md"), 8)?
+        .ok_or("regular blob is missing")?;
+    assert_eq!(blob.mode(), FileMode::Regular);
+    assert_eq!(blob.size(), 8);
+    assert_eq!(blob.object().len(), 40);
+    assert_eq!(blob.bytes(), b"regular\n");
+    assert_eq!(
+        workspace
+            .commit_blob(&selected, Path::new("executable.sh"), 64)?
+            .map(|blob| blob.mode()),
+        Some(FileMode::Executable)
+    );
+    assert!(
+        workspace
+            .commit_blob(&selected, Path::new("missing.md"), 64)?
+            .is_none()
+    );
+
+    let oversized = workspace
+        .commit_blob(&selected, Path::new("regular.md"), 7)
+        .err()
+        .ok_or("oversized blob was accepted")?;
+    assert!(oversized.to_string().contains("7-byte limit"));
+    for (path, mode) in [
+        ("link.md", "Symlink"),
+        ("dir", "Directory"),
+        ("module", "Submodule"),
+    ] {
+        let error = workspace
+            .commit_blob(&selected, Path::new(path), 64)
+            .err()
+            .ok_or("unsupported mode was accepted")?;
+        assert!(error.to_string().contains(mode), "{path}: {error}");
+    }
+    let wrong_kind = workspace
+        .commit_blob(&selected, Path::new("wrong-kind.md"), 64)
+        .err()
+        .ok_or("tree object was accepted as a blob")?;
+    assert!(wrong_kind.to_string().contains("non-blob"), "{wrong_kind}");
+    assert!(
+        workspace
+            .commit_blob(&selected, Path::new("link.md/nested.md"), 64)
+            .is_err(),
+        "an intermediate symlink must not be traversed"
+    );
     Ok(())
 }
 

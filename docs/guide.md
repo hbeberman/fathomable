@@ -511,14 +511,113 @@ for host-specific options.
 
 | Tool | Purpose |
 | --- | --- |
-| `threads` | Read discussions without changing state; exact IDs can retrieve archived history. |
-| `thread_start` | Start a batch of focused review comments. |
+| `threads` | Read discussions without changing state; exact IDs can retrieve archived history, and an optional commit source filters immutable origins. |
+| `thread_start` | Start a batch of focused review comments from the bound checkout or an optional immutable commit source. |
 | `thread_reply` | Reply to discussions, optionally requesting resolution. |
 
 `thread_reply` identifies its target by thread ID. Omit `line` and `end_line`
 to reply without relocating it, including when the source is detached in the
 bound checkout; supplying coordinates explicitly requests relocation and
 therefore requires readable source in that checkout.
+
+#### Per-call commit sources
+
+Only `threads` and `thread_start` accept the optional top-level selector:
+
+```json
+{
+  "source": {
+    "kind": "commit",
+    "revision": "HEAD"
+  }
+}
+```
+
+`revision` is exactly uppercase `HEAD` or a full 40-hex SHA-1 commit ID;
+abbreviations, branches, tags, parent expressions, ranges, paths, URLs,
+whitespace-padded values, and lowercase `head` are rejected. Hex input may be
+uppercase, but every successful selected response includes the canonical
+lowercase full ID as top-level `resolved_commit`, including empty reads,
+zero-limit reads, and keyed write replays. Omit `source` for the existing
+working-tree behavior. `thread_reply` has no `source` field and is unchanged.
+
+For example, a selected read with no matches still confirms the pinned source:
+
+```json
+{
+  "checkout": "/path/to/checkout",
+  "resolved_commit": "0123456789abcdef0123456789abcdef01234567",
+  "threads": [],
+  "more": 0,
+  "next_after": null
+}
+```
+
+A selected start captures every fresh comment's path, range, snippet, and
+content identity from the resulting tree of that commit:
+
+```json
+{
+  "source": {
+    "kind": "commit",
+    "revision": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "comments": [{
+    "path": "src/lib.rs",
+    "line": 12,
+    "end_line": 14,
+    "body": "Handle the empty input before indexing.",
+    "idempotency_key": "review-empty-input"
+  }]
+}
+```
+
+Root and merge commits mean their resulting trees; no parent, merge base, or
+implicit diff is selected. The source applies to the whole call, is not saved
+as a server or viewer selection, and does not change a checkout, index, ref,
+comparison, or running viewer. A keyed start's durable intent includes the
+selected full commit, so reuse against another commit conflicts. `HEAD` is
+resolved once for a call; use the returned full ID for an exact retry if
+`HEAD` may move.
+
+A selected read returns only discussions whose immutable
+`origin.version.kind` is `commit` with that exact ID. Working-tree, index, and
+review-point origins are excluded even when their observed `HEAD` matches.
+`path` filters the immutable `origin.path`. In each result, `origin` remains
+the historical evidence; top-level `path`, `anchor_range`, and
+`placement_evidence` are the stored current references; and top-level
+`range`, `placement`, and `location` report projection in the MCP server's
+bound checkout. Origin and current placement can therefore have different
+paths or ranges, or the current placement can be detached.
+
+Selected pagination pins the commit in the cursor:
+
+```json
+{
+  "source": {
+    "kind": "commit",
+    "revision": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "after": {
+    "updated": 1789876800,
+    "id": "1789876700-1234-1",
+    "resolved_commit": "0123456789abcdef0123456789abcdef01234567"
+  }
+}
+```
+
+The cursor commit must match `source`. `HEAD` cannot be combined with
+`after`; continue with the preceding response's `resolved_commit`. Selected
+reads retain the ordinary status, update-time, ordering, limit, and archive
+rules, but cannot be combined with exact `ids`.
+
+Commit selection reads only objects already available in the repository
+bound at MCP startup. It never fetches, runs Git or another external process,
+checks out files, or mutates refs. A fresh selected start has one 64 MiB raw
+blob budget across its distinct paths. Absent paths and Git directories,
+symlinks, submodules, unsupported modes, or non-blob entries fail explicitly;
+binary and invalid UTF-8 blobs are rejected as text sources. A selected read
+loads no historical file bodies beyond the origin evidence already stored.
 
 Writes need native chat identity: Copilot CLI's `COPILOT_AGENT_SESSION_ID`,
 Claude Code's `CLAUDE_CODE_SESSION_ID`, VS Code's
@@ -535,11 +634,13 @@ failures or failed store refreshes report degraded thread updates and retry.
 A previously loaded board stays visible if its store disappears or cannot be
 read; refresh never recreates or overwrites the missing data.
 
-MCP source reads stay within the bound checkout. Relative symlinks within
-that checkout work; absolute symlink targets and links escaping it (including
-directory links) fail
-explicitly. This also applies when an existing thread's file becomes an
-escaping symlink before a read or relocation.
+MCP working-tree source and placement reads stay within the bound checkout.
+Relative symlinks within that checkout work; absolute symlink targets and
+links escaping it (including directory links) fail explicitly. This also
+applies when an existing thread's file becomes an escaping symlink before a
+read or relocation. Commit-selected origin reads instead address immutable
+regular blobs in the bound local Git object database and never follow
+checkout symlinks.
 
 ## What gets saved where
 

@@ -495,3 +495,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     locally while the test-support crate remains unpublished. Uploading those
     packages and creating the matching GitHub tag are explicit maintainer
     actions ([0002](decisions/0002-crate-layout.md#package-metadata)).
+84. **Per-call commit sources.** `threads` can filter discussions by exact
+    immutable commit origin and `thread_start` can capture origins from one
+    local commit tree. The optional selector is request-local, selected
+    results echo the canonical commit ID, pagination stays pinned, and
+    `thread_reply`, viewer state, and the three-tool surface remain unchanged
+    ([0092](decisions/0092-per-call-commit-sources.md)).

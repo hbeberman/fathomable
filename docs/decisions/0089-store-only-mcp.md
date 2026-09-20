@@ -14,6 +14,13 @@ tags:
 
 Status: accepted (2026-09-18)
 
+Commit source selection amended 2026-09-19 by
+[0092](0092-per-call-commit-sources.md): request-local selected starts read
+immutable regular blobs from the bound repository's local object database,
+while selected reads filter stored origin facts. Neither path reintroduces a
+viewer transport, and neither fetches, launches Git, checks out files, mutates
+refs, or changes the bound checkout.
+
 Supersedes the remaining viewer-socket transport in
 [0014](0014-mcp-server-and-socket-v1.md),
 [0024](0024-workspace-sessions.md), and

@@ -8,6 +8,7 @@
 //! store directly.
 
 mod identity;
+mod source;
 mod start;
 mod tools;
 

@@ -5,22 +5,27 @@ use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
 use fathomable_core::XdgDirs;
-use fathomable_core::annotations::{Author, Draft, LineRange, MAX_MESSAGE_BYTES, Store, Thread};
+use fathomable_core::annotations::{
+    Author, ContentIdentity, Draft, LineRange, MAX_MESSAGE_BYTES, OriginSide, OriginVersion,
+    Provenance, Store, Thread,
+};
 use fathomable_core::clock::now;
-use fathomable_core::workspace::Workspace;
+use fathomable_core::workspace::{CommitId, Workspace};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
 use rmcp::service::RequestContext;
 use rmcp::{RoleServer, schemars, tool, tool_router};
 use serde::Deserialize;
+use serde::Serialize;
 use serde_json::json;
 
 use crate::app::threads::{agent_start_draft, read_checkout_text};
 
 use super::Server;
+use super::source::Source;
 use super::tools::{
-    BatchIssue, Shown, Tree, WriteOutput, check_path, failure, invalid_batch,
-    require_line_for_end_line, shown_lines,
+    BatchIssue, SelectedWriteOutput, Shown, StartSuccess, Tree, WriteOutput, check_path, failure,
+    invalid_batch, invalid_source, require_line_for_end_line, shown_lines, structured_error,
 };
 
 /// One comment in a `thread_start` batch.
@@ -54,6 +59,9 @@ pub(crate) struct StartItem {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StartParams {
+    /// Optionally capture every comment from one exact immutable commit tree.
+    #[serde(default)]
+    source: Option<Source>,
     /// One or more new comments. The whole batch is validated before any write.
     #[schemars(length(min = 1))]
     comments: Vec<StartItem>,
@@ -73,7 +81,7 @@ struct Placed {
 impl Server {
     #[tool(
         name = "thread_start",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<WriteOutput>(),
+        output_schema = rmcp::handler::server::tool::schema_for_output::<StartSuccess>(),
         description = "Start one or more new review discussions. Pass exactly one non-empty \
                        `comments` array. Start one discussion per independently actionable finding, \
                        placed on the narrowest relevant repository file or optional 1-based line \
@@ -81,7 +89,10 @@ impl Server {
                        replacements belong in the worktree. Omit `line` only for a file-level \
                        comment. An optional per-item `idempotency_key` makes a retry, including a \
                        historical larger body, replay the same discussion instead of creating \
-                       another one. The whole batch is validated before any discussion is written.",
+                       another one. Optional `source:{kind:\"commit\",revision}` captures raw text \
+                       from `HEAD` or one full local commit ID under a 64 MiB call budget and \
+                       returns `resolved_commit`. The whole batch is validated before any \
+                       discussion is written.",
         annotations(
             destructive_hint = false,
             idempotent_hint = false,
@@ -105,6 +116,9 @@ impl Server {
             Ok(identity) => identity,
             Err(error) => return failure(error),
         };
+        if let Some(source) = p.source.as_ref() {
+            return self.thread_start_selected(&p.comments, source, &author, &caller);
+        }
 
         // Check the whole batch before writing any of it, so that a retry
         // with the fixed list is a whole retry.
@@ -201,14 +215,249 @@ impl Server {
             };
             shown.push(Shown::new(thread, placement));
         }
-        CallToolResult::structured(json!(WriteOutput {
+        CallToolResult::structured(json!(StartSuccess::Ordinary(WriteOutput {
             checkout: self.target.root.clone(),
             threads: shown,
-        }))
+        })))
     }
 }
 
 impl Server {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Selected starts keep whole-batch validation visibly ahead of persistence."
+    )]
+    fn thread_start_selected(
+        &self,
+        comments: &[StartItem],
+        source: &Source,
+        author: &Author,
+        caller: &str,
+    ) -> CallToolResult {
+        let request = match source.request() {
+            Ok(request) => request,
+            Err(error) => return invalid_source(error, None),
+        };
+        let mut structural_keys = HashSet::with_capacity(comments.len());
+        let mut structural_problems = Vec::new();
+        for (index, item) in comments.iter().enumerate() {
+            if let Some(key) = &item.idempotency_key
+                && !structural_keys.insert(key)
+            {
+                structural_problems.push(BatchIssue::new(
+                    index,
+                    format!("{} repeats idempotency key {key:?}", item.path.display()),
+                ));
+            }
+            if let Err(error) = structural_start(item) {
+                structural_problems.push(BatchIssue::new(index, error));
+            }
+        }
+        if !structural_problems.is_empty() {
+            return invalid_batch("comments", &structural_problems);
+        }
+        let (commit, mut capture) = match &request {
+            super::source::CommitRequest::Head => {
+                match super::source::SelectedCommit::resolve(&self.target, &request) {
+                    Ok(selected) => (selected.id().clone(), Some(selected.into_capture())),
+                    Err(error) => return invalid_source(error, None),
+                }
+            }
+            super::source::CommitRequest::Id(commit) => {
+                if let Err(error) = super::source::validate_binding(&self.target) {
+                    return invalid_source(error, Some(commit.as_str()));
+                }
+                (commit.clone(), None)
+            }
+        };
+        let probe_store = match Store::open_workspace(&self.dirs, &self.target.key) {
+            Ok(store) => store,
+            Err(error) => return failure(error.to_string()),
+        };
+        let mut keys = HashSet::with_capacity(comments.len());
+        let mut prepared = Vec::with_capacity(comments.len());
+        let mut problems = Vec::new();
+
+        for (index, item) in comments.iter().enumerate() {
+            if let Some(key) = &item.idempotency_key
+                && !keys.insert(key.clone())
+            {
+                problems.push(BatchIssue::new(
+                    index,
+                    format!("{} repeats idempotency key {key:?}", item.path.display()),
+                ));
+                continue;
+            }
+            let (path, range) = match structural_start(item) {
+                Ok(shape) => shape,
+                Err(error) => {
+                    problems.push(BatchIssue::new(index, error));
+                    continue;
+                }
+            };
+            let probe = selected_draft(
+                author.clone(),
+                &path,
+                range,
+                item.body.clone(),
+                &commit,
+                None,
+            );
+            let replay = match item.idempotency_key.as_deref() {
+                Some(key) => {
+                    match probe_store.probe_start_idempotency_for_caller(&probe, caller, key) {
+                        Ok(replay) => replay,
+                        Err(error) => {
+                            problems.push(BatchIssue::new(
+                                index,
+                                format!("{}: {error}", path.display()),
+                            ));
+                            continue;
+                        }
+                    }
+                }
+                None => None,
+            };
+            if let Some(id) = replay {
+                let Some(thread) = probe_store.thread(&id) else {
+                    problems.push(BatchIssue::new(index, format!("thread {id} vanished")));
+                    continue;
+                };
+                prepared.push(PreparedStart {
+                    index,
+                    item: Placed {
+                        path,
+                        range,
+                        body: item.body.clone(),
+                        idempotency_key: item.idempotency_key.clone(),
+                    },
+                    text: None,
+                    projected_path: thread.path().to_path_buf(),
+                    preparation: Preparation::Replay,
+                });
+                continue;
+            }
+            if item.body.len() > MAX_MESSAGE_BYTES {
+                problems.push(BatchIssue::new(
+                    index,
+                    format!(
+                        "{}: `body` has {} UTF-8 bytes; maximum is {MAX_MESSAGE_BYTES}",
+                        path.display(),
+                        item.body.len()
+                    ),
+                ));
+                continue;
+            }
+            prepared.push(PreparedStart {
+                index,
+                item: Placed {
+                    path: path.clone(),
+                    range,
+                    body: item.body.clone(),
+                    idempotency_key: item.idempotency_key.clone(),
+                },
+                text: None,
+                projected_path: path,
+                preparation: Preparation::Fresh,
+            });
+        }
+        if !problems.is_empty() {
+            return invalid_batch("comments", &problems);
+        }
+
+        if prepared
+            .iter()
+            .any(|item| item.preparation == Preparation::Fresh)
+        {
+            if capture.is_none() {
+                capture = match super::source::SelectedCommit::resolve(&self.target, &request) {
+                    Ok(selected) => Some(selected.into_capture()),
+                    Err(error) => return invalid_source(error, Some(commit.as_str())),
+                };
+            }
+            let Some(capture) = capture.as_mut() else {
+                return failure("selected source capture was not initialized");
+            };
+            for item in &mut prepared {
+                if item.preparation == Preparation::Replay {
+                    continue;
+                }
+                let text = match capture.text(&item.item.path) {
+                    Ok(text) => text.to_owned(),
+                    Err(error) => {
+                        problems.push(BatchIssue::new(item.index, error));
+                        continue;
+                    }
+                };
+                let count = text.lines().count();
+                if let Some(range) = item.item.range
+                    && range.end() > count
+                {
+                    problems.push(BatchIssue::new(
+                        item.index,
+                        format!(
+                            "lines {range} are past the end of {} ({count} line{})",
+                            item.item.path.display(),
+                            if count == 1 { "" } else { "s" }
+                        ),
+                    ));
+                    continue;
+                }
+                item.text = Some(text);
+            }
+        }
+        if !problems.is_empty() {
+            return invalid_batch("comments", &problems);
+        }
+
+        let mut tree = Tree::new(&self.target.root);
+        for item in &prepared {
+            if let Err(error) = tree.preflight(&item.projected_path) {
+                problems.push(BatchIssue::new(item.index, error));
+            }
+        }
+        if !problems.is_empty() {
+            return invalid_batch("comments", &problems);
+        }
+
+        let mut started = Vec::with_capacity(prepared.len());
+        for (position, item) in prepared.iter().enumerate() {
+            match headless_start_selected(
+                &self.dirs,
+                &self.target.key,
+                author.clone(),
+                caller,
+                item,
+                &commit,
+            ) {
+                Ok(thread) => started.push((item.index, thread)),
+                Err(error) => {
+                    return selected_partial_failure(
+                        &self.target.root,
+                        &commit,
+                        &started,
+                        item.index,
+                        error,
+                        &prepared[position + 1..],
+                    );
+                }
+            }
+        }
+        let mut shown = Vec::with_capacity(started.len());
+        for (_, thread) in &started {
+            let placement = match tree.try_place(thread) {
+                Ok(placement) => placement,
+                Err(error) => return failure(error),
+            };
+            shown.push(Shown::new(thread, placement));
+        }
+        CallToolResult::structured(json!(StartSuccess::Selected(SelectedWriteOutput {
+            checkout: self.target.root.clone(),
+            resolved_commit: commit.as_str().to_owned(),
+            threads: shown,
+        })))
+    }
+
     /// Write one validated comment to the shared store.
     fn start_one(&self, author: Author, caller: &str, item: Placed) -> Result<Thread, String> {
         let place = match item.range {
@@ -225,6 +474,132 @@ impl Server {
         )
         .map_err(|message| format!("{place}: {message}"))
     }
+}
+
+#[derive(Debug)]
+struct PreparedStart {
+    index: usize,
+    item: Placed,
+    text: Option<String>,
+    projected_path: PathBuf,
+    preparation: Preparation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Preparation {
+    Replay,
+    Fresh,
+}
+
+fn selected_draft(
+    author: Author,
+    path: &Path,
+    range: Option<LineRange>,
+    body: String,
+    commit: &CommitId,
+    text: Option<&str>,
+) -> Draft {
+    let draft = match range {
+        Some(range) => Draft::new(author, path, range, body),
+        None => Draft::on_file(author, path, body),
+    }
+    .at_selected_commit(commit.clone());
+    match text {
+        Some(text) => draft.with_provenance(
+            Provenance::new(
+                OriginVersion::commit(commit.as_str()),
+                OriginSide::Unspecified,
+            )
+            .with_content(ContentIdentity::from_text(text)),
+        ),
+        None => draft,
+    }
+}
+
+fn headless_start_selected(
+    dirs: &XdgDirs,
+    key: &Path,
+    author: Author,
+    caller: &str,
+    prepared: &PreparedStart,
+    commit: &CommitId,
+) -> Result<Thread, String> {
+    let item = &prepared.item;
+    let draft = selected_draft(
+        author,
+        &item.path,
+        item.range,
+        item.body.clone(),
+        commit,
+        prepared.text.as_deref(),
+    );
+    let mut store = Store::open_workspace(dirs, key).map_err(|error| error.to_string())?;
+    let id = match item.idempotency_key.as_deref() {
+        Some(retry) => store
+            .annotate_idempotent_for_caller(draft, now(), caller, retry, |_| {
+                prepared.text.clone().ok_or_else(|| {
+                    fathomable_core::annotations::StoreError::message(
+                        "matching selected replay unexpectedly requested source text",
+                    )
+                })
+            })
+            .map_err(|error| error.to_string())?
+            .into_value(),
+        None => store
+            .annotate(
+                draft,
+                prepared
+                    .text
+                    .as_deref()
+                    .ok_or_else(|| "fresh selected start has no captured text".to_owned())?,
+                now(),
+            )
+            .map_err(|error| error.to_string())?,
+    };
+    store
+        .thread(&id)
+        .cloned()
+        .ok_or_else(|| format!("thread {id} vanished after the comment"))
+}
+
+#[derive(Debug, Serialize)]
+struct CompletedStart {
+    item_index: usize,
+    thread: String,
+}
+
+#[derive(Debug, Serialize)]
+struct FailedStart {
+    item_index: usize,
+    error: String,
+}
+
+#[derive(Debug, Serialize)]
+struct UnattemptedStart {
+    item_index: usize,
+}
+
+fn selected_partial_failure(
+    root: &Path,
+    commit: &CommitId,
+    completed: &[(usize, Thread)],
+    failed: usize,
+    error: String,
+    unattempted: &[PreparedStart],
+) -> CallToolResult {
+    structured_error(json!({
+        "error_code": "PARTIAL_BATCH",
+        "checkout": root,
+        "resolved_commit": commit.as_str(),
+        "completed": completed.iter().map(|(item_index, thread)| CompletedStart {
+            item_index: *item_index,
+            thread: thread.id().to_string(),
+        }).collect::<Vec<_>>(),
+        "failed": FailedStart { item_index: failed, error },
+        "unattempted": unattempted.iter().map(|item| UnattemptedStart {
+            item_index: item.index,
+        }).collect::<Vec<_>>(),
+    }))
 }
 
 /// Where `item` goes, or why it cannot go there: the path is not a file
@@ -306,6 +681,9 @@ fn structural_start(item: &StartItem) -> Result<(PathBuf, Option<LineRange>), St
 
 fn lexical_path(path: &Path) -> Result<PathBuf, String> {
     let shown = path.display();
+    if path.to_string_lossy().contains('\0') {
+        return Err(format!("{shown} contains a NUL byte"));
+    }
     let inside = path.is_relative()
         && path
             .components()

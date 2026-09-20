@@ -43,6 +43,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::context::Context;
+use crate::workspace::CommitId;
 use sha2::{Digest, Sha256};
 
 /// The format version written in every event line; [`Store::open`]
@@ -2139,6 +2140,12 @@ pub struct Draft {
     comment: String,
     commit: Option<String>,
     provenance: Provenance,
+    start_source: Option<StartSource>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StartSource {
+    Commit(CommitId),
 }
 
 impl Draft {
@@ -2155,6 +2162,7 @@ impl Draft {
             comment: comment.into(),
             commit: None,
             provenance: Provenance::default(),
+            start_source: None,
         }
     }
 
@@ -2169,6 +2177,7 @@ impl Draft {
             comment: comment.into(),
             commit: None,
             provenance: Provenance::default(),
+            start_source: None,
         }
     }
 
@@ -2181,6 +2190,25 @@ impl Draft {
             self.provenance.version = OriginVersion::commit(commit_id);
         }
         self.commit = commit;
+        self
+    }
+
+    /// Select an exact immutable commit as this start's source and retry identity.
+    ///
+    /// This sets commit provenance with an unspecified comparison side. Later
+    /// builder calls that make the provenance disagree are rejected by
+    /// [`Store`] before probing or writing a keyed start.
+    #[must_use]
+    pub fn at_selected_commit(mut self, commit: CommitId) -> Self {
+        let id = commit.as_str().to_owned();
+        self.commit = Some(id.clone());
+        self.provenance.version = OriginVersion::commit(id);
+        self.provenance.side = OriginSide::Unspecified;
+        self.provenance.comparison = None;
+        self.provenance.working_tree = None;
+        self.provenance.index = None;
+        self.provenance.review_point = None;
+        self.start_source = Some(StartSource::Commit(commit));
         self
     }
 
@@ -2486,6 +2514,14 @@ struct StartIntent<'a> {
     path: PathBuf,
     range: Option<LineRange>,
     body: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<StartIntentSource<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+enum StartIntentSource<'a> {
+    Commit { id: &'a str },
 }
 
 #[derive(Serialize)]
@@ -3075,6 +3111,7 @@ impl Store {
         now: u64,
         submission: UserSubmit,
     ) -> Result<ThreadId, StoreError> {
+        validate_start_source(&draft)?;
         let (anchor, context, snippet) = capture_annotation(&draft, text)?;
         let mut file = self.lock_for_write()?;
         let id = ThreadId(format!(
@@ -3169,11 +3206,10 @@ impl Store {
         let mut file = self.lock_for_write()?;
         if let Some(receipt) = self.receipts.get(&receipt_key) {
             ensure_intent(receipt, &intent)?;
-            if self.thread(&receipt.target).is_none() {
-                return Err(StoreError {
-                    kind: ErrorKind::IdempotencyDeleted(receipt.target.clone()),
-                });
-            }
+            let thread = self.thread(&receipt.target).ok_or_else(|| StoreError {
+                kind: ErrorKind::IdempotencyDeleted(receipt.target.clone()),
+            })?;
+            ensure_selected_origin(thread, selected_commit(&draft), &receipt.key)?;
             let id = receipt.target.clone();
             let _ = file.unlock();
             return Ok(WriteOutcome::from_replay(id));
@@ -3642,7 +3678,7 @@ impl Store {
             caller: caller.to_owned(),
             operation: IdempotentOperation::Start,
         };
-        self.probe_idempotency(&receipt_key, &start_intent(draft)?)
+        self.probe_idempotency(&receipt_key, &start_intent(draft)?, selected_commit(draft))
     }
 
     /// Check whether a keyed reply was already completed.
@@ -3690,7 +3726,7 @@ impl Store {
             caller: caller.to_owned(),
             operation: IdempotentOperation::Reply,
         };
-        self.probe_idempotency(&receipt_key, &reply_intent(id, reply, lines)?)
+        self.probe_idempotency(&receipt_key, &reply_intent(id, reply, lines)?, None)
     }
 
     /// Replace a user-authored message in thread `id`.
@@ -4200,17 +4236,17 @@ impl Store {
         &self,
         receipt_key: &ReceiptKey,
         intent: &str,
+        selected: Option<&CommitId>,
     ) -> Result<Option<ThreadId>, StoreError> {
         let store = Self::open(&self.path)?;
         let Some(receipt) = store.receipts.get(receipt_key) else {
             return Ok(None);
         };
         ensure_intent(receipt, intent)?;
-        if store.thread(&receipt.target).is_none() {
-            return Err(StoreError {
-                kind: ErrorKind::IdempotencyDeleted(receipt.target.clone()),
-            });
-        }
+        let thread = store.thread(&receipt.target).ok_or_else(|| StoreError {
+            kind: ErrorKind::IdempotencyDeleted(receipt.target.clone()),
+        })?;
+        ensure_selected_origin(thread, selected, &receipt.key)?;
         Ok(Some(receipt.target.clone()))
     }
 
@@ -4817,15 +4853,66 @@ fn normalize_repo_path(path: &Path) -> Result<PathBuf, StoreError> {
 }
 
 fn start_intent(draft: &Draft) -> Result<String, StoreError> {
+    validate_start_source(draft)?;
     let intent = StartIntent {
         operation: IdempotentOperation::Start,
         path: normalize_repo_path(&draft.path)?,
         range: draft.range.map(normalize_range),
         body: &draft.comment,
+        source: draft.start_source.as_ref().map(|source| match source {
+            StartSource::Commit(id) => StartIntentSource::Commit { id: id.as_str() },
+        }),
     };
     serde_json::to_string(&intent).map_err(|error| StoreError {
         kind: ErrorKind::Parse(0, error.to_string()),
     })
+}
+
+fn validate_start_source(draft: &Draft) -> Result<(), StoreError> {
+    let Some(StartSource::Commit(selected)) = &draft.start_source else {
+        return Ok(());
+    };
+    let agrees = draft.commit.as_deref() == Some(selected.as_str())
+        && draft.provenance.version.commit_id() == Some(selected.as_str())
+        && draft.provenance.side == OriginSide::Unspecified
+        && draft.provenance.comparison.is_none()
+        && draft.provenance.working_tree.is_none()
+        && draft.provenance.index.is_none()
+        && draft.provenance.review_point.is_none();
+    if agrees {
+        Ok(())
+    } else {
+        Err(StoreError::message(format!(
+            "selected commit {selected} does not agree with the draft origin"
+        )))
+    }
+}
+
+fn selected_commit(draft: &Draft) -> Option<&CommitId> {
+    match draft.start_source.as_ref() {
+        Some(StartSource::Commit(id)) => Some(id),
+        None => None,
+    }
+}
+
+fn ensure_selected_origin(
+    thread: &Thread,
+    selected: Option<&CommitId>,
+    key: &str,
+) -> Result<(), StoreError> {
+    let Some(selected) = selected else {
+        return Ok(());
+    };
+    if thread.origin_version().commit_id() == Some(selected.as_str())
+        && thread.origin_side() == OriginSide::Unspecified
+        && thread.commit() == Some(selected.as_str())
+    {
+        Ok(())
+    } else {
+        Err(StoreError {
+            kind: ErrorKind::IdempotencyConflict(key.to_owned()),
+        })
+    }
 }
 
 fn reply_intent(

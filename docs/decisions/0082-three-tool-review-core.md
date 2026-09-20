@@ -14,6 +14,13 @@ tags:
 
 Status: accepted (2026-09-15)
 
+Commit source selection amended 2026-09-19 by
+[0092](0092-per-call-commit-sources.md): the surface remains exactly
+`threads`, `thread_start`, and `thread_reply`. Only the first two accept a
+request-local top-level commit `source`; it neither routes the call nor
+changes a viewer, checkout, or global server state. `thread_reply` remains
+bound to current placement and accepts no source selector.
+
 Detached replies amended 2026-09-19: thread ID identifies the discussion,
 while optional coordinates request relocation. A coordinate-free reply keeps
 the stored placement and normal lifecycle even when the bound checkout

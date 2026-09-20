@@ -21,6 +21,14 @@ tags:
 
 Status: accepted (2026-09-16)
 
+MCP origin selection amended 2026-09-19 by
+[0092](0092-per-call-commit-sources.md): an agent start may explicitly capture
+from one immutable local commit tree without inheriting or changing a viewer
+comparison. Selected reads match only exact `OriginVersion::Commit` creation
+origins and filter `origin.path`; observed-`HEAD` working-tree/index origins
+remain distinct. Returned current placement is still projected and qualified
+by the bound checkout.
+
 Terminology amended 2026-09-19: **Normal diff** and `diff.mode = "normal"`
 replace Standard and `"standard"` without a compatibility alias. `Space d n`
 selects Normal, while `Space d s` opens **Pick source...**; `Space d b` is

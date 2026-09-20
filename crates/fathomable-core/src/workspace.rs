@@ -179,6 +179,47 @@ impl Commit {
     }
 }
 
+/// One bounded regular blob loaded from an immutable commit tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitBlob {
+    mode: FileMode,
+    size: u64,
+    object: String,
+    bytes: Vec<u8>,
+}
+
+impl CommitBlob {
+    /// The regular or executable Git file mode.
+    #[must_use]
+    pub const fn mode(&self) -> FileMode {
+        self.mode
+    }
+
+    /// The uncompressed byte size verified from the object header.
+    #[must_use]
+    pub const fn size(&self) -> u64 {
+        self.size
+    }
+
+    /// The canonical Git blob object ID.
+    #[must_use]
+    pub fn object(&self) -> &str {
+        &self.object
+    }
+
+    /// The raw Git blob bytes.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Consume the blob and return its raw bytes.
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
 /// A validated immutable Git commit object ID.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CommitId(String);
@@ -663,6 +704,29 @@ impl Workspace {
         };
         let id = self.resolve_revision_id(&git.repo, revision)?;
         commit_record(&git.repo, id).map_err(|message| self.revision_error(revision, &message))
+    }
+
+    /// Load exactly the commit object named by `id`.
+    ///
+    /// Unlike [`Workspace::resolve_revision`], this does not interpret the ID
+    /// as a reference or peel tag objects.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when this workspace is not Git, the object
+    /// is unavailable or corrupt, or the exact object is not a commit.
+    pub fn commit(&self, id: &CommitId) -> Result<Commit, WorkspaceError> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Err(self.revision_error(
+                id.as_str(),
+                "exact commit lookup is unavailable outside a Git repository",
+            ));
+        };
+        let object_id = ObjectId::from_hex(id.as_str().as_bytes()).map_err(|error| {
+            self.revision_error(id.as_str(), &format!("invalid commit object ID: {error}"))
+        })?;
+        commit_record(&git.repo, object_id)
+            .map_err(|message| self.revision_error(id.as_str(), &message))
     }
 
     /// Enumerate branches and tags resolved to pinned commit IDs.
@@ -1182,6 +1246,115 @@ impl Workspace {
             })
     }
 
+    /// Load one bounded regular-file blob from an exact commit tree.
+    ///
+    /// `None` means the path is absent. Regular and executable blobs are
+    /// accepted; directories, symbolic links, submodules, unsupported modes,
+    /// and entries naming non-blob objects are rejected. The object header is
+    /// checked against `max_bytes` before allocating blob data.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the commit, tree, path metadata, or
+    /// blob is unavailable or corrupt, the entry is not a regular file, or
+    /// its bytes exceed `max_bytes`.
+    pub fn commit_blob(
+        &mut self,
+        id: &CommitId,
+        relative: &Path,
+        max_bytes: u64,
+    ) -> Result<Option<CommitBlob>, WorkspaceError> {
+        let endpoint = ComparisonEndpoint::Commit(id.clone());
+        let Some(info) = self.endpoint_path_info(&endpoint, relative)? else {
+            for ancestor in relative
+                .ancestors()
+                .skip(1)
+                .take_while(|path| !path.as_os_str().is_empty())
+            {
+                if let Some(info) = self.endpoint_path_info(&endpoint, ancestor)?
+                    && info.mode() != FileMode::Directory
+                {
+                    return Err(WorkspaceError {
+                        path: self.root.join(relative),
+                        message: format!(
+                            "commit {} has unsupported {:?} intermediate entry at {}",
+                            id.short(),
+                            info.mode(),
+                            ancestor.display()
+                        ),
+                    });
+                }
+            }
+            return Ok(None);
+        };
+        if !matches!(info.mode(), FileMode::Regular | FileMode::Executable) {
+            return Err(WorkspaceError {
+                path: self.root.join(relative),
+                message: format!(
+                    "commit {} has unsupported {:?} entry at {}",
+                    id.short(),
+                    info.mode(),
+                    relative.display()
+                ),
+            });
+        }
+        let size = info.size().ok_or_else(|| WorkspaceError {
+            path: self.root.join(relative),
+            message: format!(
+                "commit {} has no blob size for {}",
+                id.short(),
+                relative.display()
+            ),
+        })?;
+        if size > max_bytes {
+            return Err(WorkspaceError {
+                path: self.root.join(relative),
+                message: format!(
+                    "commit {} blob at {} exceeds the {max_bytes}-byte limit",
+                    id.short(),
+                    relative.display()
+                ),
+            });
+        }
+        let object = info
+            .object()
+            .ok_or_else(|| WorkspaceError {
+                path: self.root.join(relative),
+                message: format!(
+                    "commit {} has no blob object ID for {}",
+                    id.short(),
+                    relative.display()
+                ),
+            })?
+            .to_owned();
+        let bytes = self
+            .commit_bytes_bounded(id, relative, max_bytes)?
+            .ok_or_else(|| WorkspaceError {
+                path: self.root.join(relative),
+                message: format!(
+                    "commit {} path {} disappeared during blob loading",
+                    id.short(),
+                    relative.display()
+                ),
+            })?;
+        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != size {
+            return Err(WorkspaceError {
+                path: self.root.join(relative),
+                message: format!(
+                    "commit {} blob header size does not match data at {}",
+                    id.short(),
+                    relative.display()
+                ),
+            });
+        }
+        Ok(Some(CommitBlob {
+            mode: info.mode(),
+            size,
+            object,
+            bytes,
+        }))
+    }
+
     pub(crate) fn endpoint_files(
         &mut self,
         endpoint: &ComparisonEndpoint,
@@ -1305,6 +1478,15 @@ impl Workspace {
         id: &CommitId,
         relative: &Path,
     ) -> Result<Option<Vec<u8>>, WorkspaceError> {
+        self.commit_bytes_bounded(id, relative, self.content_limit())
+    }
+
+    fn commit_bytes_bounded(
+        &self,
+        id: &CommitId,
+        relative: &Path,
+        max_bytes: u64,
+    ) -> Result<Option<Vec<u8>>, WorkspaceError> {
         let Some(git) = self.ignore.as_ref() else {
             return Err(self.revision_error(
                 id.as_str(),
@@ -1348,17 +1530,32 @@ impl Workspace {
                 ),
             });
         }
-        let size = git
+        let header = git
             .repo
             .find_header(entry.id())
             .map_err(|error| WorkspaceError {
                 path: self.root.join(relative),
                 message: format!("cannot inspect commit blob: {error}"),
-            })?
-            .size();
-        if size > self.content_limit() {
-            return Err(self
-                .scan_error("comparison limited by content byte budget; coverage is incomplete"));
+            })?;
+        if header.kind() != gix::objs::Kind::Blob {
+            return Err(WorkspaceError {
+                path: self.root.join(relative),
+                message: format!(
+                    "commit {} entry at {} names a non-blob object",
+                    id.short(),
+                    relative.display()
+                ),
+            });
+        }
+        if header.size() > max_bytes {
+            return Err(WorkspaceError {
+                path: self.root.join(relative),
+                message: format!(
+                    "commit {} blob at {} exceeds the {max_bytes}-byte limit",
+                    id.short(),
+                    relative.display()
+                ),
+            });
         }
         let object = entry.object().map_err(|error| WorkspaceError {
             path: self.root.join(relative),
@@ -1368,7 +1565,28 @@ impl Workspace {
                 id.short()
             ),
         })?;
-        Ok(Some(object.detach().data))
+        if object.kind != gix::objs::Kind::Blob {
+            return Err(WorkspaceError {
+                path: self.root.join(relative),
+                message: format!(
+                    "commit {} entry at {} is not a blob",
+                    id.short(),
+                    relative.display()
+                ),
+            });
+        }
+        let bytes = object.detach().data;
+        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > max_bytes {
+            return Err(WorkspaceError {
+                path: self.root.join(relative),
+                message: format!(
+                    "commit {} blob at {} exceeds the {max_bytes}-byte limit",
+                    id.short(),
+                    relative.display()
+                ),
+            });
+        }
+        Ok(Some(bytes))
     }
 
     fn index_endpoint_bytes(&self, relative: &Path) -> Result<Option<Vec<u8>>, WorkspaceError> {

@@ -28,12 +28,16 @@ use serde_json::{Value, json};
 
 use crate::app::threads::read_checkout_text;
 
+use super::source::{After, CommitRequest, Source};
 use super::{Server, Target};
 /// `threads` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = exclusive_ids_lookup)]
 pub(crate) struct ThreadsParams {
+    /// Optionally filter by exact immutable commit origin.
+    #[serde(default)]
+    source: Option<Source>,
     /// Which non-archived discussions to list: `open` (default), `resolved`, or `all`.
     #[serde(default)]
     status: Option<StatusFilter>,
@@ -53,16 +57,6 @@ pub(crate) struct ThreadsParams {
     /// Do not combine this with filters or pagination.
     #[serde(default)]
     ids: Vec<String>,
-}
-
-/// A stable position in `threads` ordering.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct After {
-    /// The prior page's last `updated` timestamp.
-    updated: u64,
-    /// The prior page's last thread id.
-    id: String,
 }
 
 /// The status selector accepted by `threads`.
@@ -201,7 +195,8 @@ fn exclusive_ids_lookup(schema: &mut schemars::Schema) {
                     "path": { "type": "null" },
                     "since": { "type": "null" },
                     "after": { "type": "null" },
-                    "limit": { "type": "null" }
+                    "limit": { "type": "null" },
+                    "source": { "type": "null" }
                 }
             }
         }]),
@@ -713,12 +708,53 @@ pub(super) struct ThreadsOutput {
     next_after: Option<After>,
 }
 
+/// The complete result returned by a commit-selected read.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct SelectedThreadsOutput {
+    /// The immutable checkout this MCP server was bound to at startup.
+    checkout: PathBuf,
+    /// The canonical full ID selected for immutable-origin filtering.
+    #[schemars(regex(pattern = r"^[0-9a-f]{40}$"))]
+    resolved_commit: String,
+    threads: Vec<Shown>,
+    more: usize,
+    #[schemars(required)]
+    next_after: Option<After>,
+}
+
+/// Successful read results preserve the legacy or selected wire shape.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub(super) enum ThreadsSuccess {
+    Ordinary(ThreadsOutput),
+    Selected(SelectedThreadsOutput),
+}
+
 /// The complete result returned by a write.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct WriteOutput {
     /// The immutable checkout this MCP server was bound to at startup.
     pub(super) checkout: PathBuf,
     pub(super) threads: Vec<Shown>,
+}
+
+/// The complete result returned by a commit-selected start.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct SelectedWriteOutput {
+    /// The immutable checkout this MCP server was bound to at startup.
+    pub(super) checkout: PathBuf,
+    /// The canonical full ID used for immutable origin capture.
+    #[schemars(regex(pattern = r"^[0-9a-f]{40}$"))]
+    pub(super) resolved_commit: String,
+    pub(super) threads: Vec<Shown>,
+}
+
+/// Successful starts preserve the legacy or selected wire shape.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub(super) enum StartSuccess {
+    Ordinary(WriteOutput),
+    Selected(SelectedWriteOutput),
 }
 
 /// The durable resolution result of one completed reply.
@@ -951,6 +987,10 @@ impl Tree {
         Ok(())
     }
 
+    pub(super) fn preflight(&mut self, path: &Path) -> Result<(), String> {
+        self.ensure_captured(path)
+    }
+
     pub(super) fn try_place(&mut self, thread: &Thread) -> Result<Placement, String> {
         self.ensure_captured(thread.path())?;
         let text = self.texts.get(thread.path()).and_then(Option::as_deref);
@@ -1035,14 +1075,16 @@ impl Trees {
 #[tool_router(vis = "pub(super)")]
 impl Server {
     #[tool(
-        output_schema = rmcp::handler::server::tool::schema_for_output::<ThreadsOutput>(),
+        output_schema = rmcp::handler::server::tool::schema_for_output::<ThreadsSuccess>(),
         description = "Read review discussions in this repository checkout. By default returns \
                        all non-archived open discussions with their complete conversation, \
                        immutable origin, current placement, and lifecycle history. Filter with \
                        `status`, `path`, and `since`; page with `limit` and the returned \
                        `next_after`; or pass `ids` alone to retrieve exact discussions, including \
-                       archived history. Reading never assigns, acknowledges, or consumes a \
-                       discussion.",
+                       archived history. Optional `source:{kind:\"commit\",revision}` filters exact \
+                       immutable commit origins and returns `resolved_commit`; selected cursors \
+                       remain pinned to that full ID. Reading never assigns, acknowledges, or \
+                       consumes a discussion.",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
@@ -1050,12 +1092,62 @@ impl Server {
         )
     )]
     fn threads(&self, Parameters(p): Parameters<ThreadsParams>) -> CallToolResult {
+        if !p.ids.is_empty() && p.source.is_some() {
+            return failure("pass non-empty `ids` without `source`");
+        }
+        let source_request = match p.source.as_ref().map(Source::request).transpose() {
+            Ok(request) => request,
+            Err(error) => return invalid_source(error, None),
+        };
+        if matches!(source_request, Some(CommitRequest::Head)) && p.after.is_some() {
+            return invalid_source(
+                "`source.revision:\"HEAD\"` cannot continue `after`; use the prior full \
+                 `resolved_commit` as the source revision",
+                None,
+            );
+        }
+        if source_request.is_none() && p.after.as_ref().and_then(After::commit).is_some() {
+            return invalid_source(
+                "a commit-qualified `after` requires the same full `source`",
+                None,
+            );
+        }
+
+        let selected_commit = match source_request.as_ref() {
+            Some(request) => match super::source::SelectedCommit::resolve(&self.target, request) {
+                Ok(selected) => Some(selected),
+                Err(error) => return invalid_source(error, None),
+            },
+            None => None,
+        };
+        if let Some(commit) = selected_commit.as_ref() {
+            match p.after.as_ref() {
+                Some(after) if after.commit().is_none() => {
+                    return invalid_source(
+                        "a selected read requires a commit-qualified `after`",
+                        Some(commit.id().as_str()),
+                    );
+                }
+                Some(after) if after.commit() != Some(commit.id().as_str()) => {
+                    return invalid_source(
+                        "`after.resolved_commit` must match the selected full commit ID",
+                        Some(commit.id().as_str()),
+                    );
+                }
+                _ => {}
+            }
+        }
+
         let selected = if p.ids.is_empty() {
             let all = match self.fetch() {
                 Ok(all) => all,
                 Err(error) => return failure(error),
             };
-            match select_filtered(std::slice::from_ref(&self.target.root), &all, &p) {
+            let selection = match selected_commit.as_ref() {
+                Some(commit) => select_commit_filtered(&all, &p, commit.id()),
+                None => select_filtered(std::slice::from_ref(&self.target.root), &all, &p),
+            };
+            match selection {
                 Ok(selected) => OwnedSelection::from(selected),
                 Err(error) => return failure(error),
             }
@@ -1087,12 +1179,22 @@ impl Server {
             };
             shown.push(Shown::new(thread, location.placement));
         }
-        CallToolResult::structured(json!(ThreadsOutput {
-            checkout: self.target.root.clone(),
-            threads: shown,
-            more: selected.more,
-            next_after: selected.next_after,
-        }))
+        let output = match selected_commit {
+            Some(commit) => ThreadsSuccess::Selected(SelectedThreadsOutput {
+                checkout: self.target.root.clone(),
+                resolved_commit: commit.id().as_str().to_owned(),
+                threads: shown,
+                more: selected.more,
+                next_after: selected.next_after,
+            }),
+            None => ThreadsSuccess::Ordinary(ThreadsOutput {
+                checkout: self.target.root.clone(),
+                threads: shown,
+                more: selected.more,
+                next_after: selected.next_after,
+            }),
+        };
+        CallToolResult::structured(json!(output))
     }
 
     #[tool(
@@ -1352,6 +1454,7 @@ fn select_filtered<'a>(
         .filter(|thread| params.since.is_none_or(|since| thread.modified() >= since))
         .filter(|thread| {
             params.after.as_ref().is_none_or(|after| {
+                let after = after.position();
                 (thread.modified(), thread.id().as_str()) > (after.updated, after.id.as_str())
             })
         })
@@ -1366,10 +1469,51 @@ fn select_filtered<'a>(
     let more = threads.len().saturating_sub(limit);
     threads.truncate(limit);
     let next_after = if more > 0 {
-        threads.last().map(|thread| After {
-            updated: thread.modified(),
-            id: thread.id().to_string(),
+        threads
+            .last()
+            .map(|thread| After::board(thread.modified(), thread.id().to_string()))
+    } else {
+        None
+    };
+    Ok(Selected {
+        threads,
+        more,
+        next_after,
+    })
+}
+
+fn select_commit_filtered<'a>(
+    all: &'a [Thread],
+    params: &ThreadsParams,
+    commit: &fathomable_core::workspace::CommitId,
+) -> Result<Selected<'a>, String> {
+    let which = Which::from_status(params.status);
+    let path = normalize_repository_path(params.path.as_deref().unwrap_or_else(|| Path::new("")))?;
+    let mut threads: Vec<&Thread> = all
+        .iter()
+        .filter(|thread| which.admits(thread))
+        .filter(|thread| thread.origin_version().commit_id() == Some(commit.as_str()))
+        .filter(|thread| params.since.is_none_or(|since| thread.modified() >= since))
+        .filter(|thread| {
+            params.after.as_ref().is_none_or(|after| {
+                let after = after.position();
+                (thread.modified(), thread.id().as_str()) > (after.updated, after.id.as_str())
+            })
         })
+        .filter(|thread| {
+            path.as_deref()
+                .is_none_or(|path| thread.origin().path().starts_with(path))
+        })
+        .collect();
+    threads
+        .sort_by(|left, right| (left.modified(), left.id()).cmp(&(right.modified(), right.id())));
+    let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
+    let more = threads.len().saturating_sub(limit);
+    threads.truncate(limit);
+    let next_after = if more > 0 {
+        threads
+            .last()
+            .map(|thread| After::selected(thread.modified(), thread.id().to_string(), commit))
     } else {
         None
     };
@@ -1614,6 +1758,9 @@ fn check_path_in_roots(roots: &[PathBuf], path: Option<&Path>) -> Result<Option<
 
 fn normalize_repository_path(path: &Path) -> Result<Option<PathBuf>, String> {
     let shown = path.display();
+    if path.to_string_lossy().contains('\0') {
+        return Err(format!("{shown} contains a NUL byte"));
+    }
     let inside = path.is_relative()
         && path
             .components()
@@ -1794,11 +1941,22 @@ pub(super) fn failure(message: impl Into<String>) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(message.into())])
 }
 
-fn structured_error(value: Value) -> CallToolResult {
+pub(super) fn structured_error(value: Value) -> CallToolResult {
     let text = value.to_string();
     let mut result = CallToolResult::structured_error(value);
     result.content = vec![ContentBlock::text(text)];
     result
+}
+
+pub(super) fn invalid_source(message: impl Into<String>, commit: Option<&str>) -> CallToolResult {
+    let mut value = json!({
+        "error_code": "INVALID_SOURCE",
+        "message": message.into(),
+    });
+    if let Some(commit) = commit {
+        value["resolved_commit"] = commit.into();
+    }
+    structured_error(value)
 }
 
 #[derive(Debug, Serialize)]
@@ -2000,6 +2158,7 @@ mod tests {
             std::slice::from_ref(&dir.0),
             all,
             &ThreadsParams {
+                source: None,
                 status: None,
                 path: None,
                 since: None,
@@ -2014,6 +2173,7 @@ mod tests {
             std::slice::from_ref(&dir.0),
             all,
             &ThreadsParams {
+                source: None,
                 status: None,
                 path: None,
                 since: None,
@@ -2049,6 +2209,7 @@ mod tests {
             std::slice::from_ref(&dir.0),
             store.threads(),
             &ThreadsParams {
+                source: None,
                 status: None,
                 path: None,
                 since: None,
@@ -2066,6 +2227,7 @@ mod tests {
             std::slice::from_ref(&dir.0),
             store.threads(),
             &ThreadsParams {
+                source: None,
                 status: None,
                 path: None,
                 since: None,

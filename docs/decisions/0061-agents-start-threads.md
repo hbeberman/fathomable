@@ -19,6 +19,14 @@ tags:
 
 Status: accepted (2026-09-05)
 
+Commit source selection amended 2026-09-19 by
+[0092](0092-per-call-commit-sources.md): `thread_start` may take one optional
+top-level commit `source` for the whole batch. Fresh comments capture their
+immutable origin from that local commit tree under a shared 64 MiB budget;
+omission keeps the checkout-confined working-tree route below. Selected keyed
+intent includes the resolved commit, and current placement is still projected
+in the bound checkout. `thread_reply` and the three-tool surface do not change.
+
 MCP contract amended 2026-09-16 by
 [0084](0084-explicit-mcp-contracts.md): starts expose a precise input
 schema, complete typed JSON results, and optional per-comment

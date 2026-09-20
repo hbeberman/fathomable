@@ -16,6 +16,13 @@ tags:
 
 Status: accepted (2026-08-26)
 
+Selected-start intent amended 2026-09-19 by
+[0092](0092-per-call-commit-sources.md): annotation format remains **5**.
+`OriginVersion` exposes exact commit identity, and `Draft::at_selected_commit`
+binds commit provenance and keyed start intent together. Store probing and
+the final locked write reject a key whose selected commit or persisted origin
+does not match, while legacy unselected intent serialization stays unchanged.
+
 Lifecycle, keys, and format amended 2026-09-16 by
 [0085](0085-thread-lifecycle-and-auto-resolve.md) and
 [0086](0086-one-thread-summary-and-its-actions.md): the owned annotation

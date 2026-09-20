@@ -12,6 +12,11 @@ tags:
 
 # 0047 One vocabulary for the viewer
 
+Amended 2026-09-19 by
+[0092](0092-per-call-commit-sources.md): `source` is the optional top-level
+parameter that selects an immutable commit origin for `threads` and
+`thread_start`; it does not change the bound checkout or viewer state. for the viewer
+
 Status: accepted (2026-09-03)
 
 Identity vocabulary amended 2026-09-15 by

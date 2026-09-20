@@ -4,7 +4,10 @@ use std::error::Error;
 use std::fs;
 use std::path::Path;
 
-use fathomable_core::annotations::{Anchor, Author, Draft, LineRange, Store};
+use fathomable_core::annotations::{
+    Anchor, Author, ContentIdentity, Draft, LineRange, OriginSide, OriginVersion, Provenance, Store,
+};
+use fathomable_core::workspace::CommitId;
 use fathomable_testing::TempDir;
 use serde_json::json;
 
@@ -90,5 +93,148 @@ fn store_rejects_invalid_ranges_without_rewriting_the_log() -> TestResult {
     }
     fs::write(&path, original)?;
     assert_eq!(Store::open(&path)?.threads().len(), 1);
+    Ok(())
+}
+
+fn keyed_author() -> Author {
+    Author::Agent {
+        name: "reviewer".to_owned(),
+        client: Some("copilot-cli".to_owned()),
+        id: Some("copilot:selected-source".to_owned()),
+    }
+}
+
+fn selected_draft(commit: &CommitId) -> Draft {
+    Draft::new(
+        keyed_author(),
+        Path::new("a.md"),
+        LineRange::new(1, 1),
+        "comment",
+    )
+    .with_provenance(
+        Provenance::new(
+            OriginVersion::commit(commit.as_str()),
+            OriginSide::Unspecified,
+        )
+        .with_content(ContentIdentity::from_text("first\nsecond\n")),
+    )
+    .at_selected_commit(commit.clone())
+}
+
+#[test]
+fn commit_source_draft_records_exact_immutable_origin() -> TestResult {
+    let dir = TempDir::new("selected-commit-origin")?;
+    let path = dir.0.join("threads.jsonl");
+    let commit = CommitId::parse("0123456789abcdef0123456789abcdef01234567")?;
+    let mut store = Store::open(&path)?;
+    let id = store
+        .annotate_idempotent(selected_draft(&commit), 1, "selected", |_| {
+            Ok("first\nsecond\n".to_owned())
+        })?
+        .into_value();
+    let thread = store.thread(&id).ok_or("selected thread is missing")?;
+
+    assert_eq!(
+        thread.origin_version(),
+        &OriginVersion::commit(commit.as_str())
+    );
+    assert_eq!(thread.origin_side(), OriginSide::Unspecified);
+    assert_eq!(thread.commit(), Some(commit.as_str()));
+    assert_eq!(
+        thread.origin().content().map(ContentIdentity::bytes),
+        Some("first\nsecond\n".len())
+    );
+    Ok(())
+}
+
+#[test]
+fn commit_source_key_replays_only_for_the_same_selection() -> TestResult {
+    let dir = TempDir::new("selected-commit-replay")?;
+    let path = dir.0.join("threads.jsonl");
+    let commit_c = CommitId::parse("1111111111111111111111111111111111111111")?;
+    let commit_d = CommitId::parse("2222222222222222222222222222222222222222")?;
+    let mut store = Store::open(&path)?;
+    let first = store.annotate_idempotent(selected_draft(&commit_c), 1, "same", |_| {
+        Ok("first\nsecond\n".to_owned())
+    })?;
+    assert!(!first.replayed());
+    drop(store);
+
+    let mut store = Store::open(&path)?;
+    let replay = store.annotate_idempotent(selected_draft(&commit_c), 2, "same", |_| {
+        Err(fathomable_core::annotations::StoreError::message(
+            "selected replay loaded source",
+        ))
+    })?;
+    assert!(replay.replayed());
+    assert_eq!(replay.value(), first.value());
+
+    let different = store.annotate_idempotent(selected_draft(&commit_d), 3, "same", |_| {
+        Ok("first\nsecond\n".to_owned())
+    });
+    assert!(
+        different
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("conflicts")),
+        "{different:?}"
+    );
+    let unselected = store.annotate_idempotent(
+        Draft::new(
+            keyed_author(),
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "comment",
+        ),
+        4,
+        "same",
+        |_| Ok("first\nsecond\n".to_owned()),
+    );
+    assert!(
+        unselected
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("conflicts")),
+        "{unselected:?}"
+    );
+
+    store.annotate_idempotent(
+        Draft::new(
+            keyed_author(),
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "comment",
+        ),
+        5,
+        "legacy-first",
+        |_| Ok("first\nsecond\n".to_owned()),
+    )?;
+    let reverse = store.annotate_idempotent(selected_draft(&commit_c), 6, "legacy-first", |_| {
+        Ok("first\nsecond\n".to_owned())
+    });
+    assert!(
+        reverse
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("conflicts")),
+        "{reverse:?}"
+    );
+    assert_eq!(store.threads().len(), 2);
+    Ok(())
+}
+
+#[test]
+fn commit_source_rejects_origin_disagreement_before_probe_or_write() -> TestResult {
+    let dir = TempDir::new("selected-commit-mismatch")?;
+    let path = dir.0.join("threads.jsonl");
+    let commit_c = CommitId::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?;
+    let commit_d = CommitId::parse("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")?;
+    let draft = selected_draft(&commit_c)
+        .at_source(OriginVersion::commit(commit_d.as_str()), OriginSide::Base);
+    let store = Store::open(&path)?;
+
+    let error = store
+        .probe_start_idempotency(&draft, "mismatch")
+        .err()
+        .ok_or("mismatched selected source was accepted")?;
+    assert!(error.to_string().contains("does not agree"), "{error}");
+    assert!(!path.exists(), "a rejected probe must not create the store");
     Ok(())
 }

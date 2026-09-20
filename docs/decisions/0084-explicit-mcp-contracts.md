@@ -12,6 +12,14 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Commit source contracts amended 2026-09-19 by
+[0092](0092-per-call-commit-sources.md): selected read/start successes add a
+required canonical full `resolved_commit`, while omitted-source result shapes
+remain unchanged. Selected read cursors carry that ID and must match the next
+call's full-ID source; `HEAD` cannot continue `after`. A keyed start's intent
+includes its selected commit, but legacy unselected intent bytes and annotation
+format **5** remain unchanged.
+
 Transport amended 2026-09-18 by [0089](0089-store-only-mcp.md):
 MCP uses the shared store directly. Its schemas, returned projections, keyed
 retry semantics, and batch outcomes are unchanged; references to the

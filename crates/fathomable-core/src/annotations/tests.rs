@@ -11,7 +11,7 @@ use super::{
     FORMAT_VERSION, Lifecycle, LineHashes, LineRange, MAX_IDEMPOTENCY_KEY_BYTES, MAX_MESSAGE_BYTES,
     MessageTarget, OriginSide, OriginVersion, Placement, PlacementContext, PlacementEvidence,
     Provenance, Reply, ResolutionOutcome, Status, Store, StoreError, Thread, ThreadId, UserSubmit,
-    UserWriteOutcome, WorkingTreeFacts, WorkingTreeState, line_hash,
+    UserWriteOutcome, WorkingTreeFacts, WorkingTreeState, line_hash, start_intent,
 };
 
 const TEXT: &str = "# Title\n\nalpha\nbeta\ngamma\n\ndelta\n";
@@ -989,6 +989,19 @@ fn keyed_start_replays_after_restart_without_loading_the_source() -> Result<(), 
     })?;
     assert!(!first.replayed());
     let id = first.into_value();
+    let event: serde_json::Value = serde_json::from_str(
+        fs::read_to_string(&file.0)
+            .map_err(|error| StoreError::io(&file.0, error))?
+            .trim_end(),
+    )
+    .map_err(|error| StoreError::parse(0, error.to_string()))?;
+    assert_eq!(
+        event["receipt"]["intent"].as_str(),
+        Some(
+            r#"{"operation":"start","path":"a.md","range":{"start":3,"end":4},"body":"same body"}"#
+        ),
+        "legacy format-5 receipt intent must remain byte-for-byte stable"
+    );
     drop(store);
 
     let mut restarted = Store::open(&file.0)?;
@@ -999,6 +1012,57 @@ fn keyed_start_replays_after_restart_without_loading_the_source() -> Result<(), 
     assert_eq!(replay.value(), &id);
     assert_eq!(restarted.threads().len(), 1);
     assert_eq!(restarted.thread(&id).map(Thread::created), Some(20));
+    Ok(())
+}
+
+#[test]
+fn selected_commit_intent_is_tagged_without_a_format_bump() -> Result<(), StoreError> {
+    let commit = crate::workspace::CommitId::parse("0123456789abcdef0123456789abcdef01234567")
+        .map_err(|error| StoreError::message(error.to_string()))?;
+    let legacy = Draft::on_file(keyed_author("copilot:one"), Path::new("a.md"), "comment");
+    let selected = legacy.clone().at_selected_commit(commit);
+
+    assert_eq!(
+        start_intent(&legacy)?,
+        r#"{"operation":"start","path":"a.md","range":null,"body":"comment"}"#
+    );
+    assert_eq!(
+        start_intent(&selected)?,
+        r#"{"operation":"start","path":"a.md","range":null,"body":"comment","source":{"kind":"commit","id":"0123456789abcdef0123456789abcdef01234567"}}"#
+    );
+    assert_eq!(FORMAT_VERSION, 5);
+    Ok(())
+}
+
+#[test]
+fn selected_commit_receipt_rejects_a_disagreeing_durable_origin() -> Result<(), StoreError> {
+    let file = TempFile::new("selected-origin-mismatch")?;
+    let selected = crate::workspace::CommitId::parse("1111111111111111111111111111111111111111")
+        .map_err(|error| StoreError::message(error.to_string()))?;
+    let draft = Draft::on_file(keyed_author("copilot:one"), Path::new("a.md"), "comment")
+        .at_selected_commit(selected);
+    Store::open(&file.0)?
+        .annotate_idempotent(draft.clone(), 1, "selected", |_| Ok(String::new()))?;
+
+    let mut event: serde_json::Value = serde_json::from_str(
+        fs::read_to_string(&file.0)
+            .map_err(|error| StoreError::io(&file.0, error))?
+            .trim_end(),
+    )
+    .map_err(|error| StoreError::parse(0, error.to_string()))?;
+    let other = serde_json::Value::String("2222222222222222222222222222222222222222".to_owned());
+    event["origin"]["provenance"]["version"]["id"] = other.clone();
+    event["commit"] = other;
+    fs::write(&file.0, format!("{event}\n")).map_err(|error| StoreError::io(&file.0, error))?;
+
+    let store = Store::open(&file.0)?;
+    let conflict = store.probe_start_idempotency(&draft, "selected");
+    assert!(
+        conflict
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("conflicts")),
+        "{conflict:?}"
+    );
     Ok(())
 }
 

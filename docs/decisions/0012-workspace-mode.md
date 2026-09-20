@@ -23,6 +23,14 @@ Status: accepted (2026-08-26); amended 2026-09-06 (ignore rules reload);
 amended 2026-09-14 (`l` / Right is directory navigation only);
 amended 2026-09-18 (synchronized terminal frames).
 
+Git object API amended 2026-09-19 by
+[0092](0092-per-call-commit-sources.md): `fathomable-core::workspace`
+exposes validated full `CommitId` values, exact commit lookup, and bounded
+`CommitBlob` reads for regular or executable entries in an immutable commit
+tree. The API rejects missing/corrupt objects, non-commit IDs, non-blob or
+non-regular entries, and blobs over the caller's limit without exposing
+`gix` types, fetching, checking out, or consulting working-tree content.
+
 Amended 2026-09-19: the startup welcome and **Getting started** share the
 canonical product introduction and complete quick reference. `Alt-Space` has
 its own line directly below the `Space` keymap hint. **Pane navigation**,

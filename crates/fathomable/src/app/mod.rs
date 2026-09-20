@@ -635,15 +635,28 @@ fn store_backing(
 }
 
 fn stable_store_reload(before: Option<&fs::Metadata>, store: &Store, path: &Path) -> bool {
-    match (
+    let after = fs::symlink_metadata(path);
+    stable_store_reload_metadata(
         before,
         store.backing_file_observed(),
-        fs::symlink_metadata(path),
-    ) {
+        after.as_ref().map_err(std::io::Error::kind),
+    )
+}
+
+#[expect(
+    clippy::redundant_guards,
+    reason = "the explicit comparison keeps filesystem error classification directly testable"
+)]
+fn stable_store_reload_metadata(
+    before: Option<&fs::Metadata>,
+    backing_file_observed: bool,
+    after: Result<&fs::Metadata, std::io::ErrorKind>,
+) -> bool {
+    match (before, backing_file_observed, after) {
         (Some(before), true, Ok(after)) => {
             before.dev() == after.dev() && before.ino() == after.ino()
         }
-        (None, false, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => true,
+        (None, false, Err(error)) if error == std::io::ErrorKind::NotFound => true,
         _ => false,
     }
 }

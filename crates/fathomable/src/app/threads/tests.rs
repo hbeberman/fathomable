@@ -477,16 +477,39 @@ fn changing_a_tombstones_git_source_relocates_its_threads() -> anyhow::Result<()
 
     let index_text = testing::README.replace("\nalpha", "\ninserted\nalpha");
     fathomable_testing::git::stage(&root, &[("README.md", &index_text)])?;
+    fs::write(root.join("README.md"), &index_text)?;
+    let staged = app(&dir)?;
+    assert_eq!(
+        crate::app::deleted_source(staged.status().get(Path::new("README.md"))),
+        None,
+        "a staged modification is not a staged deletion"
+    );
+    drop(staged);
+
     fs::remove_file(root.join("README.md"))?;
-    let mut tombstone = testing::AppBuilder::new(&dir).unopened().build()?;
+    let workspace = fathomable_core::workspace::Workspace::discover(&root)?;
+    let mut options = crate::app::Options::for_test(root.clone());
+    options.store = Some(Store::open(testing::store_path(&dir))?);
+    let mut tombstone = App::new(workspace, 100, 30, options);
+    tombstone.settle_status();
+    assert_eq!(
+        tombstone.diff_mode(),
+        fathomable_core::config::DiffMode::Normal
+    );
     tombstone.open(Path::new("README.md"));
-    assert_eq!(tombstone.marks()[0].range(), Some(LineRange::new(3, 5)));
+    assert_eq!(
+        tombstone.banner(),
+        Some("deleted from worktree · showing INDEX")
+    );
+    assert_eq!(tombstone.view().text(), index_text);
+    assert_eq!(tombstone.marks()[0].range(), Some(LineRange::new(4, 6)));
 
     fathomable_testing::git::stage(&root, &[])?;
     tombstone.on_events(vec![crate::app::watch::Event::Change(
         root.join(".git/index"),
     )]);
     tombstone.settle_status();
+    assert_eq!(tombstone.banner(), Some("staged deletion · showing HEAD"));
     assert_eq!(tombstone.view().text(), testing::README);
     assert_eq!(tombstone.marks()[0].range(), Some(LineRange::new(3, 5)));
     Ok(())
@@ -2381,6 +2404,43 @@ fn activity_store_replacement_and_cursor_regression_do_not_replay_history() -> a
         app.toasts().len(),
         1,
         "cursor regression reseeds instead of replaying"
+    );
+    Ok(())
+}
+
+#[test]
+fn store_reload_accepts_only_the_same_backing_or_absent_bootstrap() -> anyhow::Result<()> {
+    let dir = testing::workspace("store-reload-identity", testing::README)?;
+    let path = testing::store_path(&dir);
+
+    let absent = Store::open(&path)?;
+    assert!(
+        crate::app::stable_store_reload(None, &absent, &path),
+        "an initially absent store remains a legitimate empty store"
+    );
+    assert!(
+        !crate::app::stable_store_reload_metadata(
+            None,
+            false,
+            Err(std::io::ErrorKind::PermissionDenied),
+        ),
+        "only NotFound represents an absent bootstrap store"
+    );
+
+    fathomable_core::private_state::write(&path, "")?;
+    let before = fs::symlink_metadata(&path)?;
+    let loaded = Store::open(&path)?;
+    assert!(
+        crate::app::stable_store_reload(Some(&before), &loaded, &path),
+        "an unchanged observed backing is stable"
+    );
+
+    let replacement = dir.0.join("state/replacement.jsonl");
+    fathomable_core::private_state::write(&replacement, "")?;
+    fs::rename(&replacement, &path)?;
+    assert!(
+        !crate::app::stable_store_reload(Some(&before), &loaded, &path),
+        "an atomic replacement after loading must be rejected"
     );
     Ok(())
 }

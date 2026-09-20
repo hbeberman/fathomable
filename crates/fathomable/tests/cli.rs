@@ -3,7 +3,8 @@
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use fathomable_core::XdgDirs;
 use fathomable_core::session::{Id, Marker, Record};
@@ -11,6 +12,34 @@ use fathomable_testing::TempDir;
 use fathomable_testing::git;
 
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
+
+struct BoundedChild(Child);
+
+impl BoundedChild {
+    fn spawn(command: &mut Command) -> std::io::Result<Self> {
+        command.spawn().map(Self)
+    }
+
+    fn wait(&mut self, timeout: Duration) -> std::io::Result<Option<ExitStatus>> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(status) = self.0.try_wait()? {
+                return Ok(Some(status));
+            }
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+impl Drop for BoundedChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
 
 fn dirs(fixture: &TempDir) -> XdgDirs {
     XdgDirs::resolve(|name| match name {
@@ -132,11 +161,23 @@ fn viewer_startup_marks_every_linked_worktree_before_entering_the_terminal() -> 
     let linked = fixture.0.join("linked");
     git::worktree_add(&main, &linked, "linked")?;
 
-    let output = command(&fixture).arg(&main).env("TERM", "dumb").output()?;
+    let mut detached = Command::new("setsid");
+    detached
+        .arg(env!("CARGO_BIN_EXE_fathomable"))
+        .arg(&main)
+        .env("XDG_CONFIG_HOME", fixture.0.join("config"))
+        .env("XDG_STATE_HOME", fixture.0.join("state"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = BoundedChild::spawn(&mut detached)?;
+    let status = child
+        .wait(Duration::from_secs(5))?
+        .ok_or("viewer did not stop without a controlling terminal")?;
 
     assert!(
-        !output.status.success(),
-        "piped output unexpectedly entered the terminal"
+        !status.success(),
+        "viewer unexpectedly entered a terminal-free session"
     );
     let markers = Marker::list(&dirs(&fixture));
     assert_eq!(markers.len(), 1);

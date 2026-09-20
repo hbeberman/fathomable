@@ -280,6 +280,9 @@ fn draft_freeze_still_lands_each_observed_head_in_order() -> anyhow::Result<()> 
         })
         .build()?;
     app.settle_background();
+    let initial = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("initial commit")?;
     app.open(Path::new("a.txt"));
     app.start_file_comment();
     press(&mut app, "candidate");
@@ -300,14 +303,34 @@ fn draft_freeze_still_lands_each_observed_head_in_order() -> anyhow::Result<()> 
         .context("commit B")?;
     app.refresh_comparison();
     git::commit_and_stage(&dir.0, &[("a.txt", "later\n")])?;
+    let commit_c = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("commit C")?;
     app.refresh_comparison();
     app.settle_background();
 
+    assert_eq!(
+        app.comparison.base(),
+        &ComparisonEndpoint::Commit(CommitId::parse(&initial)?),
+        "the draft keeps its installed Source selected"
+    );
     assert_eq!(
         app.thread(&id).and_then(Thread::landed_commit),
         Some(commit_b.as_str())
     );
     assert!(!app.comparison.pending());
+    app.compose_submit();
+    app.settle_background();
+    assert!(app.draft().is_none(), "the preserved draft submits");
+    assert_eq!(
+        app.comparison.base(),
+        &ComparisonEndpoint::Commit(CommitId::parse(commit_c)?),
+        "the deferred transition applies after the draft closes"
+    );
+    assert_eq!(
+        app.store.as_ref().map(|store| store.threads().len()),
+        Some(2)
+    );
     Ok(())
 }
 

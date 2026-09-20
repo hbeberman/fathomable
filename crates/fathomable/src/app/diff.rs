@@ -59,7 +59,7 @@ impl App {
         if mode == self.diff_mode {
             if mode == DiffMode::Off && self.comparison.restore_mode.is_some() {
                 self.comparison.cancel();
-                self.refresh_off_target();
+                self.refresh_comparison();
             }
             return;
         }
@@ -73,7 +73,7 @@ impl App {
             }
             self.suspend_changed_filter();
             self.diff_mode = DiffMode::Off;
-            self.refresh_off_target();
+            self.refresh_comparison();
             return;
         }
 
@@ -323,6 +323,10 @@ impl App {
 
     /// Kept for callers that need the active pair after a refresh.
     pub(crate) fn refresh_comparison(&mut self) {
+        if self.comparison.defer_refresh_for_annotation() {
+            self.trigger_landing(None);
+            return;
+        }
         let transition = self.comparison.observe_head(&self.workspace);
         if transition.is_some() {
             self.head_transition_prompt = None;
@@ -359,9 +363,6 @@ impl App {
                 .as_ref()
                 .and_then(|transition| transition.current().commit().cloned()),
         );
-        if self.comparison.defer_refresh_for_annotation() {
-            return;
-        }
         let recovered = match self.reload_selected_review_point() {
             Ok(recovered) => recovered,
             Err(error) => {

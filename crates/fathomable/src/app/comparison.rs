@@ -66,6 +66,14 @@ fn target_paths(
     request: TargetRequest,
     cancellation: fathomable_core::workspace::Cancellation,
 ) -> Result<TargetComputed, String> {
+    target_paths_after_capture(request, cancellation, || Ok(()))
+}
+
+fn target_paths_after_capture(
+    request: TargetRequest,
+    cancellation: fathomable_core::workspace::Cancellation,
+    after_capture: impl FnOnce() -> Result<(), String>,
+) -> Result<TargetComputed, String> {
     let mut workspace = Workspace::discover(request.root).map_err(|error| error.to_string())?;
     workspace.set_limits(request.limits);
     workspace.set_cancellation(cancellation);
@@ -96,6 +104,10 @@ fn target_paths(
             .endpoint_paths(&request.endpoint)
             .map_err(|error| error.to_string())?
     };
+    after_capture()?;
+    if workspace.observe_head(request.head.generation()) != request.head {
+        return Err("HEAD changed during Target discovery; retrying".to_owned());
+    }
     Ok(TargetComputed {
         endpoint: request.endpoint,
         paths,

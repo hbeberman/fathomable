@@ -736,6 +736,60 @@ fn off_working_tree_filters_exclude_deleted_and_open_ignored_targets() -> anyhow
 }
 
 #[test]
+fn entering_off_reobserves_head_before_accepting_working_tree() -> anyhow::Result<()> {
+    let dir = repository("comparison-off-reobserves-head")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.txt", "one\n")])?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+    app.settle_background();
+
+    git::commit_and_stage(&root, &[("a.txt", "two\n")])?;
+    let current = Workspace::discover(&root)?
+        .head_commit()
+        .context("current HEAD")?;
+    app.select_diff_mode(DiffMode::Off);
+
+    assert_eq!(
+        app.comparison
+            .accepted_head()
+            .and_then(|head| head.state().commit())
+            .map(CommitId::as_str),
+        Some(current.as_str())
+    );
+    assert_eq!(
+        app.comparison.base(),
+        &ComparisonEndpoint::Commit(CommitId::parse(current)?)
+    );
+    Ok(())
+}
+
+#[test]
+fn target_only_capture_rejects_head_movement_after_reading_paths() -> anyhow::Result<()> {
+    let dir = repository("comparison-target-final-head-check")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.txt", "one\n")])?;
+    let workspace = Workspace::discover(&root)?;
+    let request = super::TargetRequest {
+        root: root.clone(),
+        endpoint: ComparisonEndpoint::Index,
+        limits: workspace.limits().clone(),
+        head: workspace.observe_head(7),
+    };
+
+    let result = super::target_paths_after_capture(
+        request,
+        fathomable_core::workspace::Cancellation::default(),
+        || git::commit_and_stage(&root, &[("a.txt", "two\n")]).map_err(|error| error.to_string()),
+    );
+
+    assert!(
+        result.is_err_and(|error| error.contains("HEAD changed during Target discovery")),
+        "a target snapshot cannot retain a pre-capture HEAD"
+    );
+    Ok(())
+}
+
+#[test]
 fn off_classifies_binary_and_over_limit_targets_before_text_conversion() -> anyhow::Result<()> {
     let dir = repository("comparison-off-content-policy")?;
     let root = dir.0.join("ws");

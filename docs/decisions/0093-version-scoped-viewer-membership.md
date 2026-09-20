@@ -87,11 +87,12 @@ activity, modification time, lifecycle, placement, board revision, nor
 auto-resolve authority. Archived candidates can land; deletion wins.
 
 Reconciliation runs at startup, store reload, local creation, and active
-checkout HEAD observation. It has one running request and at most one queued
-request. Candidate paths and aggregate content bytes are bounded before
-untrusted work where possible, failures are explicit, and repository and
-checkout bindings are revalidated. Landing jobs retain their captured
-checkout ownership across viewer worktree switches.
+checkout HEAD observation. It has one running request, retains the oldest
+queued request, and coalesces further triggers to the newest captured retry.
+Candidate paths and aggregate content bytes are bounded before untrusted work
+where possible, failures are explicit, and repository and checkout bindings
+are revalidated. Landing jobs retain their captured checkout ownership and
+commit across viewer worktree switches and later worker execution.
 
 ### HEAD and Index transitions preserve intent and evidence
 

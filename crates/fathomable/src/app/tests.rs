@@ -13,7 +13,7 @@ use fathomable_core::tree::Tree;
 use fathomable_core::workspace::Workspace;
 
 use super::input::bindings::Action;
-use super::{App, Focus, NoticeTone, Options, PickerKind, PickerState, Popup};
+use super::{App, Focus, NoticeTone, Options, PickerKind, PickerState, Popup, picker_list_rows};
 
 fn fixture(name: &str) -> std::io::Result<TempDir> {
     let dir = TempDir::new(&format!("app-{name}"))?;
@@ -131,6 +131,62 @@ fn picker_scrolloff_allows_free_motion_between_margins() {
         (19, 10),
         "the cursor approaches the edge only after the list reaches its end"
     );
+}
+
+#[test]
+fn picker_scrolloff_adapts_to_a_compact_viewport() {
+    let items: Vec<_> = (0..10).map(|index| format!("item {index}")).collect();
+    let mut picker = PickerState::new(PickerKind::Files, items);
+
+    picker.move_by(3, 4);
+
+    assert_eq!(
+        (picker.selected(), picker.first_visible(4)),
+        (3, 1),
+        "a four-row list retains one context row below the cursor"
+    );
+}
+
+#[test]
+fn picker_movement_uses_the_rows_available_at_each_pane_height() {
+    let items: Vec<_> = (0..20).map(|index| format!("item {index}")).collect();
+    let mut ordinary = PickerState::new(PickerKind::Files, items.clone());
+    let ordinary_rows = picker_list_rows(30);
+    ordinary.move_by(19, ordinary_rows);
+    assert_eq!(
+        (ordinary_rows, ordinary.first_visible(ordinary_rows)),
+        (18, 2),
+        "an ordinary pane shows the bounded 18-row list"
+    );
+
+    let mut bounded = PickerState::new(PickerKind::Files, items);
+    let bounded_rows = picker_list_rows(5);
+    bounded.move_by(2, bounded_rows);
+    assert_eq!(
+        (bounded_rows, bounded.first_visible(bounded_rows)),
+        (1, 2),
+        "the smallest popup still has one navigable list row"
+    );
+}
+
+#[test]
+fn commit_search_results_keep_distinct_rows_and_remove_duplicate_ids() {
+    let first_id = format!("aaaaa{}", "0".repeat(35));
+    let second_id = format!("aaaaa{}", "1".repeat(35));
+    let first = format!("{first_id} first 1970-01-01");
+    let first_duplicate = format!("{first_id} duplicate 1970-01-01");
+    let second = format!("{second_id} second 1970-01-01");
+    let second_duplicate = format!("{second_id} duplicate 1970-01-01");
+    let mut picker = PickerState::new(PickerKind::ComparisonCommit, vec![first]);
+
+    picker.set_commit_search("aaaaa", vec![first_duplicate, second, second_duplicate]);
+
+    let ids: Vec<_> = picker
+        .matches()
+        .iter()
+        .filter_map(|matched| super::comparison::commit_id_from_row(picker.item(matched)))
+        .collect();
+    assert_eq!(ids, [first_id, second_id]);
 }
 
 #[test]

@@ -167,6 +167,51 @@ fn manager_opens_action_card_and_rename_edits_prefilled_unicode_name() -> anyhow
 }
 
 #[test]
+fn returning_from_an_action_keeps_the_filter_and_stable_selection() -> anyhow::Result<()> {
+    let (dir, root) = fixture("review-point-action-return")?;
+    let points = dir.0.join("points");
+    let mut workspace = Workspace::discover(&root)?;
+    let mut external = ReviewPointStore::open(&points)?;
+    let first = capture(
+        &mut external,
+        &mut workspace,
+        &root,
+        "shared first",
+        "first\n",
+    )?;
+    let second = capture(
+        &mut external,
+        &mut workspace,
+        &root,
+        "shared second",
+        "second\n",
+    )?;
+    let mut app = AppBuilder::at(&root).review_points(&points).build()?;
+
+    app.request_review_point_manage();
+    for character in "shared".chars() {
+        app.picker_char(character);
+    }
+    let initially_selected = selected_id(&app);
+    let target = [&first, &second]
+        .into_iter()
+        .find(|point| Some(point.id()) != initially_selected)
+        .context("non-default filtered review point")?;
+    select_point(&mut app, target.id())?;
+    app.picker_confirm();
+    assert!(matches!(app.popup(), Some(Popup::ReviewPointAction(_))));
+
+    key(&mut app, KeyCode::Esc);
+
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::Picker(picker))
+            if picker.input() == "shared" && selected_id(&app) == Some(target.id())
+    ));
+    Ok(())
+}
+
+#[test]
 fn rename_preserves_a_full_length_name_without_appending_a_manifest_line() -> anyhow::Result<()> {
     let (dir, root) = fixture("review-point-rename-full-length-noop")?;
     let points = dir.0.join("points");

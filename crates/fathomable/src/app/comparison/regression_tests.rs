@@ -517,6 +517,86 @@ fn four_hex_characters_search_beyond_loaded_commit_rows() -> anyhow::Result<()> 
 }
 
 #[test]
+fn commit_search_rejects_short_hex_and_non_hex_queries() -> anyhow::Result<()> {
+    let dir = repository("comparison-picker-invalid-id-search")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.txt", "one\n")])?;
+    let head = Workspace::discover(&root)?
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("no HEAD"))?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+
+    app.open_scoped_picker(PickerKind::ComparisonTarget, Vec::new(), None);
+    for ch in head[..3].chars() {
+        app.picker_char(ch);
+    }
+    assert!(
+        picker_items(&app).is_empty(),
+        "a three-character hexadecimal query does not search commit history"
+    );
+
+    app.open_scoped_picker(PickerKind::ComparisonTarget, Vec::new(), None);
+    for ch in "zzzzz".chars() {
+        app.picker_char(ch);
+    }
+    assert!(
+        picker_items(&app).is_empty(),
+        "non-hexadecimal input never produces commit rows"
+    );
+    assert_eq!(
+        app.message(),
+        None,
+        "invalid picker input is handled locally rather than sent to Git"
+    );
+    Ok(())
+}
+
+#[test]
+fn long_commit_prefixes_and_branch_scope_search_beyond_loaded_rows() -> anyhow::Result<()> {
+    let dir = repository("comparison-picker-scoped-id-search")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.txt", "tag-only\n")])?;
+    let tag_only = Workspace::discover(&root)?
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("no tagged commit"))?;
+    git::tag(&root, "outside-main")?;
+    git::amend(&root, &[("a.txt", "main\n")])?;
+    let main = Workspace::discover(&root)?
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("no amended HEAD"))?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+
+    app.open_scoped_picker(
+        PickerKind::ComparisonBranchCommits(ComparisonSide::Base),
+        Vec::new(),
+        Some("main".to_owned()),
+    );
+    for ch in main[..8].chars() {
+        app.picker_char(ch);
+    }
+    assert!(
+        picker_items(&app)
+            .iter()
+            .any(|row| super::commit_id_from_row(row) == Some(main.as_str())),
+        "a long prefix finds a branch commit omitted from the loaded rows"
+    );
+
+    app.open_scoped_picker(
+        PickerKind::ComparisonBranchCommits(ComparisonSide::Base),
+        Vec::new(),
+        Some("main".to_owned()),
+    );
+    for ch in tag_only[..8].chars() {
+        app.picker_char(ch);
+    }
+    assert!(
+        picker_items(&app).is_empty(),
+        "branch search excludes matching commits reachable only from another ref"
+    );
+    Ok(())
+}
+
+#[test]
 fn failed_mutable_refresh_keeps_the_last_good_diff() -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
 

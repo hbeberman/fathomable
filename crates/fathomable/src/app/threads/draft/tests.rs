@@ -18,7 +18,19 @@ use crate::app::input::keys;
 use crate::app::testing::{self, click, press, press_key, screen};
 
 fn loose_blob_path(root: &Path, revision: &str, path: &str) -> anyhow::Result<std::path::PathBuf> {
-    let output = std::process::Command::new("git")
+    let mut command = std::process::Command::new("git");
+    for variable in [
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_PREFIX",
+        "GIT_WORK_TREE",
+    ] {
+        command.env_remove(variable);
+    }
+    let output = command
         .arg("-C")
         .arg(root)
         .args(["rev-parse", &format!("{revision}:{path}")])

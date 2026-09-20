@@ -304,25 +304,19 @@ impl Server {
                 None,
             );
             let replay = match item.idempotency_key.as_deref() {
-                Some(key) => {
-                    match probe_store.probe_start_idempotency_for_caller(&probe, caller, key) {
-                        Ok(replay) => replay,
-                        Err(error) => {
-                            problems.push(BatchIssue::new(
-                                index,
-                                format!("{}: {error}", path.display()),
-                            ));
-                            continue;
-                        }
+                Some(key) => match selected_replay_path(&probe_store, &probe, caller, key) {
+                    Ok(replay) => replay,
+                    Err(error) => {
+                        problems.push(BatchIssue::new(
+                            index,
+                            format!("{}: {error}", path.display()),
+                        ));
+                        continue;
                     }
-                }
+                },
                 None => None,
             };
-            if let Some(id) = replay {
-                let Some(thread) = probe_store.thread(&id) else {
-                    problems.push(BatchIssue::new(index, format!("thread {id} vanished")));
-                    continue;
-                };
+            if let Some(projected_path) = replay {
                 prepared.push(PreparedStart {
                     index,
                     item: Placed {
@@ -332,7 +326,7 @@ impl Server {
                         idempotency_key: item.idempotency_key.clone(),
                     },
                     text: None,
-                    projected_path: thread.path().to_path_buf(),
+                    projected_path,
                     preparation: Preparation::Replay,
                 });
                 continue;
@@ -489,6 +483,26 @@ struct PreparedStart {
 enum Preparation {
     Replay,
     Fresh,
+}
+
+fn selected_replay_path(
+    store: &Store,
+    draft: &Draft,
+    caller: &str,
+    key: &str,
+) -> Result<Option<PathBuf>, String> {
+    let Some(id) = store
+        .probe_start_idempotency_for_caller(draft, caller, key)
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(None);
+    };
+    // The receipt probe reads a newer snapshot than the caller's store.
+    let store = Store::open(store.path()).map_err(|error| error.to_string())?;
+    store
+        .thread(&id)
+        .map(|thread| Some(thread.path().to_path_buf()))
+        .ok_or_else(|| format!("thread {id} vanished"))
 }
 
 fn selected_draft(
@@ -754,10 +768,11 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use fathomable_core::XdgDirs;
-    use fathomable_core::annotations::{Author, LineRange, MAX_MESSAGE_BYTES, Store};
+    use fathomable_core::annotations::{Author, Draft, LineRange, MAX_MESSAGE_BYTES, Store};
+    use fathomable_core::workspace::CommitId;
     use fathomable_testing::TempDir;
 
-    use super::{Placed, StartItem, headless_start, place};
+    use super::{Placed, StartItem, headless_start, place, selected_replay_path};
     use crate::app::testing;
 
     fn dirs(dir: &TempDir) -> XdgDirs {
@@ -773,6 +788,29 @@ mod tests {
             body: body.to_owned(),
             idempotency_key: None,
         }
+    }
+
+    #[test]
+    fn commit_source_probe_observes_a_concurrent_completed_start()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("mcp-selected-concurrent-probe")?;
+        let file = dir.0.join("threads.jsonl");
+        let before = Store::open(&file)?;
+        let commit = CommitId::parse("1111111111111111111111111111111111111111")?;
+        let draft = Draft::on_file(Author::agent("reviewer"), Path::new("a.md"), "comment")
+            .at_selected_commit(commit);
+        Store::open(&file)?.annotate_idempotent_for_caller(
+            draft.clone(),
+            1,
+            "copilot:concurrent",
+            "same",
+            |_| Ok("text\n".to_owned()),
+        )?;
+        assert_eq!(
+            selected_replay_path(&before, &draft, "copilot:concurrent", "same")?,
+            Some(PathBuf::from("a.md"))
+        );
+        Ok(())
     }
 
     /// The check names what is wrong with each comment and passes a good

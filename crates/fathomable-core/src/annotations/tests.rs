@@ -1055,8 +1055,19 @@ fn selected_commit_receipt_rejects_a_disagreeing_durable_origin() -> Result<(), 
     event["commit"] = other;
     fs::write(&file.0, format!("{event}\n")).map_err(|error| StoreError::io(&file.0, error))?;
 
-    let store = Store::open(&file.0)?;
+    let mut store = Store::open(&file.0)?;
     let conflict = store.probe_start_idempotency(&draft, "selected");
+    assert!(
+        conflict
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("conflicts")),
+        "{conflict:?}"
+    );
+    let conflict = store.annotate_idempotent(draft, 2, "selected", |_| {
+        Err(StoreError::message(
+            "conflicting replay must not load source",
+        ))
+    });
     assert!(
         conflict
             .as_ref()

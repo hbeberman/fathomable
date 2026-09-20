@@ -18,7 +18,9 @@ required canonical full `resolved_commit`, while omitted-source result shapes
 remain unchanged. Selected read cursors carry that ID and must match the next
 call's full-ID source; `HEAD` cannot continue `after`. A keyed start's intent
 includes its selected commit, but legacy unselected intent bytes and annotation
-format **5** remain unchanged.
+format **5** remain unchanged. The input schema rejects cross-mode cursors and
+`HEAD` continuation; matching the two full IDs remains runtime validation.
+Resolution at another commit does not change a selected start's retry identity.
 
 Transport amended 2026-09-18 by [0089](0089-store-only-mcp.md):
 MCP uses the shared store directly. Its schemas, returned projections, keyed

@@ -58,7 +58,7 @@ and pagination identities that cannot drift with `HEAD`.
 Hex input is case-insensitive and canonicalizes to lowercase. Abbreviations,
 branches, tags, revspecs, ranges, paths, URLs, whitespace-padded values, and
 other source kinds are rejected. The selector applies to the whole call.
-Omission preserves the existing request and response behavior.
+Omission or `null` preserves the existing request and response behavior.
 
 `thread_reply` does not accept `source`. There is no fourth tool, global
 loaded commit, server mutation, viewer mutation, comparison selection,
@@ -83,8 +83,9 @@ path or range can differ from the origin, and absent or changed current
 content can produce detached or edited placement without changing historical
 evidence.
 
-One call caches each distinct selected path and admits at most 64 MiB of raw
-blob bytes across those paths. Missing files fail rather than becoming empty
+One call caches each distinct selected path, including failures, and admits at
+most 64 MiB of raw blob bytes across those paths. Loaded bytes count even when
+binary or UTF-8 validation rejects them. Missing files fail rather than becoming empty
 content. Directories, symlinks, submodules, unsupported Git modes, and entries
 that do not name blobs fail explicitly. Binary blobs and invalid UTF-8 fail as
 text sources. Whole-batch validation still precedes fresh writes; existing
@@ -94,6 +95,9 @@ Selected commit identity is part of a keyed start's durable intent. A matching
 replay returns the existing thread without requiring the source object to
 remain available; a changed source conflicts. The final locked store operation
 also verifies that a replayed thread has the selected immutable origin.
+Resolution, reopening, or archival does not invalidate a matching retry, even
+when the mutable thread-level `commit` now names a different resolution
+commit. A deleted target still fails rather than being recreated.
 Legacy unselected intent serialization is unchanged, so annotation format
 remains **5** with no migration, reset, or backfill.
 
@@ -114,11 +118,18 @@ combined with `after`; callers continue with the preceding response's full
 `resolved_commit`. Pages are pinned to one origin filter, not to one
 snapshot-isolated view of the changing board.
 
+The input schema rejects cross-mode cursors and `HEAD` continuation; equality
+between the cursor and source IDs is checked at runtime. Legacy cursors keep
+their exact `updated`/`id` JSON shape.
+
 ### Local immutable objects are a separate read boundary
 
 Before selected access, the server reopens the workspace and confirms that
 its checkout root and repository key still match the startup binding. `HEAD`
 is then pinned to one commit; a full ID must name that exact commit object.
+Neither form follows Git replacement objects. Intermediate path entries must
+have directory mode and name actual tree objects before their data is loaded;
+non-directory entries are never traversed to look up a descendant.
 The resulting tree and regular blobs are read through the in-process Git
 object store. No fetch, remote access, Git subprocess, checkout, ref update,
 or working-tree fallback occurs.

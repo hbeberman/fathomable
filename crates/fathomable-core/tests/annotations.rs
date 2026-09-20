@@ -221,6 +221,51 @@ fn commit_source_key_replays_only_for_the_same_selection() -> TestResult {
 }
 
 #[test]
+fn commit_source_replay_survives_resolution_reopen_and_archive() -> TestResult {
+    let dir = TempDir::new("selected-commit-lifecycle-replay")?;
+    let path = dir.0.join("threads.jsonl");
+    let commit = CommitId::parse("1111111111111111111111111111111111111111")?;
+    let mut store = Store::open(&path)?;
+    let id = store
+        .annotate_idempotent(selected_draft(&commit), 1, "same", |_| {
+            Ok("first\nsecond\n".to_owned())
+        })?
+        .into_value();
+    store.resolve(&id, Some("2222222222222222222222222222222222222222"), 2)?;
+
+    for state in ["resolved", "reopened", "archived", "deleted"] {
+        match state {
+            "reopened" => store.reopen(&id, 3)?,
+            "archived" => store.archive(&id, 4)?,
+            "deleted" => {
+                store.restore(&id, 5)?;
+                store.delete(&id, 6)?;
+            }
+            _ => {}
+        }
+        let before = fs::read(&path)?;
+        store = Store::open(&path)?;
+        let probe = store.probe_start_idempotency(&selected_draft(&commit), "same");
+        let replay = store.annotate_idempotent(selected_draft(&commit), 6, "same", |_| {
+            Err(fathomable_core::annotations::StoreError::message(
+                "replay must not load selected source",
+            ))
+        });
+        if state == "deleted" {
+            assert!(probe.is_err_and(|error| error.to_string().contains("was deleted")));
+            assert!(replay.is_err_and(|error| error.to_string().contains("was deleted")));
+        } else {
+            assert_eq!(probe?, Some(id.clone()), "{state}");
+            let replay = replay?;
+            assert!(replay.replayed(), "{state}");
+            assert_eq!(replay.value(), &id, "{state}");
+        }
+        assert_eq!(fs::read(&path)?, before, "{state}");
+    }
+    Ok(())
+}
+
+#[test]
 fn commit_source_rejects_origin_disagreement_before_probe_or_write() -> TestResult {
     let dir = TempDir::new("selected-commit-mismatch")?;
     let path = dir.0.join("threads.jsonl");

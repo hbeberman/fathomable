@@ -33,7 +33,7 @@ use super::{Server, Target};
 /// `threads` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[schemars(transform = exclusive_ids_lookup)]
+#[schemars(transform = threads_constraints)]
 pub(crate) struct ThreadsParams {
     /// Optionally filter by exact immutable commit origin.
     #[serde(default)]
@@ -42,6 +42,7 @@ pub(crate) struct ThreadsParams {
     #[serde(default)]
     status: Option<StatusFilter>,
     /// Only discussions on this repository-relative file or below this directory.
+    /// With `source`, matches immutable origin paths rather than current placement.
     #[serde(default)]
     path: Option<PathBuf>,
     /// Only discussions changed at or after this Unix time in seconds.
@@ -173,8 +174,8 @@ pub(super) fn require_line_for_end_line(schema: &mut schemars::Schema) {
     );
 }
 
-/// Add the exclusive non-empty `ids` lookup constraint to the input schema.
-fn exclusive_ids_lookup(schema: &mut schemars::Schema) {
+/// Add exclusive IDs and source-qualified pagination constraints to the schema.
+fn threads_constraints(schema: &mut schemars::Schema) {
     if let Some(Value::Object(properties)) = schema.get_mut("properties")
         && let Some(Value::Object(ids)) = properties.get_mut("ids")
     {
@@ -197,6 +198,30 @@ fn exclusive_ids_lookup(schema: &mut schemars::Schema) {
                     "after": { "type": "null" },
                     "limit": { "type": "null" },
                     "source": { "type": "null" }
+                }
+            }
+        }, {
+            "if": {
+                "required": ["after"],
+                "properties": {"after": {"type": "object"}}
+            },
+            "then": {
+                "if": {
+                    "required": ["source"],
+                    "properties": {"source": {"type": "object"}}
+                },
+                "then": {
+                    "properties": {
+                        "source": {
+                            "properties": {"revision": {"pattern": "^[0-9A-Fa-f]{40}$"}}
+                        },
+                        "after": {"required": ["resolved_commit"]}
+                    }
+                },
+                "else": {
+                    "properties": {
+                        "after": {"not": {"required": ["resolved_commit"]}}
+                    }
                 }
             }
         }]),

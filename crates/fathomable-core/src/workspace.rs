@@ -709,24 +709,57 @@ impl Workspace {
     /// Load exactly the commit object named by `id`.
     ///
     /// Unlike [`Workspace::resolve_revision`], this does not interpret the ID
-    /// as a reference or peel tag objects.
+    /// as a reference, peel tag objects, or follow Git replacement objects.
     ///
     /// # Errors
     ///
     /// Returns [`WorkspaceError`] when this workspace is not Git, the object
     /// is unavailable or corrupt, or the exact object is not a commit.
     pub fn commit(&self, id: &CommitId) -> Result<Commit, WorkspaceError> {
-        let Some(git) = self.ignore.as_ref() else {
-            return Err(self.revision_error(
-                id.as_str(),
-                "exact commit lookup is unavailable outside a Git repository",
-            ));
-        };
+        let repo = self.exact_repository(id.as_str())?;
         let object_id = ObjectId::from_hex(id.as_str().as_bytes()).map_err(|error| {
             self.revision_error(id.as_str(), &format!("invalid commit object ID: {error}"))
         })?;
-        commit_record(&git.repo, object_id)
+        check_commit_header(&repo, object_id)
+            .and_then(|()| commit_record(&repo, object_id))
             .map_err(|message| self.revision_error(id.as_str(), &message))
+    }
+
+    /// Pin `HEAD` to its exact commit without peeling or following replacements.
+    ///
+    /// This reads `HEAD` once, follows symbolic references, and validates the
+    /// original object. Viewer revision resolution remains separate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] outside Git, for unborn or unreadable `HEAD`,
+    /// or when its original target is unavailable, corrupt, or not a commit.
+    pub fn exact_head_commit(&self) -> Result<Commit, WorkspaceError> {
+        let repo = self.exact_repository("HEAD")?;
+        let mut head = repo
+            .find_reference("HEAD")
+            .map_err(|error| self.revision_error("HEAD", &error.to_string()))?;
+        let id = head
+            .follow_to_object()
+            .map_err(|error| self.revision_error("HEAD", &error.to_string()))?
+            .detach();
+        check_commit_header(&repo, id)
+            .and_then(|()| commit_record(&repo, id))
+            .map_err(|message| self.revision_error("HEAD", &message))
+    }
+
+    fn exact_repository(&self, revision: &str) -> Result<gix::Repository, WorkspaceError> {
+        let git = self.ignore.as_ref().ok_or_else(|| {
+            self.revision_error(
+                revision,
+                "exact commit lookup is unavailable outside a Git repository",
+            )
+        })?;
+        // A clone starts with empty caches and leaves viewer replacement semantics intact.
+        // Set the object-store flag directly: configuration must not redirect exact reads.
+        let mut repo = git.repo.clone();
+        repo.objects.ignore_replacements = true;
+        Ok(repo)
     }
 
     /// Enumerate branches and tags resolved to pinned commit IDs.
@@ -1250,107 +1283,110 @@ impl Workspace {
     ///
     /// `None` means the path is absent. Regular and executable blobs are
     /// accepted; directories, symbolic links, submodules, unsupported modes,
-    /// and entries naming non-blob objects are rejected. The object header is
+    /// and entries naming non-blob objects are rejected. Intermediate entries
+    /// must have directory mode and name actual trees before their data is
+    /// loaded. Git replacements are ignored throughout. The blob header is
     /// checked against `max_bytes` before allocating blob data.
     ///
     /// # Errors
     ///
     /// Returns [`WorkspaceError`] when the commit, tree, path metadata, or
     /// blob is unavailable or corrupt, the entry is not a regular file, or
-    /// its bytes exceed `max_bytes`.
+    /// its bytes exceed `max_bytes`. Paths must be nonempty, repository-relative,
+    /// and contain no NUL, empty, `.` or `..` components.
     pub fn commit_blob(
         &mut self,
         id: &CommitId,
         relative: &Path,
         max_bytes: u64,
     ) -> Result<Option<CommitBlob>, WorkspaceError> {
-        let endpoint = ComparisonEndpoint::Commit(id.clone());
-        let Some(info) = self.endpoint_path_info(&endpoint, relative)? else {
-            for ancestor in relative
-                .ancestors()
-                .skip(1)
-                .take_while(|path| !path.as_os_str().is_empty())
-            {
-                if let Some(info) = self.endpoint_path_info(&endpoint, ancestor)?
-                    && info.mode() != FileMode::Directory
-                {
-                    return Err(WorkspaceError {
-                        path: self.root.join(relative),
-                        message: format!(
-                            "commit {} has unsupported {:?} intermediate entry at {}",
-                            id.short(),
-                            info.mode(),
-                            ancestor.display()
-                        ),
-                    });
-                }
-            }
-            return Ok(None);
-        };
-        if !matches!(info.mode(), FileMode::Regular | FileMode::Executable) {
-            return Err(WorkspaceError {
-                path: self.root.join(relative),
-                message: format!(
-                    "commit {} has unsupported {:?} entry at {}",
-                    id.short(),
-                    info.mode(),
-                    relative.display()
-                ),
-            });
-        }
-        let size = info.size().ok_or_else(|| WorkspaceError {
+        self.check_scan()?;
+        let failure = |message: String| WorkspaceError {
             path: self.root.join(relative),
             message: format!(
-                "commit {} has no blob size for {}",
+                "commit {} path {}: {message}",
                 id.short(),
                 relative.display()
             ),
-        })?;
-        if size > max_bytes {
-            return Err(WorkspaceError {
-                path: self.root.join(relative),
-                message: format!(
-                    "commit {} blob at {} exceeds the {max_bytes}-byte limit",
-                    id.short(),
-                    relative.display()
-                ),
-            });
+        };
+        let path = unix_path(relative);
+        if relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            || path.contains(&0)
+            || path
+                .split(|byte| *byte == b'/')
+                .any(|part| part.is_empty() || part == b"." || part == b"..")
+        {
+            return Err(failure("invalid repository-relative path".to_owned()));
         }
-        let object = info
-            .object()
-            .ok_or_else(|| WorkspaceError {
-                path: self.root.join(relative),
-                message: format!(
-                    "commit {} has no blob object ID for {}",
-                    id.short(),
-                    relative.display()
-                ),
-            })?
-            .to_owned();
-        let bytes = self
-            .commit_bytes_bounded(id, relative, max_bytes)?
-            .ok_or_else(|| WorkspaceError {
-                path: self.root.join(relative),
-                message: format!(
-                    "commit {} path {} disappeared during blob loading",
-                    id.short(),
-                    relative.display()
-                ),
-            })?;
+        let repo = self.exact_repository(id.as_str())?;
+        let object_id = ObjectId::from_hex(id.as_str().as_bytes())
+            .map_err(|error| failure(format!("invalid commit object ID: {error}")))?;
+        check_commit_header(&repo, object_id).map_err(failure)?;
+        let commit = repo
+            .find_commit(object_id)
+            .map_err(|error| failure(format!("cannot read commit object: {error}")))?;
+        let mut object_id = commit
+            .tree_id()
+            .map_err(|error| failure(format!("cannot read commit tree ID: {error}")))?
+            .detach();
+        let mut mode = FileMode::Directory;
+        let mut components = path.split(|byte| *byte == b'/').peekable();
+        while let Some(component) = components.next() {
+            self.check_scan()?;
+            let header = repo
+                .find_header(object_id)
+                .map_err(|error| failure(format!("cannot inspect commit tree: {error}")))?;
+            if header.kind() != gix::objs::Kind::Tree {
+                return Err(failure(
+                    "directory entry names a non-tree object".to_owned(),
+                ));
+            }
+            let tree = repo
+                .find_tree(object_id)
+                .map_err(|error| failure(format!("cannot read commit tree: {error}")))?;
+            let mut found = None;
+            for entry in tree.iter() {
+                let entry =
+                    entry.map_err(|error| failure(format!("cannot read tree entry: {error}")))?;
+                if entry.filename() == component.as_bstr() {
+                    found = Some((tree_mode(entry.mode()), entry.id().detach()));
+                    break;
+                }
+            }
+            let Some(entry) = found else {
+                return Ok(None);
+            };
+            (mode, object_id) = entry;
+            if components.peek().is_some() && mode != FileMode::Directory {
+                return Err(failure(format!("unsupported {mode:?} intermediate entry")));
+            }
+        }
+        if !matches!(mode, FileMode::Regular | FileMode::Executable) {
+            return Err(failure(format!("unsupported {mode:?} entry")));
+        }
+        let header = repo
+            .find_header(object_id)
+            .map_err(|error| failure(format!("cannot inspect commit blob: {error}")))?;
+        if header.kind() != gix::objs::Kind::Blob {
+            return Err(failure("entry names a non-blob object".to_owned()));
+        }
+        let size = header.size();
+        if size > max_bytes {
+            return Err(failure(format!("blob exceeds the {max_bytes}-byte limit")));
+        }
+        let blob = repo
+            .find_blob(object_id)
+            .map_err(|error| failure(format!("cannot read commit blob: {error}")))?;
+        let bytes = blob.detach().data;
         if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != size {
-            return Err(WorkspaceError {
-                path: self.root.join(relative),
-                message: format!(
-                    "commit {} blob header size does not match data at {}",
-                    id.short(),
-                    relative.display()
-                ),
-            });
+            return Err(failure("blob header size does not match data".to_owned()));
         }
         Ok(Some(CommitBlob {
-            mode: info.mode(),
+            mode,
             size,
-            object,
+            object: object_id.to_hex().to_string(),
             bytes,
         }))
     }
@@ -2790,6 +2826,16 @@ fn parent_expression(spec: &str) -> Option<(&str, Ancestry)> {
         return Some((base, Ancestry::Parent(count)));
     }
     None
+}
+
+fn check_commit_header(repo: &gix::Repository, id: ObjectId) -> Result<(), String> {
+    let header = repo
+        .find_header(id)
+        .map_err(|error| format!("cannot inspect commit object: {error}"))?;
+    if header.kind() != gix::objs::Kind::Commit {
+        return Err(format!("{id} is not a commit object"));
+    }
+    Ok(())
 }
 
 fn commit_record(repo: &gix::Repository, id: ObjectId) -> Result<Commit, String> {

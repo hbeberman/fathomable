@@ -16,6 +16,11 @@ tags:
 
 Status: accepted (2026-08-27)
 
+MCP commit capture clarified by [0092](0092-per-call-commit-sources.md):
+selected starts use raw regular-blob bytes, the NUL sniff, and strict UTF-8,
+not viewer attributes or external filters. Their 64 MiB per-call budget
+includes loaded blobs rejected as non-text and is independent of viewer limits.
+
 ## Context
 
 The viewer had one notion of a file: UTF-8 text, or an error. Opening a

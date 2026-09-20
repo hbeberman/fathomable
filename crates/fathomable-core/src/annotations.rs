@@ -4905,7 +4905,6 @@ fn ensure_selected_origin(
     };
     if thread.origin_version().commit_id() == Some(selected.as_str())
         && thread.origin_side() == OriginSide::Unspecified
-        && thread.commit() == Some(selected.as_str())
     {
         Ok(())
     } else {

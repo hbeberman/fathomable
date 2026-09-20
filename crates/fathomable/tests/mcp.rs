@@ -11,8 +11,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, ensure};
 use fathomable_core::XdgDirs;
 use fathomable_core::annotations::{
-    Author, AutoResolve, Draft, Lifecycle, LineRange, MessageTarget, Reply, Status, Store,
-    ThreadId, UserSubmit,
+    Author, AutoResolve, Draft, Lifecycle, LineRange, MessageTarget, OriginSide, OriginVersion,
+    Reply, Status, Store, ThreadId, UserSubmit,
 };
 use fathomable_core::clock::now;
 use fathomable_core::session::{Id, Record};
@@ -379,6 +379,38 @@ fn exposes_only_three_tools_with_array_only_write_inputs() -> Result<()> {
     Ok(())
 }
 
+fn assert_commit_cursor_schema(threads: &Value) {
+    assert_eq!(
+        threads["allOf"][1],
+        json!({
+            "if": {
+                "required": ["after"],
+                "properties": {"after": {"type": "object"}}
+            },
+            "then": {
+                "if": {
+                    "required": ["source"],
+                    "properties": {"source": {"type": "object"}}
+                },
+                "then": {
+                    "properties": {
+                        "source": {
+                            "properties": {"revision": {"pattern": "^[0-9A-Fa-f]{40}$"}}
+                        },
+                        "after": {"required": ["resolved_commit"]}
+                    }
+                },
+                "else": {
+                    "properties": {
+                        "after": {"not": {"required": ["resolved_commit"]}}
+                    }
+                }
+            }
+        }),
+        "the schema must reject HEAD continuation and cross-mode cursors"
+    );
+}
+
 #[test]
 fn schemas_encode_mcp_input_constraints() -> Result<()> {
     let fixture = Fixture::new("mcp-schemas")?;
@@ -404,6 +436,7 @@ fn schemas_encode_mcp_input_constraints() -> Result<()> {
         &["open", "resolved", "all"]
     ));
     assert!(schema_has_property(&threads, "source"));
+    assert_commit_cursor_schema(&threads);
 
     let start = schema("thread_start")?;
     assert!(schema_has_property(&start, "source"));
@@ -772,6 +805,233 @@ fn commit_source_full_id_replay_does_not_reload_collected_object() -> Result<()>
 }
 
 #[test]
+fn commit_source_replay_keeps_origin_after_resolution_and_archive() -> Result<()> {
+    let fixture = Fixture::new("mcp-commit-source-lifecycle")?;
+    fathomable_testing::git::init(&fixture.root)?;
+    fathomable_testing::git::commit_and_stage(&fixture.root, &[("a.md", "one\n")])?;
+    let commit = Workspace::discover(&fixture.root)?
+        .exact_head_commit()?
+        .id();
+    let request = json!({
+        "source": {"kind": "commit", "revision": commit.as_str()},
+        "comments": [{
+            "path": "a.md", "line": 1, "body": "keyed", "idempotency_key": "lifecycle"
+        }]
+    });
+    let mut client = Mcp::copilot(&fixture, "commit-source-lifecycle")?;
+    let first = client.ok("thread_start", request.clone())?;
+    let id: ThreadId =
+        serde_json::from_value(first["structuredContent"]["threads"][0]["id"].clone())?;
+    fathomable_testing::git::commit_and_stage(&fixture.root, &[("a.md", "two\n")])?;
+    let later = Workspace::discover(&fixture.root)?
+        .exact_head_commit()?
+        .id();
+    let mut store = fixture.store()?;
+    store.resolve(&id, Some(later.as_str()), now())?;
+    store.archive(&id, now())?;
+    let before = fs::read(fixture.threads_path()?)?;
+    drop(client);
+
+    let mut client = Mcp::copilot(&fixture, "commit-source-lifecycle")?;
+    let replay = client.ok("thread_start", request)?;
+    let result = &replay["structuredContent"];
+    assert_eq!(result["resolved_commit"], commit.as_str());
+    assert_eq!(result["threads"][0]["id"], id.as_str());
+    assert_eq!(
+        result["threads"][0]["origin"]["version"]["id"],
+        commit.as_str()
+    );
+    assert_eq!(result["threads"][0]["commit"], later.as_str());
+    assert_eq!(result["threads"][0]["archived"], true);
+    assert_eq!(result["threads"][0]["status"], "resolved");
+    assert_eq!(fs::read(fixture.threads_path()?)?, before);
+    Ok(())
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "One fixture checks origin lookalikes and orthogonal lifecycle/time filters."
+)]
+fn commit_source_filter_excludes_lookalikes_and_preserves_lifecycle_filters() -> Result<()> {
+    let fixture = Fixture::new("mcp-commit-source-origin-matrix")?;
+    fathomable_testing::git::init(&fixture.root)?;
+    fathomable_testing::git::commit_and_stage(&fixture.root, &[("a.md", "one\ntwo\n")])?;
+    let commit = Workspace::discover(&fixture.root)?
+        .exact_head_commit()?
+        .id();
+    let mut store = fixture.store()?;
+    let mut selected = Vec::new();
+    for (body, version, side) in [
+        (
+            "base",
+            OriginVersion::commit(commit.as_str()),
+            OriginSide::Base,
+        ),
+        (
+            "target",
+            OriginVersion::commit(commit.as_str()),
+            OriginSide::Target,
+        ),
+        (
+            "working",
+            OriginVersion::working_tree(Some(commit.to_string())),
+            OriginSide::Unspecified,
+        ),
+        (
+            "index",
+            OriginVersion::index(Some(commit.to_string())),
+            OriginSide::Unspecified,
+        ),
+        (
+            "point",
+            OriginVersion::review_point("saved", Some(commit.to_string())),
+            OriginSide::Unspecified,
+        ),
+        (
+            "other",
+            OriginVersion::commit("1111111111111111111111111111111111111111"),
+            OriginSide::Unspecified,
+        ),
+    ] {
+        let id = store.annotate(
+            Draft::new(Author::User, Path::new("a.md"), LineRange::new(1, 1), body)
+                .at_source(version, side),
+            "one\ntwo\n",
+            10,
+        )?;
+        if matches!(body, "base" | "target") {
+            selected.push(id);
+        } else {
+            store.resolve(&id, Some(commit.as_str()), 11)?;
+            store.reopen(&id, 12)?;
+        }
+    }
+    store.resolve(&selected[1], None, 20)?;
+    let archived = store.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "archived")
+            .at_source(OriginVersion::commit(commit.as_str()), OriginSide::Base),
+        "one\ntwo\n",
+        10,
+    )?;
+    store.archive(&archived, 30)?;
+    let before = fs::read(fixture.threads_path()?)?;
+    let mut client = Mcp::copilot(&fixture, "commit-source-origin-matrix")?;
+    for (status, since, ids) in [
+        ("open", 10, vec![selected[0].as_str()]),
+        ("resolved", 20, vec![selected[1].as_str()]),
+        ("all", 10, vec![selected[0].as_str(), selected[1].as_str()]),
+        ("all", 21, vec![]),
+    ] {
+        let read = client.ok(
+            "threads",
+            json!({
+                "source": {"kind": "commit", "revision": commit.as_str()},
+                "status": status, "since": since
+            }),
+        )?;
+        let threads = read["structuredContent"]["threads"]
+            .as_array()
+            .context("threads")?;
+        assert_eq!(
+            threads
+                .iter()
+                .map(|thread| thread["id"].as_str().unwrap_or_default())
+                .collect::<Vec<_>>(),
+            ids
+        );
+    }
+    let zero = client.ok(
+        "threads",
+        json!({
+            "source": {"kind": "commit", "revision": "HEAD"}, "limit": 0, "status": "all"
+        }),
+    )?;
+    assert_eq!(
+        zero["structuredContent"]["resolved_commit"],
+        commit.as_str()
+    );
+    assert_eq!(zero["structuredContent"]["more"], 2);
+    assert_eq!(zero["structuredContent"]["threads"], json!([]));
+    assert!(zero["structuredContent"]["next_after"].is_null());
+    let exact = client.ok(
+        "threads",
+        json!({"ids": [archived.as_str()], "source": null}),
+    )?;
+    assert_eq!(exact["structuredContent"]["threads"][0]["archived"], true);
+    assert!(exact["structuredContent"].get("resolved_commit").is_none());
+    assert_eq!(fs::read(fixture.threads_path()?)?, before);
+    Ok(())
+}
+
+#[test]
+fn commit_source_head_retry_requires_the_original_pin_after_head_moves() -> Result<()> {
+    let fixture = Fixture::new("mcp-commit-source-head-retry")?;
+    fathomable_testing::git::init(&fixture.root)?;
+    fathomable_testing::git::commit_and_stage(&fixture.root, &[("a.md", "one\n")])?;
+    let mut client = Mcp::copilot(&fixture, "commit-source-head-retry")?;
+    let mut request = json!({
+        "source": {"kind": "commit", "revision": "HEAD"},
+        "comments": [{"path": "a.md", "body": "keyed", "idempotency_key": "head"}]
+    });
+    let first = client.ok("thread_start", request.clone())?;
+    assert_eq!(
+        client.ok("thread_start", request.clone())?["structuredContent"],
+        first["structuredContent"]
+    );
+    fathomable_testing::git::commit_and_stage(&fixture.root, &[("a.md", "two\n")])?;
+    assert_eq!(
+        client.call("thread_start", request.clone())?["isError"],
+        true
+    );
+    request["source"]["revision"] = first["structuredContent"]["resolved_commit"].clone();
+    let replay = client.ok("thread_start", request)?;
+    assert_eq!(
+        replay["structuredContent"]["resolved_commit"],
+        first["structuredContent"]["resolved_commit"]
+    );
+    assert_eq!(fixture.store()?.threads().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn commit_source_projection_errors_precede_all_writes() -> Result<()> {
+    let fixture = Fixture::new("mcp-commit-source-projection")?;
+    fathomable_testing::git::init(&fixture.root)?;
+    fathomable_testing::git::commit_and_stage(
+        &fixture.root,
+        &[("a.md", "one\n"), ("escaped.md", "historical\n")],
+    )?;
+    let outside = fixture.dir.0.join("private.md");
+    fs::write(&outside, "synthetic outside-only evidence\n")?;
+    std::os::unix::fs::symlink(&outside, fixture.root.join("escaped.md"))?;
+    let mut client = Mcp::copilot(&fixture, "commit-source-projection")?;
+    let result = client.call(
+        "thread_start",
+        json!({
+            "source": {"kind": "commit", "revision": "HEAD"},
+            "comments": [
+                {"path": "a.md", "body": "good"},
+                {"path": "escaped.md", "line": 1, "body": "unsafe placement"}
+            ]
+        }),
+    )?;
+    assert_eq!(result["isError"], true);
+    assert_eq!(result["structuredContent"]["error_code"], "INVALID_BATCH");
+    assert_eq!(result["structuredContent"]["issues"][0]["item_index"], 1);
+    let fallback: Value =
+        serde_json::from_str(result["content"][0]["text"].as_str().context("text")?)?;
+    assert_eq!(fallback, result["structuredContent"]);
+    assert!(
+        !result
+            .to_string()
+            .contains("synthetic outside-only evidence")
+    );
+    assert!(fixture.store()?.threads().is_empty());
+    Ok(())
+}
+
+#[test]
 fn commit_source_rejects_invalid_selectors_and_source_failures() -> Result<()> {
     let fixture = Fixture::new("mcp-commit-source-invalid")?;
     fathomable_testing::git::init(&fixture.root)?;
@@ -785,7 +1045,18 @@ fn commit_source_rejects_invalid_selectors_and_source_failures() -> Result<()> {
     let mut client = Mcp::copilot(&fixture, "commit-source-invalid")?;
     for source in [
         json!({"kind": "commit", "revision": " HEAD"}),
+        json!({"kind": "commit", "revision": "HEAD "}),
+        json!({"kind": "commit", "revision": "head"}),
+        json!({"kind": "commit", "revision": ""}),
+        json!({"kind": "commit", "revision": "main"}),
+        json!({"kind": "commit", "revision": "0123456"}),
         json!({"kind": "commit", "revision": "HEAD~1"}),
+        json!({"kind": "commit", "revision": "HEAD^2"}),
+        json!({"kind": "commit", "revision": "A..B"}),
+        json!({"kind": "commit", "revision": ":a.md"}),
+        json!({"kind": "commit", "revision": null}),
+        json!({"kind": "commit"}),
+        json!({"revision": "HEAD"}),
         json!({"kind": "tag", "revision": "HEAD"}),
         json!({"kind": "commit", "revision": "HEAD", "extra": true}),
     ] {
@@ -793,7 +1064,28 @@ fn commit_source_rejects_invalid_selectors_and_source_failures() -> Result<()> {
             client.call("threads", json!({"source": source}))?["isError"],
             true
         );
+        assert_eq!(
+            client.call(
+                "thread_start",
+                json!({
+                    "source": source, "comments": [{"path": "a.md", "body": "invalid"}]
+                })
+            )?["isError"],
+            true
+        );
     }
+    assert_eq!(
+        client.call(
+            "thread_reply",
+            json!({
+                "source": null, "replies": [{"thread": "1-1-1", "body": "invalid"}]
+            })
+        )?["isError"],
+        true
+    );
+    assert_eq!(client.call("thread_start", json!({
+        "comments": [{"path": "a.md", "body": "invalid", "source": {"kind": "commit", "revision": "HEAD"}}]
+    }))?["isError"], true);
 
     assert_eq!(
         client.call(

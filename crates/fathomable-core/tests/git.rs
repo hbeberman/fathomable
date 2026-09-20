@@ -77,6 +77,11 @@ fn commit_source_modes(root: &Path) -> Result<CommitId, Box<dyn Error>> {
             filename: "wrong-kind.md".into(),
             oid: subtree,
         },
+        gix::objs::tree::Entry {
+            mode: gix::objs::tree::EntryKind::Tree.into(),
+            filename: "wrong-tree".into(),
+            oid: regular,
+        },
     ];
     entries.sort();
     let tree = repo.write_object(gix::objs::Tree { entries })?.detach();
@@ -190,6 +195,36 @@ fn commit_source_exact_lookup_does_not_peel_objects() -> TestResult {
 }
 
 #[test]
+fn commit_source_rejects_blob_commit_ids_before_loading_their_bodies() -> TestResult {
+    let dir = TempDir::new("git-selected-noncommit-header")?;
+    init(&dir.0)?;
+    let id = CommitId::parse("1111111111111111111111111111111111111111")?;
+    let objects = dir.0.join(".git/objects/11");
+    fs::create_dir_all(&objects)?;
+    // A valid zlib stream containing only "blob 4096\0", with no blob body.
+    fs::write(
+        objects.join(&id.as_str()[2..]),
+        [
+            120, 156, 75, 202, 201, 79, 82, 48, 49, 176, 52, 99, 0, 0, 17, 107, 2, 147,
+        ],
+    )?;
+    fs::write(dir.0.join(".git/HEAD"), format!("{id}\n"))?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    for result in [
+        workspace.commit(&id).map(|_| ()),
+        workspace.exact_head_commit().map(|_| ()),
+        workspace.commit_blob(&id, Path::new("a.md"), 0).map(|_| ()),
+    ] {
+        let error = result.err().ok_or("blob accepted as a commit")?;
+        assert!(
+            error.to_string().contains("not a commit object"),
+            "the header must reject this blob before its missing body is read: {error}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn commit_source_blob_loader_enforces_modes_kind_and_bound() -> TestResult {
     let dir = TempDir::new("git-commit-blob")?;
     init(&dir.0)?;
@@ -243,6 +278,316 @@ fn commit_source_blob_loader_enforces_modes_kind_and_bound() -> TestResult {
             .is_err(),
         "an intermediate symlink must not be traversed"
     );
+    Ok(())
+}
+
+#[test]
+fn commit_source_walk_validates_each_intermediate_entry() -> TestResult {
+    let dir = TempDir::new("git-commit-intermediate")?;
+    init(&dir.0)?;
+    commit(&dir.0, &[("parent.md", "parent\n")])?;
+    let selected = commit_source_modes(&dir.0)?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    assert_eq!(
+        workspace
+            .commit_blob(&selected, Path::new("dir/nested.md"), 7)?
+            .ok_or("nested blob is missing")?
+            .bytes(),
+        b"nested\n"
+    );
+    for (path, reason) in [
+        ("wrong-kind.md/nested.md", "Regular intermediate"),
+        ("regular.md/child", "Regular intermediate"),
+        ("executable.sh/child", "Executable intermediate"),
+        ("link.md/child", "Symlink intermediate"),
+        ("module/child", "Submodule intermediate"),
+        ("wrong-tree/child", "non-tree object"),
+    ] {
+        let error = workspace
+            .commit_blob(&selected, Path::new(path), 0)
+            .err()
+            .ok_or("invalid intermediate entry was traversed")?;
+        assert!(error.to_string().contains(reason), "{path}: {error}");
+    }
+    assert!(
+        workspace
+            .commit_blob(&selected, Path::new("absent/child"), 0)?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn commit_source_rejects_intermediate_mode_before_reading_object() -> TestResult {
+    let dir = TempDir::new("git-commit-intermediate-missing")?;
+    init(&dir.0)?;
+    commit(&dir.0, &[("regular.md", "do not load\n")])?;
+    let repo = gix::open_opts(&dir.0, open_options())?;
+    let head = repo.head_commit()?;
+    let blob = head
+        .tree()?
+        .lookup_entry_by_path("regular.md")?
+        .ok_or("fixture entry missing")?
+        .id()
+        .to_hex()
+        .to_string();
+    fs::remove_file(
+        repo.git_dir()
+            .join("objects")
+            .join(&blob[..2])
+            .join(&blob[2..]),
+    )?;
+    let selected = CommitId::parse(head.id.to_hex().to_string())?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let error = workspace
+        .commit_blob(&selected, Path::new("regular.md/child"), 0)
+        .err()
+        .ok_or("invalid intermediate entry was traversed")?;
+    assert!(
+        error.to_string().contains("Regular intermediate"),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn commit_source_rejects_non_relative_paths() -> TestResult {
+    let dir = TempDir::new("git-commit-invalid-paths")?;
+    init(&dir.0)?;
+    commit(&dir.0, &[("a.md", "one\n")])?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let selected = CommitId::parse(workspace.head_commit().ok_or("HEAD missing")?)?;
+    for path in [
+        "",
+        "/a.md",
+        "../a.md",
+        "dir/../a.md",
+        "a\0.md",
+        ".",
+        "./a.md",
+        "dir//a.md",
+        "a.md/",
+    ] {
+        let error = workspace
+            .commit_blob(&selected, Path::new(path), 64)
+            .err()
+            .ok_or("invalid path was accepted")?;
+        assert!(
+            error.to_string().contains("relative path"),
+            "{path:?}: {error}"
+        );
+    }
+    Ok(())
+}
+
+fn replace_object(repo: &gix::Repository, old: gix::ObjectId, new: gix::ObjectId) -> TestResult {
+    let config = repo.git_dir().join("config");
+    let mut text = fs::read_to_string(&config)?;
+    // gix 0.87.1 enables replacements when this setting is false.
+    text.push_str("\n[core]\nuseReplaceRefs = false\n");
+    fs::write(config, text)?;
+    repo.reference(
+        format!("refs/replace/{old}"),
+        new,
+        gix::refs::transaction::PreviousValue::MustNotExist,
+        "test replacement",
+    )?;
+    Ok(())
+}
+
+#[test]
+fn commit_source_ignores_commit_tree_and_blob_replacements() -> TestResult {
+    for replaced_kind in ["commit", "tree", "subtree", "blob"] {
+        let dir = TempDir::new("git-commit-replacements")?;
+        init(&dir.0)?;
+        commit(&dir.0, &[("dir/nested.md", "original\n")])?;
+        let repo = gix::open_opts(&dir.0, open_options())?;
+        let original = repo.head_commit()?;
+        let tree = original.tree()?;
+        let subtree = tree
+            .lookup_entry_by_path("dir")?
+            .ok_or("fixture subtree missing")?
+            .id()
+            .detach();
+        let blob = tree
+            .lookup_entry_by_path("dir/nested.md")?
+            .ok_or("fixture blob missing")?
+            .id()
+            .detach();
+        let replacement_id = commit_source_modes(&dir.0)?;
+        let replacement =
+            repo.find_commit(gix::ObjectId::from_hex(replacement_id.as_str().as_bytes())?)?;
+        let replacement_tree = write_tree(&repo, &[("dir/nested.md", "replacement\n")])?;
+        let replacement_subtree = write_tree(&repo, &[("nested.md", "replacement\n")])?;
+        let replacement_blob = repo.write_blob(b"replacement\n")?.detach();
+        let (old, new) = match replaced_kind {
+            "commit" => (original.id, replacement.id),
+            "tree" => (tree.id, replacement_tree),
+            "subtree" => (subtree, replacement_subtree),
+            _ => (blob, replacement_blob),
+        };
+        replace_object(&repo, old, new)?;
+        let selected = CommitId::parse(original.id.to_hex().to_string())?;
+        fs::write(repo.git_dir().join("HEAD"), format!("{}\n", original.id))?;
+        let mut workspace = Workspace::discover(&dir.0)?;
+        let exact = workspace.commit(&selected)?;
+        assert_eq!(exact.id(), selected);
+        assert_eq!(exact.subject(), "commit", "{replaced_kind}");
+        assert_eq!(exact.time(), 0, "{replaced_kind}");
+        assert_eq!(exact.parents().count(), 0, "{replaced_kind}");
+        assert_eq!(workspace.exact_head_commit()?, exact, "{replaced_kind}");
+        let source = workspace
+            .commit_blob(&selected, Path::new("dir/nested.md"), 9)?
+            .ok_or("original blob missing")?;
+        assert_eq!(source.bytes(), b"original\n", "{replaced_kind}");
+        assert_eq!(
+            source.object(),
+            blob.to_hex().to_string(),
+            "{replaced_kind}"
+        );
+        assert_eq!(source.size(), 9, "{replaced_kind}");
+        if replaced_kind == "commit" {
+            assert_eq!(
+                workspace.resolve_revision(selected.as_str())?.subject(),
+                "source modes",
+                "exact reads must not alter the viewer's replacement behavior"
+            );
+        }
+        let hex = old.to_hex().to_string();
+        fs::remove_file(
+            repo.git_dir()
+                .join("objects")
+                .join(&hex[..2])
+                .join(&hex[2..]),
+        )?;
+        assert!(
+            workspace
+                .commit_blob(&selected, Path::new("dir/nested.md"), 64)
+                .is_err(),
+            "a missing original {replaced_kind} must not use its replacement"
+        );
+        if replaced_kind == "commit" {
+            assert!(
+                workspace.commit(&selected).is_err(),
+                "a missing original commit must not use its replacement"
+            );
+            assert!(
+                workspace.exact_head_commit().is_err(),
+                "HEAD must not use a replacement for its missing original commit"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn commit_source_original_id_wins_over_a_shadow_ref() -> TestResult {
+    let dir = TempDir::new("git-commit-shadow-reference")?;
+    init(&dir.0)?;
+    commit(&dir.0, &[("a.md", "original\n")])?;
+    let repo = gix::open_opts(&dir.0, open_options())?;
+    let selected = CommitId::parse(repo.head_id()?.to_hex().to_string())?;
+    let shadow = commit_source_modes(&dir.0)?;
+    repo.reference(
+        format!("refs/heads/{selected}"),
+        gix::ObjectId::from_hex(shadow.as_str().as_bytes())?,
+        gix::refs::transaction::PreviousValue::MustNotExist,
+        "shadow full object ID",
+    )?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    assert_eq!(workspace.resolve_revision(selected.as_str())?.id(), shadow);
+    assert_eq!(workspace.commit(&selected)?.id(), selected);
+    assert_eq!(
+        workspace
+            .commit_blob(&selected, Path::new("a.md"), 64)?
+            .ok_or("original blob missing")?
+            .bytes(),
+        b"original\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn commit_source_exact_head_follows_only_symbolic_references() -> TestResult {
+    let dir = TempDir::new("git-exact-head")?;
+    let workspace = Workspace::discover(&dir.0)?;
+    assert!(
+        workspace.exact_head_commit().is_err(),
+        "a plain directory has no HEAD commit"
+    );
+    init(&dir.0)?;
+    let workspace = Workspace::discover(&dir.0)?;
+    assert!(
+        workspace.exact_head_commit().is_err(),
+        "an unborn HEAD has no commit"
+    );
+    commit(&dir.0, &[("a.md", "original\n")])?;
+    let repo = gix::open_opts(&dir.0, open_options())?;
+    let original = repo.head_id()?.detach();
+    let selected = CommitId::parse(original.to_hex().to_string())?;
+    let workspace = Workspace::discover(&dir.0)?;
+    assert_eq!(workspace.exact_head_commit()?.id(), selected);
+    fs::write(
+        repo.git_dir().join("refs/heads/indirect"),
+        fs::read(repo.git_dir().join("HEAD"))?,
+    )?;
+    fs::write(repo.git_dir().join("HEAD"), "ref: refs/heads/indirect\n")?;
+    let workspace = Workspace::discover(&dir.0)?;
+    assert_eq!(workspace.exact_head_commit()?.id(), selected);
+
+    let tag = repo
+        .write_object(gix::objs::Tag {
+            target: original,
+            target_kind: gix::objs::Kind::Commit,
+            name: "redirect".into(),
+            tagger: None,
+            message: "must not peel\n".into(),
+            signature: None,
+        })?
+        .detach();
+    let blob = repo.write_blob(b"not a commit")?.detach();
+    let missing = gix::ObjectId::from_hex(b"0123456789012345678901234567890123456789")?;
+    for object in [blob, missing] {
+        replace_object(&repo, object, tag)?;
+    }
+    for object in [tag, blob, missing] {
+        fs::write(repo.git_dir().join("HEAD"), format!("{object}\n"))?;
+        let workspace = Workspace::discover(&dir.0)?;
+        assert!(
+            workspace.exact_head_commit().is_err(),
+            "{object} must not peel through a tag or replacement"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn commit_source_requires_original_commit_despite_replacement_or_shadow_ref() -> TestResult {
+    let dir = TempDir::new("git-commit-original-required")?;
+    init(&dir.0)?;
+    commit(&dir.0, &[("a.md", "one\n")])?;
+    let repo = gix::open_opts(&dir.0, open_options())?;
+    let original = repo.head_id()?.detach();
+    let blob = repo.write_blob(b"not a commit")?.detach();
+    let missing = gix::ObjectId::from_hex(b"0123456789012345678901234567890123456789")?;
+    for object in [blob, missing] {
+        replace_object(&repo, object, original)?;
+        repo.reference(
+            format!("refs/heads/{object}"),
+            original,
+            gix::refs::transaction::PreviousValue::MustNotExist,
+            "shadow object ID",
+        )?;
+    }
+    let mut workspace = Workspace::discover(&dir.0)?;
+    for object in [blob, missing] {
+        let id = CommitId::parse(object.to_hex().to_string())?;
+        assert!(workspace.commit(&id).is_err(), "{id}");
+        assert!(
+            workspace.commit_blob(&id, Path::new("a.md"), 64).is_err(),
+            "{id}"
+        );
+    }
     Ok(())
 }
 

@@ -538,7 +538,7 @@ abbreviations, branches, tags, parent expressions, ranges, paths, URLs,
 whitespace-padded values, and lowercase `head` are rejected. Hex input may be
 uppercase, but every successful selected response includes the canonical
 lowercase full ID as top-level `resolved_commit`, including empty reads,
-zero-limit reads, and keyed write replays. Omit `source` for the existing
+zero-limit reads, and keyed write replays. Omit `source` or pass `null` for the existing
 working-tree behavior. `thread_reply` has no `source` field and is unchanged.
 
 For example, a selected read with no matches still confirms the pinned source:
@@ -579,6 +579,9 @@ comparison, or running viewer. A keyed start's durable intent includes the
 selected full commit, so reuse against another commit conflicts. `HEAD` is
 resolved once for a call; use the returned full ID for an exact retry if
 `HEAD` may move.
+Matching full-ID retries still work after resolution, reopening, or archival,
+even if resolution records a later commit or the original Git object is gone.
+Deleted discussions cannot be recreated by retrying their keys.
 
 A selected read returns only discussions whose immutable
 `origin.version.kind` is `commit` with that exact ID. Working-tree, index, and
@@ -613,8 +616,11 @@ rules, but cannot be combined with exact `ids`.
 
 Commit selection reads only objects already available in the repository
 bound at MCP startup. It never fetches, runs Git or another external process,
-checks out files, or mutates refs. A fresh selected start has one 64 MiB raw
-blob budget across its distinct paths. Absent paths and Git directories,
+checks out files, or mutates refs. Git replacement objects cannot substitute
+another commit, tree, or blob for the selected immutable objects.
+A fresh selected start has one 64 MiB raw blob budget across its distinct paths,
+including loaded blobs rejected as binary or invalid UTF-8. Repeated paths
+reuse the first result, including failures. Absent paths and Git directories,
 symlinks, submodules, unsupported modes, or non-blob entries fail explicitly;
 binary and invalid UTF-8 blobs are rejected as text sources. A selected read
 loads no historical file bodies beyond the origin evidence already stored.

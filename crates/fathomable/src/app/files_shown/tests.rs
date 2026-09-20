@@ -113,11 +113,18 @@ fn the_toggles_filter_the_pane_and_say_what_a_press_does_now() -> anyhow::Result
     app.compose_submit();
     press(&mut app, " Fo");
     assert_eq!(names(&app), ["README.md"]);
+    press(&mut app, " FZ");
+    assert_eq!(app.files_shown_marker(), "c,r,u,i,Z");
+    assert!(
+        header_row(&app)?.contains("c,r,u,i,Z +2 -1"),
+        "auto-unfold follows the active filters"
+    );
     app.resize(60, 30);
     let narrow = header_row(&app)?;
     assert!(narrow.contains("+2 -1"), "{narrow}");
-    assert!(!narrow.contains("c,r,u,i"), "{narrow}");
+    assert!(!narrow.contains("c,r,u,i,Z"), "{narrow}");
     app.resize(100, 30);
+    press(&mut app, " FZ");
     press(&mut app, " Fo");
     press(&mut app, " F");
     assert_eq!(label_of(&app, 'o')?, "only reviews");

@@ -255,9 +255,6 @@ impl App {
 
     /// The compact marker the files pane's header uses for active rules.
     pub(crate) fn files_shown_marker(&self) -> String {
-        if self.file_auto_unfold_active() {
-            return "Z".to_owned();
-        }
         let shown = self.files_shown();
         let mut markers = Vec::new();
         if shown.changed_only() && self.diff_mode() != fathomable_core::config::DiffMode::Off {
@@ -271,6 +268,9 @@ impl App {
         }
         if shown.ignored() {
             markers.push("i");
+        }
+        if self.file_auto_unfold_active() {
+            markers.push("Z");
         }
         markers.join(",")
     }

@@ -65,9 +65,9 @@ bare while Files has focus. File-opening workflows live under lowercase
 Amended 2026-09-20: `Z` is a persistent auto-unfold toggle, also available as
 a checked **auto-unfold** row in the File-list title menu. While active it
 keeps newly added or newly admitted directories recursively unfolded and shows
-exactly `Z` as the list's status marker. A second `Z` folds everything and
-exits the mode. A manual keyboard or mouse fold/unfold exits the mode; ordinary
-navigation and selection do not.
+`Z` after any active filter indicators in the list's status marker. A second
+`Z` folds everything and exits the mode. A manual keyboard or mouse fold/unfold
+exits the mode; ordinary navigation and selection do not.
 
 ## Context
 
@@ -189,8 +189,8 @@ Space f r    recent files
   as the former words, compacted into the comma-list `c,r,u,i`: changed-only,
   reviews-only, untracked hidden, and ignored shown. The comparison's `+n -m`
   totals (0017) follow the marker, separated by a space.
-- While auto-unfold is active, the status marker is exactly `Z`, replacing the
-  filter comma-list until the mode ends.
+- While auto-unfold is active, `Z` is appended to the filter comma-list, or is
+  the only status marker when no filters are active.
 - `Files                                  c,u +12 -3`. The compact marker is
   retained while it fits; as before, it drops before either diff total.
   Repository and active-worktree identity live in the global menu bar under

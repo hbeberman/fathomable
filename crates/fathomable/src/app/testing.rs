@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use fathomable_core::annotations::{
-    AgentReplyCommand, Author, LineRange, OriginVersion, PlacementContext, ResolutionOutcome,
-    Store, ThreadId,
+    AgentReplyCommand, Author, ContentIdentity, Draft, FullFileDigest, LineRange, OriginVersion,
+    PlacementContext, ResolutionOutcome, Store, ThreadId, WorkingTreeFacts, WorkingTreeState,
 };
 use fathomable_core::clock::now;
 use fathomable_core::workspace::Workspace;
@@ -47,6 +47,18 @@ pub(crate) fn root(dir: &TempDir) -> PathBuf {
 /// The thread store's file inside a [`bare`] or [`workspace`] dir.
 pub(crate) fn store_path(dir: &TempDir) -> PathBuf {
     dir.0.join("state/threads.jsonl")
+}
+
+/// Add explicit working-tree provenance to a test draft.
+pub(crate) fn at_working_tree(root: &Path, draft: Draft, text: &str) -> anyhow::Result<Draft> {
+    let workspace = Workspace::discover(root)?;
+    Ok(draft.with_working_tree_facts(WorkingTreeFacts::new(
+        workspace.head_commit(),
+        WorkingTreeState::Clean,
+        Some(ContentIdentity::from_text(text)),
+        workspace.identity(),
+        FullFileDigest::from_bytes(text.as_bytes()),
+    )))
 }
 
 /// Append an agent reply through a separate store handle, then let the

@@ -179,12 +179,16 @@ mod tests {
         app.compose_insert("mine");
         app.compose_submit();
         let theirs = Store::open(testing::store_path(&dir))?.annotate(
-            Draft::new(
-                Author::agent("reviewer"),
-                std::path::Path::new("README.md"),
-                LineRange::new(5, 5),
-                "theirs",
-            ),
+            testing::at_working_tree(
+                &testing::root(&dir),
+                Draft::new(
+                    Author::agent("reviewer"),
+                    std::path::Path::new("README.md"),
+                    LineRange::new(5, 5),
+                    "theirs",
+                ),
+                testing::README,
+            )?,
             testing::README,
             2,
         )?;

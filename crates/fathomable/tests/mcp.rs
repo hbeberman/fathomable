@@ -553,10 +553,6 @@ fn commit_source_captures_historical_text_and_echoes_full_id() -> Result<()> {
         json!({"kind": "commit", "id": commit})
     );
     assert_eq!(
-        selected["structuredContent"]["threads"][0]["origin"]["association"],
-        json!({"kind": "review", "scope": {"kind": "commit", "target": commit}})
-    );
-    assert_eq!(
         selected["structuredContent"]["threads"][1]["placement"],
         "detached"
     );

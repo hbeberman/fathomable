@@ -59,7 +59,10 @@ pub(crate) struct StartItem {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StartParams {
-    /// Optionally capture every comment from one exact immutable commit tree.
+    /// Select one exact immutable commit origin for every comment.
+    ///
+    /// Omit this only for `WorkingTree`-origin comments. The checkout's
+    /// observed `HEAD` never turns a `WorkingTree` origin into a commit origin.
     #[serde(default)]
     source: Option<Source>,
     /// One or more new comments. The whole batch is validated before any write.
@@ -89,10 +92,12 @@ impl Server {
                        replacements belong in the worktree. Omit `line` only for a file-level \
                        comment. An optional per-item `idempotency_key` makes a retry, including a \
                        historical larger body, replay the same discussion instead of creating \
-                       another one. Optional `source:{kind:\"commit\",revision}` captures raw text \
-                       from `HEAD` or one full local commit ID under a 64 MiB call budget and \
-                       returns `resolved_commit`. The whole batch is validated before any \
-                       discussion is written.",
+                       another one. To review a commit, pass \
+                       `source:{kind:\"commit\",revision}`; it captures raw text from `HEAD` or one \
+                       full local commit ID under a 64 MiB call budget and returns \
+                       `resolved_commit`. Omitting `source` creates a WorkingTree origin; an \
+                       observed checkout HEAD does not make that a commit origin. The whole batch \
+                       is validated before any discussion is written.",
         annotations(
             destructive_hint = false,
             idempotent_hint = false,

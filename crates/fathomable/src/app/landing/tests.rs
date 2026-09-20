@@ -1,11 +1,10 @@
-use std::fs;
 use std::path::Path;
 
 use fathomable_core::annotations::{
-    Author, ContentIdentity, Draft, FullFileDigest, Lifecycle, LineRange, ReviewEndpoint,
-    ReviewScope, Store, ThreadId, WorkingTreeFacts, WorkingTreeState,
+    Author, ContentIdentity, Draft, FullFileDigest, LineRange, Store, ThreadId, WorkingTreeFacts,
+    WorkingTreeState,
 };
-use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Workspace};
+use fathomable_core::workspace::{CommitId, Workspace};
 use fathomable_testing::{TempDir, git};
 
 use super::{App, Cancellation, Landing, Request, ResultSet, reconcile};
@@ -509,156 +508,6 @@ fn byte_bounded_reconciliation_resumes_after_an_older_mismatch() -> anyhow::Resu
     assert_eq!(
         app.thread(&newer).and_then(|thread| thread.landed_commit()),
         Some(head.as_str())
-    );
-    Ok(())
-}
-
-#[test]
-fn landing_keeps_focused_board_selection_actionable() -> anyhow::Result<()> {
-    let dir = TempDir::new("landing-hidden-board-cursor")?;
-    let root = dir.0.join("ws");
-    git::init(&root)?;
-    git::commit_and_stage(&root, &[("a.md", "old\n")])?;
-    let workspace = Workspace::discover(&root)?;
-    let old = workspace
-        .head_commit()
-        .ok_or_else(|| anyhow::anyhow!("old HEAD"))?;
-    let scope = ReviewScope::mutable(
-        workspace.identity(),
-        "landing-focused",
-        ReviewEndpoint::EmptyTree,
-        ReviewEndpoint::working_tree(workspace.identity()),
-    );
-    fs::write(root.join("a.md"), "landed\n")?;
-    let mut store = Store::open(dir.0.join("threads.jsonl"))?;
-    let id = store.annotate(
-        Draft::new(
-            Author::User,
-            Path::new("a.md"),
-            LineRange::new(1, 1),
-            "candidate",
-        )
-        .in_review(scope.clone())
-        .with_working_tree_facts(WorkingTreeFacts::new(
-            Some(old.clone()),
-            WorkingTreeState::Modified,
-            Some(ContentIdentity::from_text("landed\n")),
-            workspace.identity(),
-            FullFileDigest::from_bytes(b"landed\n"),
-        )),
-        "landed\n",
-        1,
-    )?;
-    let mut app = AppBuilder::at(&root)
-        .unopened()
-        .options(move |mut options| {
-            options.store = Some(store);
-            options
-        })
-        .build()?;
-    app.comparison.set_review_focus(scope);
-    app.set_comparison_base(ComparisonEndpoint::EmptyTree);
-    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&old)?));
-    app.settle_background();
-    app.open_review();
-    assert_eq!(app.thread_cursor().thread(), Some(&id));
-
-    git::commit_and_stage(&root, &[("a.md", "landed\n")])?;
-    let landed = Workspace::discover(&root)?
-        .head_commit()
-        .ok_or_else(|| anyhow::anyhow!("landed HEAD"))?;
-    app.trigger_landing(Some(CommitId::parse(&landed)?));
-    app.settle_background();
-    assert_eq!(app.thread_cursor().thread(), Some(&id));
-
-    app.thread_toggle_resolved();
-    assert_eq!(
-        app.thread(&id)
-            .map(fathomable_core::annotations::Thread::lifecycle),
-        Some(Lifecycle::Resolved)
-    );
-    Ok(())
-}
-
-#[test]
-fn concurrently_folded_landing_keeps_focused_selection() -> anyhow::Result<()> {
-    let dir = TempDir::new("landing-concurrent-fold")?;
-    let root = dir.0.join("ws");
-    let store_path = dir.0.join("threads.jsonl");
-    git::init(&root)?;
-    git::commit_and_stage(&root, &[("a.md", "old\n")])?;
-    let workspace = Workspace::discover(&root)?;
-    let old = workspace
-        .head_commit()
-        .ok_or_else(|| anyhow::anyhow!("old HEAD"))?;
-    let scope = ReviewScope::mutable(
-        workspace.identity(),
-        "landing-concurrent-focused",
-        ReviewEndpoint::EmptyTree,
-        ReviewEndpoint::working_tree(workspace.identity()),
-    );
-    fs::write(root.join("a.md"), "new\n")?;
-    let mut store = Store::open(&store_path)?;
-    let id = store.annotate(
-        Draft::new(
-            Author::User,
-            Path::new("a.md"),
-            LineRange::new(1, 1),
-            "candidate",
-        )
-        .in_review(scope.clone())
-        .with_working_tree_facts(WorkingTreeFacts::new(
-            Some(old.clone()),
-            WorkingTreeState::Modified,
-            Some(ContentIdentity::from_text("new\n")),
-            workspace.identity(),
-            FullFileDigest::from_bytes(b"new\n"),
-        )),
-        "new\n",
-        1,
-    )?;
-    let mut peer = Store::open(&store_path)?;
-    let mut app = AppBuilder::at(&root)
-        .unopened()
-        .options(move |mut options| {
-            options.store = Some(store);
-            options
-        })
-        .build()?;
-    app.comparison.set_review_focus(scope);
-    app.set_comparison_base(ComparisonEndpoint::EmptyTree);
-    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&old)?));
-    app.settle_background();
-    app.open_review();
-    assert_eq!(app.thread_cursor().thread(), Some(&id));
-
-    git::commit_and_stage(&root, &[("a.md", "new\n")])?;
-    let landed = CommitId::parse(
-        &Workspace::discover(&root)?
-            .head_commit()
-            .ok_or_else(|| anyhow::anyhow!("landed HEAD"))?,
-    )?;
-    let candidate = app
-        .thread(&id)
-        .and_then(fathomable_core::annotations::Thread::landing_candidate)
-        .ok_or_else(|| anyhow::anyhow!("landing candidate"))?;
-    app.trigger_landing(Some(landed.clone()));
-    assert_eq!(
-        peer.land(&candidate, &landed)?,
-        fathomable_core::annotations::LandingOutcome::Applied
-    );
-    app.settle_background();
-
-    assert_eq!(
-        app.thread(&id).and_then(|thread| thread.landed_commit()),
-        Some(landed.as_str())
-    );
-    assert_eq!(app.thread_cursor().thread(), Some(&id));
-    app.thread_toggle_resolved();
-    assert_eq!(
-        app.thread(&id)
-            .map(fathomable_core::annotations::Thread::lifecycle),
-        Some(Lifecycle::Resolved)
     );
     Ok(())
 }

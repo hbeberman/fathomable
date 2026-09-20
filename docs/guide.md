@@ -166,7 +166,6 @@ the table below is a quick reference, not the full list.
 | `Space F Z` | fold or unfold all directories in File list |
 | `Space T s` `Space T x` | Thread-list scope / show resolved |
 | `Space T Z` | fold or unfold all file groups in Thread list |
-| `Space t s` `Space t x` | focus the current review / clear retained review focus |
 | `Space d n` `Space d u` `Space d o` | Normal / Unified / Off diff mode |
 | `Space d s` `Space d t` | pick the diff source / target |
 | `Space d d` | show uncommitted changes (current `HEAD` to working tree) |
@@ -338,12 +337,11 @@ whitespace. A pending new annotation must be submitted or cancelled before
 management.
 
 Threads created from a review point belong to that exact point, not merely to
-its Git baseline. They can also become visible at a commit after Fathomable
-verifies that the regular blob at their recorded path exactly matches the
-complete captured point-side bytes. This per-file landing is independent:
-some files from a point can land while others remain point-only. Deleting a
-point removes the point view but preserves immutable thread evidence and any
-durable landed-commit association.
+its Git baseline. Fathomable can record the first commit whose regular blob at
+the recorded path exactly matches the complete captured point-side bytes, but
+that landing is evidence only and does not make the thread a member of a
+commit presentation. Deleting a point removes the point view while preserving
+immutable thread and landing evidence.
 
 Use `Shift-Down` or `J` and `Shift-Up` or `K` to cycle every comparison
 change across the workspace. Text hunks are individual stops; a changed path
@@ -381,37 +379,33 @@ actions. On a thread row, `comment c` becomes `reply c`; where both fold
 actions apply, the footer uses `folding z/Z`.
 
 The stored board is shared across the repository's worktrees and survives
-commits and branch changes. Thread membership is not inferred from mutable
-bytes or from a commit being the current `HEAD`. Each thread keeps immutable
-origin evidence plus either a typed review association or an exact typed
-content association. Working tree, index, commit, review point, and empty tree
-remain distinct identities.
+commits and branch changes. Normal membership follows immutable origin
+provenance and the Source/Target pair that last reached the screen. Working
+tree, index, commit, review point, and empty tree remain distinct identities;
+a clean WorkingTree or Index never aliases its observed `HEAD`.
 
-The **Review** menu's **Focus current comparison** (`Space t s`) starts and
-retains the selected review. Immutable endpoint pairs keep their exact pair;
-a comparison involving WorkingTree or Index gets a new checkout-qualified
-task identity that remains stable across edits, staging changes, and clean
-states. **Clear review focus** (`Space t x`) ends that task without changing
-Source, Target, or diff mode. The active focus appears in the status badge and
-survives endpoint changes, `HEAD` or branch movement, and restart. Each linked
-worktree has separate focus state.
+A Commit(C) Target- or Unspecified-side thread belongs whenever Target is
+Commit(C), including `C^ -> C`, another commit to C, and Diff Off Target C. It
+does not belong in `C -> WorkingTree` or `C -> Index`. A Base-side thread with
+recorded comparison facts belongs only to that exact accepted ordered pair,
+which keeps deletion review context without admitting it to every comparison
+sharing Source. If either recorded endpoint is WorkingTree or Index, its
+comparison checkout must also be the accepted presentation checkout, so equal
+`HEAD` values in linked worktrees do not alias. Wholly immutable comparisons
+remain repository-wide. Without comparison facts, Base requires an exact typed
+Source match in an active diff.
 
-The commit-review routes `Space d l` and `Space d c` start and retain Review
-C automatically. This includes agent-created, contextless Commit(C) threads.
-You can then select `HEAD -> WorkingTree` or `HEAD -> Index` to make fixes
-without losing Review C from Threads or `Tab`/`Shift-Tab` traversal. Base-side
-and Target-side origins remain members of their associated review; observed
-comparison facts alone do not create membership. Generic Commit(C) threads do
-not appear merely because C is Source or the accepted mutable `HEAD`.
+WorkingTree and Index Target- or Unspecified-side origins require the matching
+typed Target in their recorded checkout. Review-point origins require the
+exact point. Diff Off is Target-only and never admits Base-side origins.
+Unknown or incomplete provenance is absent from normal surfaces, but explicit
+history and direct thread-ID actions remain available.
 
-Normal and Unified can project focused threads into current content when their
-anchors or context locate; detached threads remain in Threads and remain
-reply/resolution-actionable. Diff Off does not clear focus: focused threads
-remain in Threads, while inline marks are Target-only. Without focus, Diff Off
-matches exact typed Target identity and never treats WorkingTree or Index as
-`HEAD`. Landing adds an exact commit-content route but never rewrites origin or
-review association, and it does not turn Base-side evidence into Target
-content.
+Membership does not guarantee an inline mark: the current endpoint and side
+must be eligible and anchor/context placement must succeed. Detached listed
+threads remain reply-, edit-, and resolution-actionable. Landing records the
+first observed exact full-file commit match, but never adds, removes, or
+changes membership.
 
 **Review** also offers repository-wide **Recently resolved**, **Archived
 threads**, and **Clear board...**. Clearing archives the shared board after
@@ -569,7 +563,7 @@ for host-specific options.
 | Tool | Purpose |
 | --- | --- |
 | `threads` | Read discussions without changing state; exact IDs can retrieve archived history, and an optional commit source filters immutable origins. |
-| `thread_start` | Start a batch of focused review comments from the bound checkout or an optional immutable commit source. |
+| `thread_start` | Start comments from WorkingTree by default, or from an explicitly selected immutable commit. |
 | `thread_reply` | Reply to discussions, optionally requesting resolution. |
 
 `thread_reply` identifies its target by thread ID. Omit `line` and `end_line`
@@ -611,8 +605,10 @@ For example, a selected read with no matches still confirms the pinned source:
 }
 ```
 
-A selected start captures every fresh comment's path, range, snippet, and
-content identity from the resulting tree of that commit:
+To review a commit, pass `source`; without it `thread_start` records a
+WorkingTree origin even when its `observed_head` names that commit. A selected
+start captures every fresh comment's path, range, snippet, and content identity
+from the resulting tree of that commit:
 
 ```json
 {
@@ -717,9 +713,9 @@ Product state lives under `$XDG_STATE_HOME/fathomable`
 
 | Relative path | Contents |
 | --- | --- |
-| `workspaces/<repository-hash>/threads.jsonl` | Discussion messages, immutable review associations and origin excerpts, placement, and lifecycle history. |
+| `workspaces/<repository-hash>/threads.jsonl` | Discussion messages, immutable origin excerpts and provenance, placement, landing evidence, and lifecycle history. |
 | `workspaces/<repository-hash>/review-points/` | Explicitly saved manifests and content blobs. |
-| `workspaces/<checkout-hash>/comparison/comparison.json` | Last-used endpoints, settings, and retained review focus for that checkout. |
+| `workspaces/<checkout-hash>/comparison/comparison.json` | Last-used endpoints, aliases, Source intent, and diff settings for that checkout. |
 | `viewers/` | Viewer registrations. |
 | `log/` | Diagnostic logs and crash reports. |
 
@@ -753,9 +749,8 @@ are unused and are not automatically removed.
 External-editor drafts use `fathomable-comment-<pid>.md` in the system temporary directory
 and are removed after returning from the editor.
 
-The Git common directory identifies the repository, so linked worktrees
-share threads and review points but keep separate comparison preferences and
-retained review focus.
+The Git common directory identifies the repository, so linked worktrees share
+threads and review points but keep separate comparison preferences.
 Plain directories use their root identity. Running viewers do not control
 one another's comparison; the last successful preference write is restored
 on a later launch.
@@ -765,14 +760,18 @@ eligible changed content and rely on Git objects for unchanged committed
 files; they are not standalone backups. Outside Git, points capture all
 eligible files.
 
-Annotation format 7 and comparison preference format 2 deliberately have no
-compatibility reader, migration, backfill, or inferred review association for
-their predecessors. Before manually deleting old `threads.jsonl` and
-`comparison/comparison.json` state, stop every affected viewer and the agent
-host's MCP processes. Start only the new build after the reset. Fathomable
-refuses incompatible state and never deletes it during startup, build, or
-installation. State persists across ordinary restarts of a compatible build,
-but an upgrade or downgrade may require another explicit operator reset.
+Annotation format 8 and comparison preference format 3 deliberately have no
+compatibility reader, migration, backfill, or dual-format path. Before a
+manual reset, stop every affected viewer and the agent host's MCP processes.
+Format 8 comparison provenance includes a checkout qualifier whenever its
+Source or Target is WorkingTree or Index.
+Delete only `workspaces/<repository-hash>/threads.jsonl` for incompatible
+annotation state and/or
+`workspaces/<checkout-hash>/comparison/comparison.json` for that checkout's
+incompatible comparison preference. Do not remove `review-points/`,
+configuration, logs, or unrelated workspace state. Start only the new build
+after the reset. Fathomable refuses incompatible state and never deletes it
+during startup, build, or installation.
 Review the actual XDG paths before backing up or resetting app-owned state;
 never remove repository files as part of a reset.
 A backup is recovery material for a build that understands that exact stored

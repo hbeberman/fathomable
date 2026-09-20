@@ -1,13 +1,13 @@
 use std::fmt::Write as _;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Context as _;
 use fathomable_core::XdgDirs;
 use fathomable_core::annotations::{
-    Author, ContentIdentity, Draft, FullFileDigest, IndexFacts, IndexState, Lifecycle, LineRange,
-    OriginSide, OriginVersion, ReviewAssociation, ReviewEndpoint, ReviewPointFacts, ReviewScope,
-    Store, WorkingTreeFacts, WorkingTreeState,
+    Author, ComparisonFacts, ContentIdentity, Draft, FullFileDigest, IndexFacts, IndexState,
+    LineRange, OriginSide, OriginVersion, ReviewPointFacts, Store, WorkingTreeFacts,
+    WorkingTreeState,
 };
 use fathomable_core::config::{DiffMode, HeadTransitionPolicy};
 use fathomable_core::content::Content;
@@ -17,25 +17,8 @@ use fathomable_testing::{TempDir, git};
 
 use crate::app::input::bindings::Action;
 use crate::app::testing::{AppBuilder, press, press_key};
-use crate::app::{App, Options, PickerKind, Popup};
+use crate::app::{PickerKind, Popup};
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-
-fn loose_object_path(root: &Path, revision: &str) -> anyhow::Result<PathBuf> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["rev-parse", revision])
-        .output()?;
-    anyhow::ensure!(
-        output.status.success(),
-        "cannot resolve test object: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let id = String::from_utf8(output.stdout)?;
-    let id = id.trim();
-    anyhow::ensure!(id.len() == 40, "unexpected test object id");
-    Ok(root.join(".git/objects").join(&id[..2]).join(&id[2..]))
-}
 
 #[test]
 fn persistent_outputs_are_private_under_permissive_umasks() -> anyhow::Result<()> {
@@ -461,11 +444,6 @@ fn parentless_head_uses_empty_tree_commit_review() -> anyhow::Result<()> {
             &ComparisonEndpoint::Commit(CommitId::parse(&head)?)
         )
     );
-    assert!(matches!(
-        app.comparison.review_focus(),
-        Some(fathomable_core::annotations::ReviewScope::Commit { target })
-            if target == &head
-    ));
     Ok(())
 }
 
@@ -1130,6 +1108,10 @@ fn review_point_picker_entry_compares_against_working() -> anyhow::Result<()> {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture checks point identity, checkout ownership, landing, and deletion"
+)]
 fn review_point_membership_is_exact_then_survives_landing_and_deletion() -> anyhow::Result<()> {
     let dir = repository("comparison-point-membership")?;
     let root = dir.0.join("ws");
@@ -1150,6 +1132,10 @@ fn review_point_membership_is_exact_then_survives_landing_and_deletion() -> anyh
         .as_ref()
         .and_then(|points| points.list().first().cloned())
         .context("point P")?;
+    let foreign_root = dir.0.join("foreign");
+    git::init(&foreign_root)?;
+    git::commit_and_stage(&foreign_root, &[("a.md", "one\n")])?;
+    let foreign_checkout = Workspace::discover(&foreign_root)?.identity();
     let id = app.store.as_mut().context("thread store")?.annotate(
         Draft::new(
             Author::User,
@@ -1170,9 +1156,33 @@ fn review_point_membership_is_exact_then_survives_landing_and_deletion() -> anyh
         "one\n",
         1,
     )?;
+    let foreign = app.store.as_mut().context("thread store")?.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "foreign point thread",
+        )
+        .at_review_point(
+            ReviewPointFacts::new(
+                point.id(),
+                point.head().map(ToString::to_string),
+                Some(ContentIdentity::from_text("one\n")),
+                foreign_checkout,
+                FullFileDigest::from_bytes(b"one\n"),
+            ),
+            OriginSide::Base,
+        ),
+        "one\n",
+        2,
+    )?;
     app.refresh_after_thread_store_change();
     app.open(Path::new("a.md"));
     assert!(app.marks().iter().any(|mark| mark.id() == &id));
+    assert!(
+        app.marks().iter().all(|mark| mark.id() != &foreign),
+        "a point origin from another checkout does not match"
+    );
 
     app.save_review_point(Some("Q"));
     app.settle_background();
@@ -1389,7 +1399,7 @@ fn untouched_default_base_follows_head_after_restart() -> anyhow::Result<()> {
     );
     drop(app);
     let preference = fs::read_to_string(dirs.comparison_dir(&root).join("comparison.json"))?;
-    assert!(preference.contains("\"version\": 2"));
+    assert!(preference.contains("\"version\": 3"));
     assert!(preference.contains("\"intent\": \"follow-head\""));
     assert!(!preference.contains("\"base\":"));
 
@@ -1840,115 +1850,28 @@ fn commit_content_does_not_alias_the_mutable_head() -> anyhow::Result<()> {
 }
 
 #[test]
-fn human_comparison_association_requires_explicit_focus() -> anyhow::Result<()> {
-    let dir = repository("comparison-human-association")?;
-    let root = dir.0.join("ws");
-    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-    let first = Workspace::discover(&root)?.head_commit().context("first")?;
-    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
-    let second = Workspace::discover(&root)?
-        .head_commit()
-        .context("second")?;
-    let store = Store::open(dir.0.join("threads.jsonl"))?;
-    let mut app = AppBuilder::at(&root)
-        .unopened()
-        .options(move |mut options| {
-            options.store = Some(store);
-            options
-        })
-        .build()?;
-    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
-    app.settle_background();
-    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
-    app.settle_background();
-    app.start_review_focus();
-    app.open(Path::new("a.md"));
-    app.view_mut().goto_source_line(1);
-    app.start_new_comment();
-    app.compose_insert("comparison annotation");
-    app.compose_submit();
-    let comparison_thread = app
-        .store
-        .as_ref()
-        .and_then(|store| store.threads().last())
-        .context("comparison thread")?;
-    assert!(matches!(
-        comparison_thread.review_association(),
-        ReviewAssociation::Review {
-            scope: ReviewScope::Comparison { source, target }
-        } if source == &ReviewEndpoint::commit(&first)
-            && target == &ReviewEndpoint::commit(&second)
-    ));
-
-    app.select_commit_parent(&CommitId::parse(&second)?, None);
-    app.settle_background();
-    app.view_mut().goto_source_line(1);
-    app.start_new_comment();
-    app.compose_insert("commit review annotation");
-    app.compose_submit();
-    let review_thread = app
-        .store
-        .as_ref()
-        .and_then(|store| store.threads().last())
-        .context("review thread")?;
-    assert_eq!(
-        review_thread.review_association().scope(),
-        Some(&ReviewScope::commit(&second))
-    );
-    Ok(())
-}
-
-#[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one end-to-end review exercises native, fix-cycle, detached, and mode behavior"
-)]
-fn commit_review_membership_survives_the_fix_cycle_and_stays_actionable() -> anyhow::Result<()> {
-    let dir = repository("comparison-complete-commit-review")?;
+fn commit_target_membership_does_not_follow_commit_as_source() -> anyhow::Result<()> {
+    let dir = repository("comparison-commit-target-membership")?;
     let root = dir.0.join("ws");
     git::commit_and_stage(&root, &[("a.md", "parent\n")])?;
     let parent = Workspace::discover(&root)?
         .head_commit()
         .context("parent")?;
-    git::commit_and_stage(&root, &[("a.md", "child\n")])?;
-    let child = Workspace::discover(&root)?.head_commit().context("child")?;
-    let scope = ReviewScope::commit(&child);
-    let store_path = dir.0.join("threads.jsonl");
-    let mut store = Store::open(&store_path)?;
-    let base = store.annotate(
+    git::commit_and_stage(&root, &[("a.md", "target\n")])?;
+    let target = Workspace::discover(&root)?
+        .head_commit()
+        .context("target")?;
+    let mut store = Store::open(dir.0.join("threads.jsonl"))?;
+    let id = store.annotate(
         Draft::new(
             Author::agent("reviewer"),
             Path::new("a.md"),
             LineRange::new(1, 1),
-            "base evidence",
+            "target commit",
         )
-        .at_source(OriginVersion::commit(&parent), OriginSide::Base)
-        .in_review(scope.clone()),
-        "parent\n",
+        .at_selected_commit(CommitId::parse(&target)?),
+        "target\n",
         1,
-    )?;
-    let target = store.annotate(
-        Draft::new(
-            Author::agent("reviewer"),
-            Path::new("a.md"),
-            LineRange::new(1, 1),
-            "target evidence",
-        )
-        .at_source(OriginVersion::commit(&child), OriginSide::Target)
-        .in_review(scope.clone()),
-        "child\n",
-        2,
-    )?;
-    let contextless = store.annotate(
-        Draft::new(
-            Author::agent("mcp"),
-            Path::new("detached.md"),
-            LineRange::new(1, 1),
-            "contextless evidence",
-        )
-        .at_selected_commit(CommitId::parse(&child)?),
-        "not in the commit\n",
-        3,
     )?;
     let mut app = AppBuilder::at(&root)
         .unopened()
@@ -1958,148 +1881,121 @@ fn commit_review_membership_survives_the_fix_cycle_and_stays_actionable() -> any
         })
         .build()?;
 
-    app.select_commit_parent(&CommitId::parse(&child)?, None);
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&parent)?));
     app.settle_background();
-    app.open(Path::new("a.md"));
-    assert_eq!(
-        (app.comparison.base(), app.comparison.target()),
-        (
-            &ComparisonEndpoint::Commit(CommitId::parse(&parent)?),
-            &ComparisonEndpoint::Commit(CommitId::parse(&child)?)
-        )
-    );
-    for id in [&base, &target, &contextless] {
-        assert!(
-            app.normal_review_entries(false)
-                .iter()
-                .any(|entry| entry.id() == id)
-        );
-    }
-    let base_thread = app.thread(&base).context("base thread")?;
-    assert_eq!(
-        base_thread.origin_version(),
-        &OriginVersion::commit(&parent)
-    );
-    assert_eq!(base_thread.origin_side(), OriginSide::Base);
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&target)?));
+    app.settle_background();
+    assert!(app.normal_thread(app.thread(&id).context("commit target")?));
 
-    app.select_head_working_tree();
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&target)?));
     app.settle_background();
-    for contents in ["dirty\n", "child\n"] {
-        fs::write(root.join("a.md"), contents)?;
-        app.refresh_comparison();
-        app.settle_background();
-        for id in [&base, &target, &contextless] {
-            assert!(
-                app.normal_review_entries(false)
-                    .iter()
-                    .any(|entry| entry.id() == id),
-                "{id} must remain in the retained review"
-            );
-        }
-    }
-    app.refresh_comparison();
+    app.set_comparison_target(ComparisonEndpoint::WorkingTree);
     app.settle_background();
-    app.set_thread_cursor(contextless.clone());
-    app.thread_toggle_resolved();
-    assert_eq!(
-        app.thread(&contextless)
-            .map(fathomable_core::annotations::Thread::lifecycle),
-        Some(Lifecycle::Resolved)
-    );
+    assert!(!app.normal_thread(app.thread(&id).context("working target")?));
 
-    for mode in [DiffMode::Unified, DiffMode::Off, DiffMode::Normal] {
-        app.select_diff_mode(mode);
-        app.settle_background();
-        assert_eq!(app.comparison.review_focus(), Some(&scope));
-        assert!(app.normal_thread(app.thread(&base).context("focused base")?));
-        assert!(app.normal_thread(app.thread(&target).context("focused target")?));
-    }
+    app.set_comparison_target(ComparisonEndpoint::Index);
+    app.settle_background();
+    assert!(!app.normal_thread(app.thread(&id).context("index target")?));
     Ok(())
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one matrix fixture distinguishes Index target, Index source, and WorkingTree target"
-)]
-fn index_membership_keeps_endpoint_kinds_and_retained_focus_distinct() -> anyhow::Result<()> {
-    let dir = repository("comparison-index-membership")?;
+fn clean_working_tree_landing_is_evidence_not_membership() -> anyhow::Result<()> {
+    let dir = repository("comparison-clean-working-landing")?;
     let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "parent\n")])?;
+    let parent = Workspace::discover(&root)?
+        .head_commit()
+        .context("parent")?;
     git::commit_and_stage(&root, &[("a.md", "head\n")])?;
-    let head = Workspace::discover(&root)?.head_commit().context("head")?;
-    let checkout = Workspace::discover(&root)?.identity();
-    let index_content = ContentIdentity::from_text("index-only\n");
-    let index_digest = FullFileDigest::from_bytes(b"index-only\n");
-    let working_content = ContentIdentity::from_text("working-only\n");
-    let working_digest = FullFileDigest::from_bytes(b"working-only\n");
+    let workspace = Workspace::discover(&root)?;
+    let head = workspace.head_commit().context("head")?;
     let mut store = Store::open(dir.0.join("threads.jsonl"))?;
-    let reviewed = store.annotate(
+    let id = store.annotate(
         Draft::new(
-            Author::agent("reviewer"),
-            Path::new("review.md"),
-            LineRange::new(1, 1),
-            "commit review",
-        )
-        .at_selected_commit(CommitId::parse(&head)?),
-        "detached\n",
-        1,
-    )?;
-    let index_target = store.annotate(
-        Draft::new(
-            Author::User,
+            Author::agent("unselected"),
             Path::new("a.md"),
             LineRange::new(1, 1),
-            "index target",
-        )
-        .at_source(OriginVersion::index(Some(head.clone())), OriginSide::Target)
-        .with_index_facts(IndexFacts::new(
-            Some(head.clone()),
-            IndexState::Unchanged,
-            Some(index_content.clone()),
-            checkout.clone(),
-            index_digest.clone(),
-        )),
-        "index-only\n",
-        2,
-    )?;
-    let index_base = store.annotate(
-        Draft::new(
-            Author::User,
-            Path::new("a.md"),
-            LineRange::new(1, 1),
-            "index base",
-        )
-        .at_source(OriginVersion::index(Some(head.clone())), OriginSide::Base)
-        .with_index_facts(IndexFacts::new(
-            Some(head.clone()),
-            IndexState::Unchanged,
-            Some(index_content),
-            checkout.clone(),
-            index_digest,
-        )),
-        "index-only\n",
-        3,
-    )?;
-    let working_target = store.annotate(
-        Draft::new(
-            Author::User,
-            Path::new("a.md"),
-            LineRange::new(1, 1),
-            "working target",
-        )
-        .at_source(
-            OriginVersion::working_tree(Some(head.clone())),
-            OriginSide::Target,
+            "working-tree origin",
         )
         .with_working_tree_facts(WorkingTreeFacts::new(
             Some(head.clone()),
             WorkingTreeState::Clean,
-            Some(working_content),
-            checkout,
-            working_digest,
+            Some(ContentIdentity::from_text("head\n")),
+            workspace.identity(),
+            FullFileDigest::from_bytes(b"head\n"),
         )),
-        "working-only\n",
-        4,
+        "head\n",
+        1,
+    )?;
+    let candidate = store
+        .thread(&id)
+        .and_then(fathomable_core::annotations::Thread::landing_candidate)
+        .context("landing candidate")?;
+    assert_eq!(
+        store.land(&candidate, &CommitId::parse(&head)?)?,
+        fathomable_core::annotations::LandingOutcome::Applied
+    );
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.settle_background();
+    assert!(app.normal_thread(app.thread(&id).context("working tree")?));
+
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&parent)?));
+    app.settle_background();
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&head)?));
+    app.settle_background();
+    assert_eq!(
+        app.thread(&id).and_then(|thread| thread.landed_commit()),
+        Some(head.as_str())
+    );
+    assert!(!app.normal_thread(app.thread(&id).context("landed thread")?));
+
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&head)?));
+    app.settle_background();
+    app.set_comparison_target(ComparisonEndpoint::WorkingTree);
+    app.settle_background();
+    assert!(app.normal_thread(app.thread(&id).context("working target")?));
+    Ok(())
+}
+
+#[test]
+fn base_membership_requires_the_recorded_ordered_comparison() -> anyhow::Result<()> {
+    let dir = repository("comparison-base-ordered-pair")?;
+    let root = dir.0.join("ws");
+    fs::write(root.join("gone.md"), "present\n")?;
+    git::commit_and_stage(&root, &[("gone.md", "present\n")])?;
+    let source = Workspace::discover(&root)?
+        .head_commit()
+        .context("source")?;
+    fs::remove_file(root.join("gone.md"))?;
+    git::commit_and_stage(&root, &[])?;
+    let target = Workspace::discover(&root)?
+        .head_commit()
+        .context("target")?;
+    fs::write(root.join("other.md"), "later\n")?;
+    git::commit_and_stage(&root, &[("other.md", "later\n")])?;
+    let later = Workspace::discover(&root)?.head_commit().context("later")?;
+    let mut store = Store::open(dir.0.join("threads.jsonl"))?;
+    let id = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("gone.md"),
+            LineRange::new(1, 1),
+            "deletion",
+        )
+        .at_source(OriginVersion::commit(&source), OriginSide::Base)
+        .in_comparison(ComparisonFacts::new(
+            OriginVersion::commit(&source),
+            OriginVersion::commit(&target),
+        )),
+        "present\n",
+        1,
     )?;
     let mut app = AppBuilder::at(&root)
         .unopened()
@@ -2108,43 +2004,171 @@ fn index_membership_keeps_endpoint_kinds_and_retained_focus_distinct() -> anyhow
             options
         })
         .build()?;
-    app.set_comparison_target(ComparisonEndpoint::Index);
-    app.settle_background();
-    assert!(app.normal_thread(app.thread(&index_target).context("index target")?));
-    assert!(!app.normal_thread(app.thread(&reviewed).context("reviewed")?));
 
-    app.select_commit_parent(&CommitId::parse(&head)?, None);
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&source)?));
     app.settle_background();
-    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&head)?));
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&target)?));
     app.settle_background();
-    app.set_comparison_target(ComparisonEndpoint::Index);
+    assert!(app.normal_thread(app.thread(&id).context("recorded pair")?));
+
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&later)?));
     app.settle_background();
-    for id in [&reviewed, &index_target] {
-        assert!(app.normal_thread(app.thread(id).context("HEAD to Index member")?));
+    assert!(!app.normal_thread(app.thread(&id).context("different target")?));
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum MutableTarget {
+    WorkingTree,
+    Index,
+}
+
+fn linked_worktree_rejects_foreign_base_deletion(
+    name: &str,
+    target: MutableTarget,
+) -> anyhow::Result<()> {
+    let dir = TempDir::new(name)?;
+    let main = dir.0.join("main");
+    fs::create_dir_all(&main)?;
+    git::init(&main)?;
+    fs::write(main.join("gone.md"), "present\n")?;
+    git::commit_and_stage(&main, &[("gone.md", "present\n")])?;
+    let head = Workspace::discover(&main)?
+        .head_commit()
+        .context("shared HEAD")?;
+    let linked = dir.0.join("linked");
+    git::worktree_add(&main, &linked, "linked")?;
+    match target {
+        MutableTarget::WorkingTree => fs::remove_file(main.join("gone.md"))?,
+        MutableTarget::Index => git::stage(&main, &[])?,
     }
-
-    git::stage(&root, &[("a.md", "staged\n")])?;
-    app.refresh_comparison();
-    app.settle_background();
-    git::stage(&root, &[("a.md", "head\n")])?;
-    app.refresh_comparison();
-    app.settle_background();
+    let endpoint = match target {
+        MutableTarget::WorkingTree => ComparisonEndpoint::WorkingTree,
+        MutableTarget::Index => ComparisonEndpoint::Index,
+    };
+    let store_path = dir.0.join("threads.jsonl");
+    let store = Store::open(&store_path)?;
+    let mut source_app = AppBuilder::at(&main)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    source_app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&head)?));
+    source_app.settle_background();
+    source_app.set_comparison_target(endpoint.clone());
+    source_app.settle_background();
+    source_app.open(Path::new("gone.md"));
+    source_app.start_new_comment();
+    press(&mut source_app, "checkout-local deletion");
+    source_app.compose_submit();
+    let id = source_app
+        .store
+        .as_ref()
+        .and_then(|store| store.threads().first())
+        .context("base-side deletion thread")?
+        .id()
+        .clone();
+    let thread = source_app.thread(&id).context("source thread")?;
+    assert_eq!(thread.origin_side(), OriginSide::Base);
     assert_eq!(
-        app.comparison.review_focus(),
-        Some(&ReviewScope::commit(&head))
+        thread.comparison().and_then(ComparisonFacts::checkout),
+        Some(&Workspace::discover(&main)?.identity())
     );
+    assert!(source_app.normal_thread(thread));
+    drop(source_app);
 
-    app.set_comparison_base(ComparisonEndpoint::Index);
-    app.settle_background();
-    app.set_comparison_target(ComparisonEndpoint::WorkingTree);
-    app.settle_background();
-    for id in [&reviewed, &index_base, &working_target] {
-        assert!(app.normal_thread(app.thread(id).context("Index to working member")?));
-    }
+    let store = Store::open(&store_path)?;
+    let mut linked_app = AppBuilder::at(&linked)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    linked_app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&head)?));
+    linked_app.settle_background();
+    linked_app.set_comparison_target(endpoint);
+    linked_app.settle_background();
     assert!(
-        !app.normal_thread(app.thread(&index_target).context("wrong-side index")?),
-        "an Index target origin is not an Index source origin"
+        !linked_app.normal_thread(linked_app.thread(&id).context("linked thread")?),
+        "equal mutable endpoint and observed HEAD must not cross checkout identity"
     );
+    Ok(())
+}
+
+#[test]
+fn mutable_base_deletions_do_not_cross_linked_worktrees() -> anyhow::Result<()> {
+    linked_worktree_rejects_foreign_base_deletion(
+        "comparison-working-linked-checkout",
+        MutableTarget::WorkingTree,
+    )?;
+    linked_worktree_rejects_foreign_base_deletion(
+        "comparison-index-linked-checkout",
+        MutableTarget::Index,
+    )
+}
+
+#[test]
+fn mutable_endpoint_membership_requires_checkout_identity() -> anyhow::Result<()> {
+    let dir = repository("comparison-mutable-checkout")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "same\n")])?;
+    let head = Workspace::discover(&root)?.head_commit().context("head")?;
+    let other = repository("comparison-mutable-other")?;
+    let other_root = other.0.join("ws");
+    git::commit_and_stage(&other_root, &[("a.md", "same\n")])?;
+    let other_checkout = Workspace::discover(&other_root)?.identity();
+    let mut store = Store::open(dir.0.join("threads.jsonl"))?;
+    let working = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "other working tree",
+        )
+        .with_working_tree_facts(WorkingTreeFacts::new(
+            Some(head.clone()),
+            WorkingTreeState::Clean,
+            Some(ContentIdentity::from_text("same\n")),
+            other_checkout.clone(),
+            FullFileDigest::from_bytes(b"same\n"),
+        )),
+        "same\n",
+        1,
+    )?;
+    let index = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "other index",
+        )
+        .with_index_facts(IndexFacts::new(
+            Some(head),
+            IndexState::Unchanged,
+            Some(ContentIdentity::from_text("same\n")),
+            other_checkout,
+            FullFileDigest::from_bytes(b"same\n"),
+        )),
+        "same\n",
+        2,
+    )?;
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.settle_background();
+    for id in [&working, &index] {
+        assert!(!app.normal_thread(app.thread(id).context("foreign checkout")?));
+    }
+    app.set_comparison_target(ComparisonEndpoint::Index);
+    app.settle_background();
+    assert!(!app.normal_thread(app.thread(&index).context("foreign index")?));
     Ok(())
 }
 
@@ -2272,14 +2296,6 @@ fn diff_off_uses_only_typed_target_content_and_keeps_annotations_content_only() 
             store.land(&candidate, &CommitId::parse(&child)?)?,
             fathomable_core::annotations::LandingOutcome::Applied
         );
-        assert!(matches!(
-            store
-                .thread(id)
-                .map(fathomable_core::annotations::Thread::review_association),
-            Some(ReviewAssociation::Content {
-                endpoint: ReviewEndpoint::WorkingTree { .. }
-            })
-        ));
     }
     fs::write(root.join("a.md"), "working\n")?;
     git::stage(&root, &[("a.md", "index\n")])?;
@@ -2300,13 +2316,14 @@ fn diff_off_uses_only_typed_target_content_and_keeps_annotations_content_only() 
         .iter()
         .map(super::super::threads::Mark::id)
         .collect::<Vec<_>>();
-    for id in [&target, &unspecified, &landed_target] {
+    for id in [&target, &unspecified] {
         assert!(mark_ids.contains(&id));
     }
     for (name, id) in [
         ("base", &base),
         ("working", &working),
         ("index", &index),
+        ("landed target", &landed_target),
         ("landed base", &landed_base),
     ] {
         assert!(!mark_ids.contains(&id), "{name} unexpectedly rendered");
@@ -2321,376 +2338,6 @@ fn diff_off_uses_only_typed_target_content_and_keeps_annotations_content_only() 
     assert!(app.normal_thread(app.thread(&index).context("index")?));
     assert!(!app.normal_thread(app.thread(&working).context("working")?));
 
-    app.select_commit_parent(&CommitId::parse(&child)?, None);
-    app.settle_background();
-    let focus = app.comparison.review_focus().cloned().context("focus")?;
-    app.select_diff_mode(DiffMode::Off);
-    app.settle_background();
-    app.open(Path::new("a.md"));
-    app.view_mut().goto_source_line(1);
-    app.start_new_comment();
-    app.compose_insert("off annotation");
-    app.compose_submit();
-    let created = app
-        .store
-        .as_ref()
-        .and_then(|threads| threads.threads().last())
-        .context("created thread")?;
-    assert_eq!(
-        created.review_association(),
-        &ReviewAssociation::content(ReviewEndpoint::commit(&child))
-    );
-    assert!(created.comparison().is_some());
-    assert_eq!(app.comparison.review_focus(), Some(&focus));
-    for mode in [DiffMode::Normal, DiffMode::Unified, DiffMode::Off] {
-        app.select_diff_mode(mode);
-        app.settle_background();
-        assert_eq!(app.comparison.review_focus(), Some(&focus));
-    }
-    Ok(())
-}
-
-#[test]
-fn commit_review_focus_survives_fix_mode_off_mode_and_restart() -> anyhow::Result<()> {
-    let dir = repository("comparison-retained-commit-review")?;
-    let root = dir.0.join("ws");
-    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
-    let reviewed = Workspace::discover(&root)?
-        .head_commit()
-        .context("reviewed")?;
-    git::commit_and_stage(&root, &[("a.md", "three\n")])?;
-    let selected = CommitId::parse(&reviewed)?;
-    let store_path = dir.0.join("threads.jsonl");
-    let mut store = Store::open(&store_path)?;
-    let id = store.annotate(
-        Draft::new(
-            Author::agent("reviewer"),
-            Path::new("a.md"),
-            LineRange::new(1, 1),
-            "reviewed commit",
-        )
-        .at_selected_commit(selected.clone()),
-        "two\n",
-        1,
-    )?;
-    let mut app = AppBuilder::at(&root)
-        .unopened()
-        .options(move |mut options| {
-            options.store = Some(store);
-            options
-        })
-        .build()?;
-
-    app.select_commit_parent(&selected, None);
-    app.settle_background();
-    app.open(Path::new("a.md"));
-    assert!(app.normal_thread(app.thread(&id).context("thread")?));
-
-    app.select_head_working_tree();
-    app.settle_background();
-    assert!(app.normal_thread(app.thread(&id).context("focused thread")?));
-    assert!(
-        app.review_entries(false)
-            .iter()
-            .any(|entry| entry.id() == &id)
-    );
-
-    app.select_diff_mode(DiffMode::Off);
-    app.settle_background();
-    assert!(app.normal_thread(app.thread(&id).context("Off thread")?));
-    assert!(
-        app.marks().iter().all(|mark| mark.id() != &id),
-        "Off renders only exact Target content while focus remains actionable"
-    );
-    drop(app);
-
-    let reopened_store = Store::open(&store_path)?;
-    let mut app = AppBuilder::at(&root)
-        .unopened()
-        .options(move |mut options| {
-            options.store = Some(reopened_store);
-            options
-        })
-        .build()?;
-    app.settle_background();
-    assert!(matches!(
-        app.comparison.review_focus(),
-        Some(fathomable_core::annotations::ReviewScope::Commit { target })
-            if target == &reviewed
-    ));
-    assert!(app.normal_thread(app.thread(&id).context("restarted thread")?));
-
-    app.clear_review_focus();
-    assert!(!app.normal_thread(app.thread(&id).context("cleared thread")?));
-    Ok(())
-}
-
-#[test]
-fn mutable_review_scope_is_explicit_and_stable_across_edits() -> anyhow::Result<()> {
-    let dir = repository("comparison-mutable-review-scope")?;
-    let root = dir.0.join("ws");
-    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-    let mut app = AppBuilder::new(&dir).unopened().build()?;
-    app.settle_background();
-    app.open(Path::new("a.md"));
-
-    app.start_review_focus();
-    let focus = app
-        .comparison
-        .review_focus()
-        .cloned()
-        .context("mutable focus")?;
-    assert!(matches!(
-        &focus,
-        fathomable_core::annotations::ReviewScope::Mutable { .. }
-    ));
-    app.view_mut().goto_source_line(1);
-    app.start_new_comment();
-    app.compose_insert("mutable task");
-    app.compose_submit();
-    let id = app.file_threads().into_iter().next().context("thread")?;
-    assert_eq!(
-        app.thread(&id)
-            .and_then(|thread| thread.review_association().scope()),
-        Some(&focus)
-    );
-
-    fs::write(root.join("a.md"), "one changed\n")?;
-    app.refresh_comparison();
-    app.settle_background();
-    assert!(app.normal_thread(app.thread(&id).context("edited thread")?));
-
-    app.clear_review_focus();
-    assert!(
-        !app.normal_thread(app.thread(&id).context("cleared mutable thread")?),
-        "clearing creates a task boundary for later mutable work"
-    );
-    Ok(())
-}
-
-#[test]
-fn retained_focus_is_checkout_local_across_linked_worktrees() -> anyhow::Result<()> {
-    let dir = repository("comparison-focus-worktree")?;
-    let root = dir.0.join("ws");
-    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-    let linked = dir.0.join("linked");
-    git::worktree_add(&root, &linked, "linked")?;
-    let state = dir.0.join("state").into_os_string();
-    let dirs = XdgDirs::resolve(|name| (name == "XDG_STATE_HOME").then(|| state.clone()));
-
-    let root_dirs = dirs.clone();
-    let mut root_app = AppBuilder::at(&root)
-        .unopened()
-        .options(move |mut options| {
-            options.dirs = root_dirs;
-            options
-        })
-        .build()?;
-    root_app.settle_background();
-    root_app.start_review_focus();
-    assert!(root_app.comparison.review_focus().is_some());
-    drop(root_app);
-
-    let linked_app = AppBuilder::at(&linked)
-        .unopened()
-        .options(move |mut options| {
-            options.dirs = dirs;
-            options
-        })
-        .build()?;
-    assert!(
-        linked_app.comparison.review_focus().is_none(),
-        "linked worktrees must not inherit another checkout's focus"
-    );
-    Ok(())
-}
-
-#[test]
-fn commit_focus_survives_head_movement_is_replaced_and_clears_to_native_scope() -> anyhow::Result<()>
-{
-    let dir = repository("comparison-focus-lifetime")?;
-    let root = dir.0.join("ws");
-    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
-    let first_review = Workspace::discover(&root)?
-        .head_commit()
-        .context("first review")?;
-    let mut store = Store::open(dir.0.join("threads.jsonl"))?;
-    let first_thread = store.annotate(
-        Draft::new(
-            Author::agent("reviewer"),
-            Path::new("a.md"),
-            LineRange::new(1, 1),
-            "first review",
-        )
-        .at_selected_commit(CommitId::parse(&first_review)?),
-        "two\n",
-        1,
-    )?;
-    let mut app = AppBuilder::at(&root)
-        .unopened()
-        .options(move |mut options| {
-            options.store = Some(store);
-            options
-        })
-        .build()?;
-    app.select_commit_parent(&CommitId::parse(&first_review)?, None);
-    app.settle_background();
-
-    fs::write(
-        root.join(".git/refs/heads/other"),
-        format!("{first_review}\n"),
-    )?;
-    fs::write(root.join(".git/HEAD"), "ref: refs/heads/other\n")?;
-    app.refresh_comparison();
-    app.settle_background();
-    assert_eq!(
-        app.comparison.review_focus(),
-        Some(&ReviewScope::commit(&first_review))
-    );
-
-    git::commit_and_stage(&root, &[("a.md", "three\n")])?;
-    let second_review = Workspace::discover(&root)?
-        .head_commit()
-        .context("second review")?;
-    app.refresh_comparison();
-    app.settle_background();
-    assert_eq!(
-        app.comparison.review_focus(),
-        Some(&ReviewScope::commit(&first_review))
-    );
-
-    app.select_commit_parent(&CommitId::parse(&second_review)?, None);
-    app.settle_background();
-    assert_eq!(
-        app.comparison.review_focus(),
-        Some(&ReviewScope::commit(&second_review))
-    );
-    assert!(!app.normal_thread(app.thread(&first_thread).context("first thread")?));
-
-    app.clear_review_focus();
-    app.select_head_working_tree();
-    app.settle_background();
-    assert!(app.comparison.review_focus().is_none());
-    assert!(!app.normal_thread(app.thread(&first_thread).context("cleared thread")?));
-    Ok(())
-}
-
-#[test]
-fn commit_review_focus_is_installed_only_after_its_presentation_succeeds() -> anyhow::Result<()> {
-    let dir = repository("comparison-focus-success")?;
-    let root = dir.0.join("ws");
-    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-    let first = Workspace::discover(&root)?.head_commit().context("first")?;
-    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
-    let second = Workspace::discover(&root)?
-        .head_commit()
-        .context("second")?;
-    let mut app = AppBuilder::at(&root).unopened().build()?;
-
-    app.select_commit_parent(&CommitId::parse(&first)?, None);
-    app.settle_background();
-    assert_eq!(
-        app.comparison.review_focus(),
-        Some(&ReviewScope::commit(&first))
-    );
-
-    app.select_commit_parent(&CommitId::parse(&second)?, None);
-    assert_eq!(
-        app.comparison.review_focus(),
-        Some(&ReviewScope::commit(&first)),
-        "the requested review must not replace accepted focus"
-    );
-    app.settle_background();
-    assert_eq!(
-        app.comparison.review_focus(),
-        Some(&ReviewScope::commit(&second))
-    );
-    drop(app);
-
-    let restored = AppBuilder::at(&root).unopened().build()?;
-    assert_eq!(
-        restored.comparison.review_focus(),
-        Some(&ReviewScope::commit(&second)),
-        "the accepted focus must be durable"
-    );
-    Ok(())
-}
-
-#[test]
-fn failed_commit_review_preserves_the_accepted_focus_in_memory_and_on_disk() -> anyhow::Result<()> {
-    let dir = repository("comparison-focus-failure")?;
-    let root = dir.0.join("ws");
-    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-    let accepted = Workspace::discover(&root)?
-        .head_commit()
-        .context("accepted")?;
-    git::commit_and_stage(&root, &[("a.md", "unavailable\n")])?;
-    let unavailable = Workspace::discover(&root)?
-        .head_commit()
-        .context("unavailable")?;
-    let mut app = AppBuilder::at(&root).unopened().build()?;
-    app.select_commit_parent(&CommitId::parse(&accepted)?, None);
-    app.settle_background();
-
-    fs::remove_file(loose_object_path(&root, &format!("{unavailable}:a.md"))?)?;
-    app.select_commit_parent(&CommitId::parse(&unavailable)?, None);
-    assert_eq!(
-        app.comparison.review_focus(),
-        Some(&ReviewScope::commit(&accepted))
-    );
-    app.settle_background();
-    assert!(app.comparison.error().is_some());
-    assert_eq!(
-        app.comparison.review_focus(),
-        Some(&ReviewScope::commit(&accepted))
-    );
-    drop(app);
-
-    let restored = AppBuilder::at(&root).unopened().build()?;
-    assert_eq!(
-        restored.comparison.review_focus(),
-        Some(&ReviewScope::commit(&accepted)),
-        "a failed prospective review must not reach disk"
-    );
-    Ok(())
-}
-
-#[test]
-fn superseded_commit_review_installs_only_the_latest_successful_focus() -> anyhow::Result<()> {
-    let dir = repository("comparison-focus-superseded")?;
-    let root = dir.0.join("ws");
-    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-    let first = Workspace::discover(&root)?.head_commit().context("first")?;
-    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
-    let second = Workspace::discover(&root)?
-        .head_commit()
-        .context("second")?;
-    git::commit_and_stage(&root, &[("a.md", "three\n")])?;
-    let third = Workspace::discover(&root)?.head_commit().context("third")?;
-    let mut app = AppBuilder::at(&root).unopened().build()?;
-    app.select_commit_parent(&CommitId::parse(&first)?, None);
-    app.settle_background();
-
-    app.select_commit_parent(&CommitId::parse(&second)?, None);
-    app.select_commit_parent(&CommitId::parse(&third)?, None);
-    assert_eq!(
-        app.comparison.review_focus(),
-        Some(&ReviewScope::commit(&first))
-    );
-    app.settle_background();
-    assert_eq!(
-        app.comparison.review_focus(),
-        Some(&ReviewScope::commit(&third))
-    );
-    drop(app);
-
-    let restored = AppBuilder::at(&root).unopened().build()?;
-    assert_eq!(
-        restored.comparison.review_focus(),
-        Some(&ReviewScope::commit(&third))
-    );
     Ok(())
 }
 
@@ -2718,7 +2365,6 @@ fn commit_review_uses_first_parent_and_rejects_an_unavailable_parent() -> anyhow
         app.comparison.base(),
         &ComparisonEndpoint::Commit(CommitId::parse(&alternate)?)
     );
-    app.clear_review_focus();
     drop(app);
 
     let object = root
@@ -2736,7 +2382,6 @@ fn commit_review_uses_first_parent_and_rejects_an_unavailable_parent() -> anyhow
         (app.comparison.base(), app.comparison.target()),
         (&before.0, &before.1)
     );
-    assert!(app.comparison.review_focus().is_none());
     assert!(
         app.message()
             .is_some_and(|message| message.contains("cannot read selected commit's first parent"))
@@ -2834,127 +2479,7 @@ fn failed_target_refresh_keeps_membership_on_the_accepted_presentation() -> anyh
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one startup fixture covers pending, failed, retained, legacy, and worktree membership"
-)]
-fn pending_or_failed_startup_has_no_typed_membership_beyond_retained_focus() -> anyhow::Result<()> {
-    let dir = repository("comparison-startup-membership")?;
-    let root = dir.0.join("ws");
-    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-    let unrelated = Workspace::discover(&root)?
-        .head_commit()
-        .context("unrelated")?;
-    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
-    let focused = Workspace::discover(&root)?
-        .head_commit()
-        .context("focused")?;
-    let linked = dir.0.join("linked");
-    git::worktree_add(&root, &linked, "linked")?;
-    let linked_workspace = Workspace::discover(&linked)?;
-    let linked_checkout = linked_workspace.identity();
-    let linked_head = linked_workspace.head_commit();
-    let linked_scope = ReviewScope::mutable(
-        linked_checkout.clone(),
-        "linked-task",
-        ReviewEndpoint::commit(linked_head.as_deref().context("linked HEAD")?),
-        ReviewEndpoint::working_tree(linked_checkout.clone()),
-    );
-
-    let store_path = dir.0.join("threads.jsonl");
-    let mut store = Store::open(&store_path)?;
-    let unrelated_id = store.annotate(
-        Draft::new(
-            Author::agent("reviewer"),
-            Path::new("a.md"),
-            LineRange::new(1, 1),
-            "unrelated review",
-        )
-        .at_source(OriginVersion::commit(&unrelated), OriginSide::Target)
-        .in_review(ReviewScope::commit(&unrelated)),
-        "one\n",
-        1,
-    )?;
-    let focused_id = store.annotate(
-        Draft::new(
-            Author::agent("reviewer"),
-            Path::new("a.md"),
-            LineRange::new(1, 1),
-            "retained review",
-        )
-        .at_selected_commit(CommitId::parse(&focused)?),
-        "two\n",
-        2,
-    )?;
-    let linked_id = store.annotate(
-        Draft::new(
-            Author::agent("reviewer"),
-            Path::new("a.md"),
-            LineRange::new(1, 1),
-            "linked mutable review",
-        )
-        .with_working_tree_facts(WorkingTreeFacts::new(
-            linked_head,
-            WorkingTreeState::Clean,
-            Some(ContentIdentity::from_text("two\n")),
-            linked_checkout,
-            FullFileDigest::from_bytes(b"two\n"),
-        ))
-        .in_review(linked_scope),
-        "two\n",
-        3,
-    )?;
-    let legacy_id = store.annotate(
-        Draft::new(
-            Author::agent("legacy"),
-            Path::new("a.md"),
-            LineRange::new(1, 1),
-            "legacy",
-        ),
-        "two\n",
-        4,
-    )?;
-    let state = dir.0.join("state").into_os_string();
-    let dirs = XdgDirs::resolve(|name| (name == "XDG_STATE_HOME").then(|| state.clone()));
-    let initial_dirs = dirs.clone();
-    let mut accepted_app = AppBuilder::at(&root)
-        .unopened()
-        .options(move |mut options| {
-            options.dirs = initial_dirs;
-            options.store = Some(store);
-            options
-        })
-        .build()?;
-    accepted_app.select_commit_parent(&CommitId::parse(&focused)?, None);
-    accepted_app.settle_background();
-    drop(accepted_app);
-
-    let workspace = Workspace::discover(&root)?;
-    let mut options = Options::for_test(root.clone());
-    options.dirs = dirs;
-    options.store = Some(Store::open(&store_path)?);
-    let mut app = App::new(workspace, 100, 30, options);
-    assert!(app.accepted_presentation().is_none());
-    assert!(app.comparison.pending());
-    assert!(app.normal_thread(app.thread(&focused_id).context("focused")?));
-    assert!(!app.normal_thread(app.thread(&unrelated_id).context("unrelated")?));
-    assert!(!app.normal_thread(app.thread(&linked_id).context("linked")?));
-    assert!(
-        app.normal_thread(app.thread(&legacy_id).context("legacy")?),
-        "only Unknown legacy associations retain Reach fallback"
-    );
-
-    app.comparison
-        .record_error("synthetic unavailable presentation".to_owned());
-    assert!(app.accepted_presentation().is_none());
-    assert!(app.normal_thread(app.thread(&focused_id).context("failed focused")?));
-    assert!(!app.normal_thread(app.thread(&unrelated_id).context("failed unrelated")?));
-    assert!(!app.normal_thread(app.thread(&linked_id).context("failed linked")?));
-    Ok(())
-}
-
-#[test]
-fn old_comparison_preferences_are_rejected_without_rewrite() -> anyhow::Result<()> {
+fn format_two_comparison_preferences_are_rejected_without_rewrite() -> anyhow::Result<()> {
     let dir = repository("comparison-old-preference")?;
     let root = dir.0.join("ws");
     git::commit_and_stage(&root, &[("a.md", "one\n")])?;
@@ -2971,7 +2496,7 @@ fn old_comparison_preferences_are_rejected_without_rewrite() -> anyhow::Result<(
             .build()?,
     );
     let preference = dirs.comparison_dir(&root).join("comparison.json");
-    let old = br#"{"base":"HEAD","target":"WorkingTree","whitespace":false}"#;
+    let old = br#"{"version":2,"source":{"intent":"follow-head"},"target":"working-tree","source_alias":{"kind":"head"},"whitespace":false,"focus":null}"#;
     fs::write(&preference, old)?;
     let mut app = AppBuilder::at(&root)
         .unopened()

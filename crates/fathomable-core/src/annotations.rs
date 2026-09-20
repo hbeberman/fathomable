@@ -48,7 +48,7 @@ use sha2::{Digest, Sha256};
 
 /// The format version written in every event line; [`Store::open`]
 /// refuses a file of another (ADR 0062).
-pub(crate) const FORMAT_VERSION: u32 = 7;
+pub(crate) const FORMAT_VERSION: u32 = 8;
 
 /// Maximum size of a persisted idempotency key, in bytes.
 pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
@@ -413,243 +413,38 @@ pub enum OriginSide {
     Unspecified,
 }
 
-/// One endpoint's stable identity for review membership.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum ReviewEndpoint {
-    /// An immutable Git commit.
-    Commit {
-        /// Full commit object ID.
-        id: String,
-    },
-    /// The working tree owned by one checkout.
-    WorkingTree {
-        /// Checkout owning the mutable files.
-        checkout: CheckoutIdentity,
-    },
-    /// The staged index owned by one checkout.
-    Index {
-        /// Checkout owning the staged index.
-        checkout: CheckoutIdentity,
-    },
-    /// One exact saved review point.
-    ReviewPoint {
-        /// Stable review-point identifier.
-        id: String,
-    },
-    /// The empty tree used before a root commit.
-    EmptyTree,
-    /// No exact endpoint was available.
-    Unknown,
-}
-
-impl ReviewEndpoint {
-    /// Construct a commit endpoint.
-    #[must_use]
-    pub fn commit(id: impl Into<String>) -> Self {
-        Self::Commit { id: id.into() }
-    }
-
-    /// Construct a working-tree endpoint.
-    #[must_use]
-    pub fn working_tree(checkout: CheckoutIdentity) -> Self {
-        Self::WorkingTree { checkout }
-    }
-
-    /// Construct an index endpoint.
-    #[must_use]
-    pub fn index(checkout: CheckoutIdentity) -> Self {
-        Self::Index { checkout }
-    }
-
-    /// Construct a review-point endpoint.
-    #[must_use]
-    pub fn review_point(id: impl Into<String>) -> Self {
-        Self::ReviewPoint { id: id.into() }
-    }
-
-    fn from_origin(version: &OriginVersion, checkout: Option<&CheckoutIdentity>) -> Self {
-        match version {
-            OriginVersion::Commit { id } => Self::commit(id),
-            OriginVersion::WorkingTree { .. } => {
-                checkout.cloned().map_or(Self::Unknown, Self::working_tree)
-            }
-            OriginVersion::Index { .. } => checkout.cloned().map_or(Self::Unknown, Self::index),
-            OriginVersion::ReviewPoint { id, .. } => Self::review_point(id),
-            OriginVersion::EmptyTree => Self::EmptyTree,
-            OriginVersion::Unknown => Self::Unknown,
-        }
-    }
-
-    fn is_valid(&self) -> bool {
-        match self {
-            Self::Commit { id } | Self::ReviewPoint { id } => !id.is_empty(),
-            Self::WorkingTree { checkout } | Self::Index { checkout } => checkout.is_valid(),
-            Self::EmptyTree | Self::Unknown => true,
-        }
-    }
-
-    fn belongs_to_checkout(&self, expected: &CheckoutIdentity) -> bool {
-        match self {
-            Self::WorkingTree { checkout } | Self::Index { checkout } => checkout == expected,
-            Self::Commit { .. } | Self::ReviewPoint { .. } | Self::EmptyTree | Self::Unknown => {
-                true
-            }
-        }
-    }
-
-    fn is_mutable(&self) -> bool {
-        matches!(self, Self::WorkingTree { .. } | Self::Index { .. })
-    }
-}
-
-/// Stable membership identity for a deliberately started review.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum ReviewScope {
-    /// Review of one commit, independent of the route used to display it.
-    Commit {
-        /// Commit being reviewed.
-        target: String,
-    },
-    /// Review of one explicitly selected immutable endpoint pair.
-    Comparison {
-        /// Explicit comparison source.
-        source: ReviewEndpoint,
-        /// Explicit comparison target.
-        target: ReviewEndpoint,
-    },
-    /// One explicitly bounded mutable review task in a checkout.
-    Mutable {
-        /// Checkout owning this review task.
-        checkout: CheckoutIdentity,
-        /// Explicit task boundary.
-        id: String,
-        /// Stable source endpoint kind.
-        source: ReviewEndpoint,
-        /// Stable target endpoint kind.
-        target: ReviewEndpoint,
-    },
-}
-
-impl ReviewScope {
-    /// Construct a commit-review scope.
-    #[must_use]
-    pub fn commit(target: impl Into<String>) -> Self {
-        Self::Commit {
-            target: target.into(),
-        }
-    }
-
-    /// Construct an immutable comparison-review scope.
-    #[must_use]
-    pub fn comparison(source: ReviewEndpoint, target: ReviewEndpoint) -> Self {
-        Self::Comparison { source, target }
-    }
-
-    /// Construct an explicitly bounded mutable review scope.
-    #[must_use]
-    pub fn mutable(
-        checkout: CheckoutIdentity,
-        id: impl Into<String>,
-        source: ReviewEndpoint,
-        target: ReviewEndpoint,
-    ) -> Self {
-        Self::Mutable {
-            checkout,
-            id: id.into(),
-            source,
-            target,
-        }
-    }
-
-    /// Whether this scope is well-formed persisted state.
-    #[must_use]
-    pub fn is_valid(&self) -> bool {
-        match self {
-            Self::Commit { target } => !target.is_empty(),
-            Self::Comparison { source, target } => {
-                source.is_valid()
-                    && target.is_valid()
-                    && !source.is_mutable()
-                    && !target.is_mutable()
-            }
-            Self::Mutable {
-                checkout,
-                id,
-                source,
-                target,
-            } => {
-                checkout.is_valid()
-                    && !id.is_empty()
-                    && id.len() <= MAX_IDEMPOTENCY_KEY_BYTES
-                    && (source.is_mutable() || target.is_mutable())
-                    && source.belongs_to_checkout(checkout)
-                    && target.belongs_to_checkout(checkout)
-            }
-        }
-    }
-}
-
-/// Immutable review membership, separate from source and placement evidence.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum ReviewAssociation {
-    /// The thread belongs to a deliberately started review scope.
-    Review {
-        /// Deliberately selected review scope.
-        scope: ReviewScope,
-    },
-    /// The thread is an annotation on one exact typed content endpoint.
-    Content {
-        /// Exact typed content endpoint.
-        endpoint: ReviewEndpoint,
-    },
-}
-
-impl Default for ReviewAssociation {
-    fn default() -> Self {
-        Self::Content {
-            endpoint: ReviewEndpoint::Unknown,
-        }
-    }
-}
-
-impl ReviewAssociation {
-    /// Associate a thread with a review scope.
-    #[must_use]
-    pub fn review(scope: ReviewScope) -> Self {
-        Self::Review { scope }
-    }
-
-    /// Associate a thread only with exact typed content.
-    #[must_use]
-    pub fn content(endpoint: ReviewEndpoint) -> Self {
-        Self::Content { endpoint }
-    }
-
-    /// Deliberate review membership, when present.
-    #[must_use]
-    pub fn scope(&self) -> Option<&ReviewScope> {
-        match self {
-            Self::Review { scope } => Some(scope),
-            Self::Content { .. } => None,
-        }
-    }
-}
-
 /// The endpoint pair a person was viewing.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ComparisonFacts {
     base: OriginVersion,
     target: OriginVersion,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    checkout: Option<CheckoutIdentity>,
 }
 
 impl ComparisonFacts {
-    /// Construct a comparison of `base` to `target`.
+    /// Construct a wholly immutable comparison of `base` to `target`.
     #[must_use]
     pub fn new(base: OriginVersion, target: OriginVersion) -> Self {
-        Self { base, target }
+        Self {
+            base,
+            target,
+            checkout: None,
+        }
+    }
+
+    /// Construct a comparison containing checkout-local mutable content.
+    #[must_use]
+    pub fn at_checkout(
+        base: OriginVersion,
+        target: OriginVersion,
+        checkout: CheckoutIdentity,
+    ) -> Self {
+        Self {
+            base,
+            target,
+            checkout: Some(checkout),
+        }
     }
 
     /// The selected base endpoint.
@@ -662,6 +457,24 @@ impl ComparisonFacts {
     #[must_use]
     pub fn target(&self) -> &OriginVersion {
         &self.target
+    }
+
+    /// Checkout that supplied a mutable endpoint, when either endpoint is mutable.
+    #[must_use]
+    pub const fn checkout(&self) -> Option<&CheckoutIdentity> {
+        self.checkout.as_ref()
+    }
+
+    /// Whether either endpoint contains checkout-local mutable content.
+    #[must_use]
+    pub fn is_checkout_scoped(&self) -> bool {
+        matches!(
+            &self.base,
+            OriginVersion::WorkingTree { .. } | OriginVersion::Index { .. }
+        ) || matches!(
+            &self.target,
+            OriginVersion::WorkingTree { .. } | OriginVersion::Index { .. }
+        )
     }
 }
 
@@ -969,7 +782,6 @@ impl FullFileDigest {
 /// Optional provenance supplied at a thread's input boundary.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Provenance {
-    association: ReviewAssociation,
     #[serde(default)]
     version: OriginVersion,
     #[serde(default)]
@@ -992,9 +804,7 @@ impl Provenance {
     /// Construct provenance for a source version and comparison side.
     #[must_use]
     pub fn new(version: OriginVersion, side: OriginSide) -> Self {
-        let association = ReviewAssociation::content(ReviewEndpoint::from_origin(&version, None));
         Self {
-            association,
             version,
             side,
             ..Self::default()
@@ -1004,7 +814,6 @@ impl Provenance {
     /// Set the source version.
     #[must_use]
     pub fn with_version(mut self, version: OriginVersion) -> Self {
-        self.update_content_association(&version, None);
         self.version = version;
         self
     }
@@ -1023,20 +832,9 @@ impl Provenance {
         self
     }
 
-    /// Set the immutable review association.
-    #[must_use]
-    pub fn with_review_association(mut self, association: ReviewAssociation) -> Self {
-        self.association = association;
-        self
-    }
-
     /// Set working-tree facts.
     #[must_use]
     pub fn with_working_tree(mut self, facts: WorkingTreeFacts) -> Self {
-        if matches!(self.version, OriginVersion::WorkingTree { .. }) {
-            let endpoint = ReviewEndpoint::working_tree(facts.checkout.clone());
-            self.replace_content_association(endpoint);
-        }
         self.working_tree = Some(facts);
         self
     }
@@ -1044,10 +842,6 @@ impl Provenance {
     /// Set index facts.
     #[must_use]
     pub fn with_index(mut self, facts: IndexFacts) -> Self {
-        if matches!(self.version, OriginVersion::Index { .. }) {
-            let endpoint = ReviewEndpoint::index(facts.checkout.clone());
-            self.replace_content_association(endpoint);
-        }
         self.index = Some(facts);
         self
     }
@@ -1055,10 +849,6 @@ impl Provenance {
     /// Set review-point facts.
     #[must_use]
     pub fn with_review_point(mut self, facts: ReviewPointFacts) -> Self {
-        if matches!(self.version, OriginVersion::ReviewPoint { .. }) {
-            let endpoint = ReviewEndpoint::review_point(&facts.id);
-            self.replace_content_association(endpoint);
-        }
         self.review_point = Some(facts);
         self
     }
@@ -1081,12 +871,6 @@ impl Provenance {
     #[must_use]
     pub fn version(&self) -> &OriginVersion {
         &self.version
-    }
-
-    /// Immutable review membership or exact content association.
-    #[must_use]
-    pub fn review_association(&self) -> &ReviewAssociation {
-        &self.association
     }
 
     /// The comparison side supplying the lines.
@@ -1129,20 +913,6 @@ impl Provenance {
     #[must_use]
     pub fn evidence_truncated(&self) -> bool {
         self.evidence_truncated
-    }
-
-    fn update_content_association(
-        &mut self,
-        version: &OriginVersion,
-        checkout: Option<&CheckoutIdentity>,
-    ) {
-        self.replace_content_association(ReviewEndpoint::from_origin(version, checkout));
-    }
-
-    fn replace_content_association(&mut self, endpoint: ReviewEndpoint) {
-        if matches!(self.association, ReviewAssociation::Content { .. }) {
-            self.association = ReviewAssociation::content(endpoint);
-        }
     }
 }
 
@@ -1253,12 +1023,6 @@ impl Origin {
     #[must_use]
     pub fn comparison(&self) -> Option<&ComparisonFacts> {
         self.provenance.comparison()
-    }
-
-    /// Immutable review membership or exact content association.
-    #[must_use]
-    pub fn review_association(&self) -> &ReviewAssociation {
-        self.provenance.review_association()
     }
 
     /// Working-tree facts, when supplied.
@@ -2283,12 +2047,6 @@ impl Thread {
         self.origin.comparison()
     }
 
-    /// Immutable review membership or exact content association.
-    #[must_use]
-    pub fn review_association(&self) -> &ReviewAssociation {
-        self.origin.review_association()
-    }
-
     /// The immutable content identity, when available.
     #[must_use]
     pub fn content_identity(&self) -> Option<&ContentIdentity> {
@@ -2698,8 +2456,6 @@ impl Draft {
         self.commit = Some(id.clone());
         self.provenance.version = OriginVersion::commit(id);
         self.provenance.side = OriginSide::Unspecified;
-        self.provenance.association =
-            ReviewAssociation::review(ReviewScope::commit(commit.as_str()));
         self.provenance.comparison = None;
         self.provenance.working_tree = None;
         self.provenance.index = None;
@@ -2710,11 +2466,7 @@ impl Draft {
 
     /// Supply immutable origin facts captured at the input boundary.
     #[must_use]
-    pub fn with_provenance(mut self, mut provenance: Provenance) -> Self {
-        if let Some(StartSource::Commit(commit)) = &self.start_source {
-            provenance.association =
-                ReviewAssociation::review(ReviewScope::commit(commit.as_str()));
-        }
+    pub fn with_provenance(mut self, provenance: Provenance) -> Self {
         self.provenance = provenance;
         self
     }
@@ -2737,13 +2489,6 @@ impl Draft {
         self
     }
 
-    /// Supply immutable review membership independently of source evidence.
-    #[must_use]
-    pub fn in_review(mut self, scope: ReviewScope) -> Self {
-        self.provenance.association = ReviewAssociation::review(scope);
-        self
-    }
-
     /// The provenance facts supplied for this draft.
     #[must_use]
     pub fn provenance(&self) -> &Provenance {
@@ -2754,8 +2499,6 @@ impl Draft {
     #[must_use]
     pub fn with_working_tree_facts(mut self, facts: WorkingTreeFacts) -> Self {
         self.provenance.version = OriginVersion::working_tree(facts.observed_head.clone());
-        self.provenance
-            .replace_content_association(ReviewEndpoint::working_tree(facts.checkout.clone()));
         self.provenance.working_tree = Some(facts);
         self
     }
@@ -2764,8 +2507,6 @@ impl Draft {
     #[must_use]
     pub fn with_index_facts(mut self, facts: IndexFacts) -> Self {
         self.provenance.version = OriginVersion::index(facts.observed_head.clone());
-        self.provenance
-            .replace_content_association(ReviewEndpoint::index(facts.checkout.clone()));
         self.provenance.index = Some(facts);
         self
     }
@@ -2775,8 +2516,6 @@ impl Draft {
     pub fn at_review_point(mut self, facts: ReviewPointFacts, side: OriginSide) -> Self {
         self.provenance.version = OriginVersion::review_point(facts.id.clone(), facts.base.clone());
         self.provenance.side = side;
-        self.provenance
-            .replace_content_association(ReviewEndpoint::review_point(&facts.id));
         self.provenance.review_point = Some(facts);
         self
     }
@@ -5472,8 +5211,6 @@ fn validate_start_source(draft: &Draft) -> Result<(), StoreError> {
     let agrees = draft.commit.as_deref() == Some(selected.as_str())
         && draft.provenance.version.commit_id() == Some(selected.as_str())
         && draft.provenance.side == OriginSide::Unspecified
-        && draft.provenance.association
-            == ReviewAssociation::review(ReviewScope::commit(selected.as_str()))
         && draft.provenance.comparison.is_none()
         && draft.provenance.working_tree.is_none()
         && draft.provenance.index.is_none()
@@ -5504,8 +5241,6 @@ fn ensure_selected_origin(
     };
     if thread.origin_version().commit_id() == Some(selected.as_str())
         && thread.origin_side() == OriginSide::Unspecified
-        && thread.review_association()
-            == &ReviewAssociation::review(ReviewScope::commit(selected.as_str()))
     {
         Ok(())
     } else {
@@ -5633,32 +5368,21 @@ fn validate_provenance(provenance: &Provenance) -> Result<(), StoreError> {
         }
         OriginVersion::Commit { .. } | OriginVersion::EmptyTree | OriginVersion::Unknown => true,
     };
-    let association_valid = match &provenance.association {
-        ReviewAssociation::Review { scope } => scope.is_valid(),
-        ReviewAssociation::Content { endpoint } => {
-            let checkout = match &provenance.version {
-                OriginVersion::WorkingTree { .. } => provenance
-                    .working_tree
-                    .as_ref()
-                    .map(WorkingTreeFacts::checkout),
-                OriginVersion::Index { .. } => provenance.index.as_ref().map(IndexFacts::checkout),
-                OriginVersion::ReviewPoint { .. } => provenance
-                    .review_point
-                    .as_ref()
-                    .map(ReviewPointFacts::checkout),
-                OriginVersion::Commit { .. }
-                | OriginVersion::EmptyTree
-                | OriginVersion::Unknown => None,
-            };
-            endpoint.is_valid()
-                && endpoint == &ReviewEndpoint::from_origin(&provenance.version, checkout)
+    let comparison_valid = provenance.comparison.as_ref().is_none_or(|comparison| {
+        match (
+            comparison.is_checkout_scoped(),
+            comparison.checkout.as_ref(),
+        ) {
+            (true, Some(checkout)) => checkout.is_valid(),
+            (false, None) => true,
+            (true, None) | (false, Some(_)) => false,
         }
-    };
-    if valid && association_valid {
+    });
+    if valid && comparison_valid {
         Ok(())
     } else {
         Err(StoreError::message(
-            "origin provenance or review association is invalid; mutable origins require matching checkout identity and full SHA-256 content provenance",
+            "origin provenance is invalid; mutable origins require matching checkout identity and full SHA-256 content provenance, and comparisons require a checkout exactly when an endpoint is WorkingTree or Index",
         ))
     }
 }

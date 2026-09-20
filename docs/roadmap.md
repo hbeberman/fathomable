@@ -501,11 +501,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     results echo the canonical commit ID, pagination stays pinned, and
     `thread_reply`, viewer state, and the three-tool surface remain unchanged
     ([0092](decisions/0092-per-call-commit-sources.md)).
-85. **Explicit review membership, retained focus, and durable landing.**
-    Immutable review association is separate from origin, accepted
-    presentation, and placement. Checkout-local focus survives endpoint and
-    HEAD changes, while mutable review tasks have explicit boundaries. Exact
-    landing remains additive evidence; explicit history and unselected MCP
-    reads remain repository-wide, while selected MCP reads remain
+85. **Provenance-scoped viewer membership and durable landing.** Typed origin
+    provenance and the accepted Source/Target presentation determine normal
+    membership without mutable focus state or ancestry inference. Exact
+    landing remains additive evidence only; explicit history and unselected
+    MCP reads remain repository-wide, while selected MCP reads remain
     immutable-origin-only
     ([0093](decisions/0093-version-scoped-viewer-membership.md)).

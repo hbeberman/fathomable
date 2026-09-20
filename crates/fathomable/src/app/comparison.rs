@@ -9,9 +9,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use fathomable_core::annotations::{ReviewEndpoint, ReviewScope};
 use fathomable_core::config::DiffMode;
 use fathomable_core::diff::{Compare, Comparison, PathChangeKind, PathState};
 use fathomable_core::review_points::{ReviewPoint, ReviewPointStore};
@@ -27,7 +25,7 @@ use super::background::Worker;
 use super::diff::{DiffBody, Text};
 
 const PREFERENCE_FILE: &str = "comparison.json";
-const PREFERENCE_VERSION: u32 = 2;
+const PREFERENCE_VERSION: u32 = 3;
 const COMMIT_PICKER_LIMIT: usize = 500;
 
 #[derive(Debug)]
@@ -35,7 +33,6 @@ struct Request {
     root: PathBuf,
     base: ComparisonEndpoint,
     target: ComparisonEndpoint,
-    prospective_focus: Option<ReviewScope>,
     review_points: Option<PathBuf>,
     limits: fathomable_core::config::LimitsConfig,
     compare: Compare,
@@ -46,7 +43,6 @@ struct Request {
 struct Computed {
     comparison: Comparison,
     counts: HashMap<PathBuf, (usize, usize)>,
-    prospective_focus: Option<ReviewScope>,
     head: HeadObservation,
     index: Option<IndexManifest>,
 }
@@ -248,7 +244,6 @@ fn compute(
     Ok(Computed {
         comparison,
         counts,
-        prospective_focus: request.prospective_focus,
         head: request.head,
         index,
     })
@@ -335,7 +330,6 @@ pub(crate) struct State {
     source_intent: SourceIntent,
     base_alias: Option<EndpointAlias>,
     target_alias: Option<EndpointAlias>,
-    review_focus: Option<ReviewScope>,
     compare: Compare,
     preference: PathBuf,
     persisted: bool,
@@ -370,7 +364,6 @@ struct Preference {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     target_alias: Option<EndpointAlias>,
     whitespace: bool,
-    focus: Option<ReviewScope>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -382,10 +375,6 @@ enum PreferenceSource {
 
 impl State {
     /// Create the default selection, preferring a persisted checkout choice.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "construction and strict clean-boundary preference loading stay together"
-    )]
     pub(crate) fn load(
         dirs: &fathomable_core::XdgDirs,
         workspace: &Workspace,
@@ -406,7 +395,6 @@ impl State {
             source_intent: default_intent,
             base_alias: default_alias,
             target_alias: None,
-            review_focus: None,
             compare,
             preference,
             persisted: false,
@@ -455,22 +443,13 @@ impl State {
                             .map(|base| (base.clone(), SourceIntent::Pinned(base))),
                     };
                     let target = parse_endpoint(&saved.target);
-                    let focus_valid = saved.focus.as_ref().is_none_or(|focus| {
-                        focus.is_valid()
-                            && review_scope_checkout(focus)
-                                .is_none_or(|checkout| checkout == &workspace.identity())
-                    });
-                    let focus = saved.focus;
-                    if let (Some((base, intent)), Some(target)) = (source, target)
-                        && focus_valid
-                    {
+                    if let (Some((base, intent)), Some(target)) = (source, target) {
                         state.persisted = true;
                         state.base = base;
                         state.source_intent = intent;
                         state.target = target;
                         state.base_alias = saved.source_alias;
                         state.target_alias = saved.target_alias;
-                        state.review_focus = focus;
                         state.compare.whitespace = if saved.whitespace {
                             fathomable_core::diff::Whitespace::Ignore
                         } else {
@@ -618,7 +597,7 @@ impl State {
         workspace: &mut Workspace,
         review_points: Option<&ReviewPointStore>,
     ) {
-        self.refresh_inner(workspace, review_points, None);
+        self.refresh_inner(workspace, review_points);
     }
 
     /// Refresh mutable endpoints and count the test-observed attempt.
@@ -629,14 +608,13 @@ impl State {
         review_points: Option<&ReviewPointStore>,
     ) {
         self.note_refresh();
-        self.refresh_inner(workspace, review_points, None);
+        self.refresh_inner(workspace, review_points);
     }
 
     fn refresh_inner(
         &mut self,
         workspace: &mut Workspace,
         review_points: Option<&ReviewPointStore>,
-        prospective_focus: Option<ReviewScope>,
     ) {
         if self.defer_refresh_for_annotation() {
             return;
@@ -648,7 +626,6 @@ impl State {
             root: workspace.root().to_path_buf(),
             base: self.base.clone(),
             target: self.target.clone(),
-            prospective_focus,
             review_points: review_points.map(|store| store.dir().to_path_buf()),
             limits: workspace.limits().clone(),
             compare: self.compare,
@@ -756,10 +733,6 @@ impl State {
                 self.installed_index = result.index.map(|manifest| (generation, manifest));
                 self.current = Some(result.comparison);
                 self.counts = result.counts;
-                if let Some(focus) = result.prospective_focus {
-                    self.review_focus = Some(focus);
-                    self.persist();
-                }
                 self.error = None;
                 true
             }
@@ -777,24 +750,6 @@ impl State {
 
     pub(super) const fn has_preference(&self) -> bool {
         self.persisted
-    }
-
-    /// The checkout-local review retained independently of displayed endpoints.
-    pub(crate) const fn review_focus(&self) -> Option<&ReviewScope> {
-        self.review_focus.as_ref()
-    }
-
-    /// Retain one explicitly selected review across presentation changes.
-    pub(crate) fn set_review_focus(&mut self, focus: ReviewScope) {
-        debug_assert!(focus.is_valid(), "review focus must be valid");
-        self.review_focus = Some(focus);
-        self.persist();
-    }
-
-    /// End the retained review without changing displayed endpoints.
-    pub(crate) fn clear_review_focus(&mut self) {
-        self.review_focus = None;
-        self.persist();
     }
 
     pub(crate) fn set_base_aliased(
@@ -829,17 +784,12 @@ impl State {
     }
 
     /// Select both endpoints and refresh their comparison once.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the selected endpoint pair and its prospective focus form one request"
-    )]
     pub(crate) fn set_endpoints_aliased(
         &mut self,
         base: ComparisonEndpoint,
         base_alias: Option<EndpointAlias>,
         target: ComparisonEndpoint,
         target_alias: Option<EndpointAlias>,
-        prospective_focus: Option<ReviewScope>,
         workspace: &mut Workspace,
         review_points: Option<&ReviewPointStore>,
     ) -> bool {
@@ -854,7 +804,7 @@ impl State {
         self.target_alias = target_alias;
         self.persisted = false;
         self.note_refresh();
-        self.refresh_inner(workspace, review_points, prospective_focus);
+        self.refresh_inner(workspace, review_points);
         self.persisted || self.persist_result()
     }
 
@@ -905,7 +855,6 @@ impl State {
                 self.compare.whitespace,
                 fathomable_core::diff::Whitespace::Ignore
             ),
-            focus: self.review_focus.clone(),
         };
         let Ok(bytes) = serde_json::to_vec_pretty(&preference) else {
             return false;
@@ -1190,51 +1139,6 @@ fn endpoint_string(endpoint: &ComparisonEndpoint) -> String {
     }
 }
 
-pub(crate) fn review_endpoint(
-    endpoint: &ComparisonEndpoint,
-    workspace: &Workspace,
-) -> ReviewEndpoint {
-    match endpoint {
-        ComparisonEndpoint::Commit(id) => ReviewEndpoint::commit(id.as_str()),
-        ComparisonEndpoint::WorkingTree => ReviewEndpoint::working_tree(workspace.identity()),
-        ComparisonEndpoint::Index => ReviewEndpoint::index(workspace.identity()),
-        ComparisonEndpoint::ReviewPoint(id) => ReviewEndpoint::review_point(id),
-        ComparisonEndpoint::EmptyTree => ReviewEndpoint::EmptyTree,
-    }
-}
-
-fn review_endpoint_is_mutable(endpoint: &ReviewEndpoint) -> bool {
-    matches!(
-        endpoint,
-        ReviewEndpoint::WorkingTree { .. } | ReviewEndpoint::Index { .. }
-    )
-}
-
-fn review_endpoint_label(endpoint: &ReviewEndpoint) -> String {
-    match endpoint {
-        ReviewEndpoint::Commit { id } => id.chars().take(7).collect(),
-        ReviewEndpoint::WorkingTree { .. } => "WorkingTree".to_owned(),
-        ReviewEndpoint::Index { .. } => "Index".to_owned(),
-        ReviewEndpoint::ReviewPoint { id } => {
-            format!("Point {}", id.chars().take(8).collect::<String>())
-        }
-        ReviewEndpoint::EmptyTree => "EmptyTree".to_owned(),
-        ReviewEndpoint::Unknown => "Unknown".to_owned(),
-    }
-}
-
-fn mutable_scope_id() -> String {
-    let elapsed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    format!(
-        "{}-{}-{}",
-        elapsed.as_secs(),
-        elapsed.subsec_nanos(),
-        std::process::id()
-    )
-}
-
 fn parse_endpoint(value: &str) -> Option<ComparisonEndpoint> {
     match value {
         "empty-tree" => Some(ComparisonEndpoint::EmptyTree),
@@ -1244,13 +1148,6 @@ fn parse_endpoint(value: &str) -> Option<ComparisonEndpoint> {
             value.strip_prefix("review-point:")?.to_owned(),
         )),
         value => CommitId::parse(value).ok().map(ComparisonEndpoint::Commit),
-    }
-}
-
-fn review_scope_checkout(scope: &ReviewScope) -> Option<&CheckoutIdentity> {
-    match scope {
-        ReviewScope::Mutable { checkout, .. } => Some(checkout),
-        ReviewScope::Commit { .. } | ReviewScope::Comparison { .. } => None,
     }
 }
 
@@ -1454,10 +1351,6 @@ impl App {
         if self.head_transition_pending() {
             badge.push_str(" · transition decision");
         }
-        if let Some(focus) = self.review_focus_label() {
-            badge.push_str(" · focus ");
-            badge.push_str(&focus);
-        }
         if self.tree_issue.is_some()
             || self
                 .tree
@@ -1480,70 +1373,6 @@ impl App {
     /// Save the selected comparison preference after a state change.
     pub(crate) fn persist_comparison(&mut self) {
         self.comparison.persist();
-    }
-
-    /// A compact label for the explicitly retained review.
-    pub(crate) fn review_focus_label(&self) -> Option<String> {
-        self.comparison.review_focus().map(|focus| match focus {
-            ReviewScope::Commit { target } => {
-                format!("review {}", target.chars().take(7).collect::<String>())
-            }
-            ReviewScope::Comparison { source, target } => {
-                format!(
-                    "{} → {}",
-                    review_endpoint_label(source),
-                    review_endpoint_label(target)
-                )
-            }
-            ReviewScope::Mutable { id, .. } => {
-                format!("mutable {}", id.rsplit('-').next().unwrap_or(id))
-            }
-        })
-    }
-
-    /// Start a retained review for the selected comparison.
-    pub(crate) fn start_review_focus(&mut self) {
-        if self.diff_mode == DiffMode::Off {
-            self.notice("Diff Off annotations are content-only; enable a diff to start a review");
-            return;
-        }
-        if self.annotation_draft_blocks("starting a review") {
-            return;
-        }
-        if self.comparison.pending() || self.comparison.current().is_none() {
-            self.notice("comparison is not ready");
-            return;
-        }
-        let source = review_endpoint(self.comparison.base(), &self.workspace);
-        let target = review_endpoint(self.comparison.target(), &self.workspace);
-        let focus = if review_endpoint_is_mutable(&source) || review_endpoint_is_mutable(&target) {
-            ReviewScope::mutable(
-                self.workspace.identity(),
-                mutable_scope_id(),
-                source,
-                target,
-            )
-        } else {
-            ReviewScope::comparison(source, target)
-        };
-        self.comparison.set_review_focus(focus);
-        self.refresh_all_marks();
-        self.notice("review focus started");
-    }
-
-    /// Clear the retained review without changing the selected comparison.
-    pub(crate) fn clear_review_focus(&mut self) {
-        if self.comparison.review_focus().is_none() {
-            self.notice("no retained review focus");
-            return;
-        }
-        if self.annotation_draft_blocks("clearing review focus") {
-            return;
-        }
-        self.comparison.clear_review_focus();
-        self.refresh_all_marks();
-        self.reconcile_normal_thread_cursor();
-        self.notice("review focus cleared");
     }
 
     /// The top-level endpoint picker list.
@@ -1833,7 +1662,6 @@ impl App {
         base_alias: Option<EndpointAlias>,
         target: ComparisonEndpoint,
         target_alias: Option<EndpointAlias>,
-        prospective_focus: Option<ReviewScope>,
     ) -> (bool, bool) {
         self.head_transition_prompt = None;
         self.index_transition_prompt = None;
@@ -1844,7 +1672,6 @@ impl App {
             base_alias,
             target,
             target_alias,
-            prospective_focus,
             &mut self.workspace,
             self.review_points.as_ref(),
         );
@@ -1873,13 +1700,8 @@ impl App {
             return;
         }
         let (base, alias) = head_endpoint(&self.workspace);
-        let _ = self.select_comparison_endpoints(
-            base,
-            alias,
-            ComparisonEndpoint::WorkingTree,
-            None,
-            None,
-        );
+        let _ =
+            self.select_comparison_endpoints(base, alias, ComparisonEndpoint::WorkingTree, None);
     }
 
     #[cfg(test)]
@@ -1992,13 +1814,11 @@ impl App {
         let base_alias =
             matches!(target_alias, Some(EndpointAlias::Head)).then_some(EndpointAlias::HeadParent);
         let target_id = commit.id();
-        let focus = ReviewScope::commit(target_id.as_str());
         let (available, persisted) = self.select_comparison_endpoints(
             parent,
             base_alias,
             ComparisonEndpoint::Commit(target_id.clone()),
             target_alias,
-            Some(focus),
         );
         if available && persisted {
             self.notice(format!("loading review {}", target_id.short()));
@@ -2026,7 +1846,6 @@ impl App {
             ComparisonEndpoint::ReviewPoint(id),
             None,
             ComparisonEndpoint::WorkingTree,
-            None,
             None,
         )
     }

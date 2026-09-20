@@ -1305,8 +1305,7 @@ fn a_persistence_error_keeps_the_draft_intact() -> anyhow::Result<()> {
 }
 
 #[test]
-fn retained_detached_review_supports_conversation_actions_without_placement() -> anyhow::Result<()>
-{
+fn detached_commit_thread_supports_conversation_actions_without_placement() -> anyhow::Result<()> {
     let dir = TempDir::new("detached-review-conversation")?;
     git::init(&dir.0)?;
     git::commit_and_stage(&dir.0, &[("base.md", "base\n")])?;
@@ -1321,7 +1320,7 @@ fn retained_detached_review_supports_conversation_actions_without_placement() ->
     let id = store.annotate(
         Draft::new(
             Author::agent("reviewer"),
-            Path::new("gone.md"),
+            Path::new("absent.md"),
             LineRange::new(1, 1),
             "detached finding",
         )
@@ -1338,14 +1337,10 @@ fn retained_detached_review_supports_conversation_actions_without_placement() ->
         .build()?;
     app.select_commit_parent(&CommitId::parse(&reviewed)?, None);
     app.settle_background();
-    app.select_head_working_tree();
-    app.settle_background();
 
     app.open_review();
     app.set_thread_cursor(id.clone());
     app.thread_reply();
-    assert!(app.review_list().is_open());
-    assert_eq!(app.current_path(), Path::new(""));
     assert!(matches!(
         app.draft().map(super::Compose::target),
         Some(ComposeTarget::Reply(thread)) if thread == &id
@@ -1370,7 +1365,7 @@ fn retained_detached_review_supports_conversation_actions_without_placement() ->
     app.set_compose_text("edited reply");
     app.compose_submit();
     let thread = app.thread(&id).context("thread after edit")?;
-    assert_eq!(thread.path(), Path::new("gone.md"));
+    assert_eq!(thread.path(), Path::new("absent.md"));
     assert_eq!(thread.range(), Some(LineRange::new(1, 1)));
     assert_eq!(thread.replies()[0].body(), "edited reply");
     app.thread_toggle_resolved();
@@ -1386,7 +1381,7 @@ fn retained_detached_review_supports_conversation_actions_without_placement() ->
 
     app.start_new_comment();
     assert!(app.draft().is_none());
-    assert_eq!(app.message(), Some("open a file to annotate it"));
+    assert_eq!(app.message(), Some("no lines here to annotate"));
 
     app.select_diff_mode(fathomable_core::config::DiffMode::Off);
     app.settle_background();

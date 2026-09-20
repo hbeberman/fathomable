@@ -102,12 +102,16 @@ fn three_resolved_threads(
     let mut ids = Vec::new();
     for (offset, comment) in ["A", "B", "C"].into_iter().enumerate() {
         let id = store.annotate(
-            Draft::new(
-                Author::User,
-                Path::new("README.md"),
-                LineRange::new(offset + 1, offset + 1),
-                comment,
-            ),
+            testing::at_working_tree(
+                &testing::root(dir),
+                Draft::new(
+                    Author::User,
+                    Path::new("README.md"),
+                    LineRange::new(offset + 1, offset + 1),
+                    comment,
+                ),
+                testing::README,
+            )?,
             testing::README,
             u64::try_from(offset + 1)?,
         )?;
@@ -1990,12 +1994,16 @@ fn externally_written_start_is_observed() -> anyhow::Result<()> {
     let before = app.view().cursor_source_line();
     let author = Author::agent("reviewer");
     let id = Store::open(testing::store_path(&dir))?.annotate(
-        Draft::new(
-            author.clone(),
-            Path::new("README.md"),
-            LineRange::new(2, 3),
-            "look here",
-        ),
+        testing::at_working_tree(
+            &testing::root(&dir),
+            Draft::new(
+                author.clone(),
+                Path::new("README.md"),
+                LineRange::new(2, 3),
+                "look here",
+            ),
+            testing::README,
+        )?,
         testing::README,
         1,
     )?;
@@ -2232,12 +2240,16 @@ fn startup_seeds_historical_agent_activity_without_toasting() -> anyhow::Result<
     let dir = testing::workspace("activity-startup", testing::README)?;
     let mut store = Store::open(testing::store_path(&dir))?;
     let id = store.annotate(
-        Draft::new(
-            Author::agent("reviewer"),
-            Path::new("README.md"),
-            LineRange::new(2, 3),
-            "finding",
-        ),
+        testing::at_working_tree(
+            &testing::root(&dir),
+            Draft::new(
+                Author::agent("reviewer"),
+                Path::new("README.md"),
+                LineRange::new(2, 3),
+                "finding",
+            ),
+            testing::README,
+        )?,
         testing::README,
         1,
     )?;
@@ -2258,12 +2270,16 @@ fn reloaded_agent_opening_toasts_once_with_author_and_place() -> anyhow::Result<
     let mut app = app(&dir)?;
     let mut writer = Store::open(testing::store_path(&dir))?;
     writer.annotate(
-        Draft::new(
-            Author::agent("reviewer"),
-            Path::new("README.md"),
-            LineRange::new(3, 4),
-            "finding",
-        ),
+        testing::at_working_tree(
+            &testing::root(&dir),
+            Draft::new(
+                Author::agent("reviewer"),
+                Path::new("README.md"),
+                LineRange::new(3, 4),
+                "finding",
+            ),
+            testing::README,
+        )?,
         testing::README,
         1,
     )?;
@@ -2284,12 +2300,16 @@ fn consecutive_agent_replies_on_one_thread_each_toast() -> anyhow::Result<()> {
     let dir = testing::workspace("activity-consecutive", testing::README)?;
     let mut store = Store::open(testing::store_path(&dir))?;
     let id = store.annotate(
-        Draft::new(
-            Author::User,
-            Path::new("README.md"),
-            LineRange::new(3, 3),
-            "question",
-        ),
+        testing::at_working_tree(
+            &testing::root(&dir),
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(3, 3),
+                "question",
+            ),
+            testing::README,
+        )?,
         testing::README,
         1,
     )?;
@@ -2328,12 +2348,16 @@ fn multiple_agent_activities_aggregate_into_one_toast() -> anyhow::Result<()> {
     let mut writer = Store::open(testing::store_path(&dir))?;
     for (line, name) in [(2, "alpha"), (4, "beta")] {
         writer.annotate(
-            Draft::new(
-                Author::agent(name),
-                Path::new("README.md"),
-                LineRange::new(line, line),
-                "finding",
-            ),
+            testing::at_working_tree(
+                &testing::root(&dir),
+                Draft::new(
+                    Author::agent(name),
+                    Path::new("README.md"),
+                    LineRange::new(line, line),
+                    "finding",
+                ),
+                testing::README,
+            )?,
             testing::README,
             line as u64,
         )?;
@@ -2370,12 +2394,16 @@ fn agent_activity_imported_during_user_write_is_not_missed() -> anyhow::Result<(
     let dir = testing::workspace("activity-user-write-import", testing::README)?;
     let mut store = Store::open(testing::store_path(&dir))?;
     let id = store.annotate(
-        Draft::new(
-            Author::User,
-            Path::new("README.md"),
-            LineRange::new(3, 3),
-            "question",
-        ),
+        testing::at_working_tree(
+            &testing::root(&dir),
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(3, 3),
+                "question",
+            ),
+            testing::README,
+        )?,
         testing::README,
         1,
     )?;
@@ -2469,24 +2497,32 @@ fn activity_store_replacement_and_cursor_regression_do_not_replay_history() -> a
     let path = testing::store_path(&dir);
     let mut initial = Store::open(&path)?;
     initial.annotate(
-        Draft::new(
-            Author::agent("historical"),
-            Path::new("README.md"),
-            LineRange::new(2, 2),
-            "old",
-        ),
+        testing::at_working_tree(
+            &testing::root(&dir),
+            Draft::new(
+                Author::agent("historical"),
+                Path::new("README.md"),
+                LineRange::new(2, 2),
+                "old",
+            ),
+            testing::README,
+        )?,
         testing::README,
         1,
     )?;
     let mut app = app(&dir)?;
     assert!(app.toasts().is_empty(), "startup seeds at the end");
     Store::open(&path)?.annotate(
-        Draft::new(
-            Author::agent("reviewer"),
-            Path::new("README.md"),
-            LineRange::new(3, 3),
-            "new",
-        ),
+        testing::at_working_tree(
+            &testing::root(&dir),
+            Draft::new(
+                Author::agent("reviewer"),
+                Path::new("README.md"),
+                LineRange::new(3, 3),
+                "new",
+            ),
+            testing::README,
+        )?,
         testing::README,
         2,
     )?;
@@ -2495,12 +2531,16 @@ fn activity_store_replacement_and_cursor_regression_do_not_replay_history() -> a
 
     let replacement = dir.0.join("state/replacement.jsonl");
     Store::open(&replacement)?.annotate(
-        Draft::new(
-            Author::agent("replacement-history"),
-            Path::new("README.md"),
-            LineRange::new(4, 4),
-            "replacement",
-        ),
+        testing::at_working_tree(
+            &testing::root(&dir),
+            Draft::new(
+                Author::agent("replacement-history"),
+                Path::new("README.md"),
+                LineRange::new(4, 4),
+                "replacement",
+            ),
+            testing::README,
+        )?,
         testing::README,
         3,
     )?;

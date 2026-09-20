@@ -758,22 +758,30 @@ fn a_directory_highlight_shows_its_summary_instead_of_the_last_file() -> anyhow:
     let store_path = dir.0.join(".state/threads.jsonl");
     let mut store = Store::open(&store_path)?;
     store.annotate(
-        Draft::new(
-            Author::User,
-            Path::new("docs/guide.md"),
-            LineRange::new(1, 1),
-            "open",
-        ),
+        crate::app::testing::at_working_tree(
+            &dir.0,
+            Draft::new(
+                Author::User,
+                Path::new("docs/guide.md"),
+                LineRange::new(1, 1),
+                "open",
+            ),
+            "# Guide\n\nchanged\n",
+        )?,
         "# Guide\n\nchanged\n",
         1,
     )?;
     let answered = store.annotate(
-        Draft::new(
-            Author::User,
-            Path::new("docs/notes.md"),
-            LineRange::new(1, 1),
-            "question",
-        ),
+        crate::app::testing::at_working_tree(
+            &dir.0,
+            Draft::new(
+                Author::User,
+                Path::new("docs/notes.md"),
+                LineRange::new(1, 1),
+                "question",
+            ),
+            "# Notes\n",
+        )?,
         "# Notes\n",
         2,
     )?;
@@ -998,12 +1006,16 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
         2,
     )?;
     let unscoped = store.annotate(
-        Draft::new(
-            Author::User,
-            Path::new("README.md"),
-            LineRange::new(3, 3),
-            "unscoped",
-        ),
+        crate::app::testing::at_working_tree(
+            &dir.0,
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(3, 3),
+                "unscoped",
+            ),
+            text,
+        )?,
         text,
         3,
     )?;
@@ -1022,12 +1034,16 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
 
     // Another writer appends while this viewer runs.
     let late = store.annotate(
-        Draft::new(
-            Author::User,
-            Path::new("README.md"),
-            LineRange::new(3, 3),
-            "late",
-        ),
+        crate::app::testing::at_working_tree(
+            &dir.0,
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(3, 3),
+                "late",
+            ),
+            text,
+        )?,
         text,
         4,
     )?;
@@ -1926,7 +1942,7 @@ fn unavailable_thread_store_points_to_doctor() -> anyhow::Result<()> {
     assert_eq!(
         app.message(),
         Some(
-            "threads unavailable: incompatible storage versions (3 on disk, 7 expected); run :doctor"
+            "threads unavailable: incompatible storage versions (3 on disk, 8 expected); run :doctor"
         )
     );
     assert_eq!(app.message_tone(), NoticeTone::Error);

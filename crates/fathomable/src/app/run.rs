@@ -1178,12 +1178,16 @@ mod tests {
         let dir = testing::workspace("run-watch-install-race", testing::README)?;
         let mut app = testing::app(&dir)?;
         let id = Store::open(testing::store_path(&dir))?.annotate(
-            Draft::new(
-                Author::agent("reviewer"),
-                Path::new("README.md"),
-                LineRange::new(3, 3),
-                "arrived before watch installation",
-            ),
+            testing::at_working_tree(
+                &testing::root(&dir),
+                Draft::new(
+                    Author::agent("reviewer"),
+                    Path::new("README.md"),
+                    LineRange::new(3, 3),
+                    "arrived before watch installation",
+                ),
+                testing::README,
+            )?,
             testing::README,
             1,
         )?;

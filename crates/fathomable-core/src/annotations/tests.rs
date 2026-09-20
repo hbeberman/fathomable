@@ -152,11 +152,11 @@ fn a_store_of_another_format_version_is_refused() -> Result<(), StoreError> {
         1,
     )?;
     let current = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
-    let stale = current.replace(&format!(r#""v":{FORMAT_VERSION}"#), r#""v":5"#);
+    let stale = current.replace(&format!(r#""v":{FORMAT_VERSION}"#), r#""v":7"#);
     fs::write(&file.0, stale).map_err(|e| StoreError::io(&file.0, e))?;
     let store_error = Store::open(&file.0).err();
     let mismatch = store_error.as_ref().and_then(StoreError::format_mismatch);
-    assert_eq!(mismatch.as_ref().map(super::FormatMismatch::found), Some(5));
+    assert_eq!(mismatch.as_ref().map(super::FormatMismatch::found), Some(7));
     assert_eq!(
         mismatch.as_ref().map(super::FormatMismatch::expected),
         Some(FORMAT_VERSION)
@@ -165,7 +165,7 @@ fn a_store_of_another_format_version_is_refused() -> Result<(), StoreError> {
     assert_eq!(
         error,
         Some(format!(
-            "threads.jsonl line 1: format version 5, this build writes {FORMAT_VERSION}; delete {} to start over",
+            "threads.jsonl line 1: format version 7, this build writes {FORMAT_VERSION}; delete {} to start over",
             file.0.display()
         ))
     );
@@ -243,6 +243,50 @@ fn mutable_origins_require_valid_full_provenance_on_create_and_load()
     Store::open(&file.0)
         .err()
         .ok_or("malformed full digest was accepted")?;
+    Ok(())
+}
+
+#[test]
+fn mutable_comparisons_require_a_valid_checkout_qualifier() -> Result<(), Box<dyn std::error::Error>>
+{
+    let file = TempFile::new("comparison-checkout")?;
+    let checkout = CheckoutIdentity::from_canonical_paths(
+        file.0.clone(),
+        file.0.parent().unwrap_or(Path::new("/")).to_path_buf(),
+    );
+    Store::open(&file.0)?.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "deletion",
+        )
+        .at_source(OriginVersion::commit("base"), OriginSide::Base)
+        .in_comparison(ComparisonFacts::at_checkout(
+            OriginVersion::commit("base"),
+            OriginVersion::working_tree(Some("base".to_owned())),
+            checkout,
+        )),
+        TEXT,
+        1,
+    )?;
+    let original = fs::read_to_string(&file.0)?;
+    let mut event: serde_json::Value = serde_json::from_str(original.trim_end())?;
+    let removed = event["origin"]["provenance"]["comparison"]
+        .as_object_mut()
+        .ok_or("missing comparison facts")?
+        .remove("checkout");
+    assert!(removed.is_some(), "comparison checkout was not persisted");
+    fs::write(&file.0, format!("{event}\n"))?;
+
+    let error = Store::open(&file.0)
+        .err()
+        .ok_or("mutable comparison without checkout was accepted")?;
+    assert!(
+        error
+            .to_string()
+            .contains("comparisons require a checkout exactly when")
+    );
     Ok(())
 }
 
@@ -1201,11 +1245,10 @@ fn selected_commit_intent_remains_tagged_in_current_format() -> Result<(), Store
     let legacy = Draft::on_file(keyed_author("copilot:one"), Path::new("a.md"), "comment");
     let selected = legacy.clone().at_selected_commit(commit);
     assert_eq!(
-        selected.provenance().review_association(),
-        &super::ReviewAssociation::review(super::ReviewScope::commit(
-            "0123456789abcdef0123456789abcdef01234567"
-        ))
+        selected.provenance().version().commit_id(),
+        Some("0123456789abcdef0123456789abcdef01234567")
     );
+    assert_eq!(selected.provenance().side(), OriginSide::Unspecified);
 
     assert_eq!(
         start_intent(&legacy)?,
@@ -1215,7 +1258,7 @@ fn selected_commit_intent_remains_tagged_in_current_format() -> Result<(), Store
         start_intent(&selected)?,
         r#"{"operation":"start","path":"a.md","range":null,"body":"comment","source":{"kind":"commit","id":"0123456789abcdef0123456789abcdef01234567"}}"#
     );
-    assert_eq!(FORMAT_VERSION, 7);
+    assert_eq!(FORMAT_VERSION, 8);
     Ok(())
 }
 
@@ -2282,19 +2325,21 @@ fn user_writes_reject_a_thread_deleted_while_its_draft_was_open() -> Result<(), 
 fn origin_survives_relocation_move_resolution_and_reopen() -> Result<(), StoreError> {
     let file = TempFile::new("immutable-origin")?;
     let mut store = Store::open(&file.0)?;
+    let checkout = CheckoutIdentity::from_canonical_paths(
+        file.0.clone(),
+        file.0.parent().unwrap_or(Path::new("/")).to_path_buf(),
+    );
     let provenance = Provenance::new(OriginVersion::commit("base"), OriginSide::Base)
-        .with_comparison(ComparisonFacts::new(
+        .with_comparison(ComparisonFacts::at_checkout(
             OriginVersion::commit("base"),
             OriginVersion::working_tree(Some("base".to_owned())),
+            checkout.clone(),
         ))
         .with_working_tree(WorkingTreeFacts::new(
             Some("base".to_owned()),
             WorkingTreeState::Modified,
             None,
-            CheckoutIdentity::from_canonical_paths(
-                file.0.clone(),
-                file.0.parent().unwrap_or(Path::new("/")).to_path_buf(),
-            ),
+            checkout,
             FullFileDigest::from_bytes(TEXT.as_bytes()),
         ));
     let id = store.annotate(

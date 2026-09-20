@@ -614,7 +614,7 @@ impl App {
                 !file_only || path == current
             })
             .filter_map(|thread| {
-                let exact = self.thread_matches_presentation(thread) == Some(true);
+                let exact = self.thread_matches_presentation(thread);
                 let (placement, words) = self.placement_of(thread, exact);
                 let range = placement.range();
                 if view == ReviewView::Board && !resolved && !is_open(words.state()) {
@@ -709,8 +709,7 @@ impl App {
             .filter(|thread| self.normal_thread_without_draft(thread))
             .filter(|thread| self.thread_path(thread).starts_with(directory))
             .filter(|thread| {
-                self.thread_matches_presentation(thread).unwrap_or(false)
-                    || self.worktree_of(thread.id()).is_none()
+                self.thread_matches_presentation(thread) || self.worktree_of(thread.id()).is_none()
             })
         {
             match ThreadState::of(thread) {

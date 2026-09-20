@@ -488,22 +488,30 @@ mod tests {
         fs::write(root.join("docs/deep/guide.md"), "guide\n")?;
         let mut store = Store::open(testing::store_path(&dir))?;
         store.annotate(
-            Draft::new(
-                Author::agent("reviewer"),
-                Path::new("README.md"),
-                LineRange::new(1, 1),
-                "readme",
-            ),
+            testing::at_working_tree(
+                &root,
+                Draft::new(
+                    Author::agent("reviewer"),
+                    Path::new("README.md"),
+                    LineRange::new(1, 1),
+                    "readme",
+                ),
+                testing::README,
+            )?,
             testing::README,
             1,
         )?;
         store.annotate(
-            Draft::new(
-                Author::agent("reviewer"),
-                Path::new("docs/deep/guide.md"),
-                LineRange::new(1, 1),
-                "guide",
-            ),
+            testing::at_working_tree(
+                &root,
+                Draft::new(
+                    Author::agent("reviewer"),
+                    Path::new("docs/deep/guide.md"),
+                    LineRange::new(1, 1),
+                    "guide",
+                ),
+                "guide\n",
+            )?,
             "guide\n",
             1,
         )?;

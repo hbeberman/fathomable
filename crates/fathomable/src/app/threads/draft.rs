@@ -15,8 +15,8 @@
 
 use fathomable_core::annotations::{
     Author, ComparisonFacts, ContentIdentity, Draft, FullFileDigest, IndexFacts, IndexState,
-    LineRange, MessageTarget, OriginSide, OriginVersion, Provenance, ReviewAssociation,
-    ReviewPointFacts, ThreadId, UserSubmit, UserWriteOutcome, WorkingTreeFacts, WorkingTreeState,
+    LineRange, MessageTarget, OriginSide, OriginVersion, Provenance, ReviewPointFacts, ThreadId,
+    UserSubmit, UserWriteOutcome, WorkingTreeFacts, WorkingTreeState,
 };
 use fathomable_core::clock::now;
 use fathomable_core::content::Content;
@@ -766,7 +766,10 @@ impl App {
             )
         };
         let version = endpoint_version(self, endpoint);
-        let mut provenance = Provenance::new(version, side).with_comparison(comparison_facts(self));
+        let mut provenance = Provenance::new(version, side);
+        if self.diff_mode() != fathomable_core::config::DiffMode::Off {
+            provenance = provenance.with_comparison(comparison_facts(self));
+        }
         match endpoint {
             fathomable_core::workspace::ComparisonEndpoint::WorkingTree => {
                 let state = self.status.get(path).map_or_else(
@@ -827,13 +830,7 @@ impl App {
             fathomable_core::workspace::ComparisonEndpoint::Commit(_)
             | fathomable_core::workspace::ComparisonEndpoint::EmptyTree => {}
         }
-        if self.diff_mode() != fathomable_core::config::DiffMode::Off
-            && let Some(scope) = self.comparison.review_focus().cloned()
-        {
-            provenance.with_review_association(ReviewAssociation::review(scope))
-        } else {
-            provenance
-        }
+        provenance
     }
 
     fn displayed_source_side(&self) -> OriginSide {
@@ -860,10 +857,19 @@ impl App {
 }
 
 fn comparison_facts(app: &App) -> ComparisonFacts {
-    ComparisonFacts::new(
-        endpoint_version(app, app.comparison.base()),
-        endpoint_version(app, app.comparison.target()),
-    )
+    let base = endpoint_version(app, app.comparison.base());
+    let target = endpoint_version(app, app.comparison.target());
+    if matches!(
+        &base,
+        OriginVersion::WorkingTree { .. } | OriginVersion::Index { .. }
+    ) || matches!(
+        &target,
+        OriginVersion::WorkingTree { .. } | OriginVersion::Index { .. }
+    ) {
+        ComparisonFacts::at_checkout(base, target, app.workspace.identity())
+    } else {
+        ComparisonFacts::new(base, target)
+    }
 }
 
 fn endpoint_version(

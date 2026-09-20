@@ -505,12 +505,16 @@ fn alt_left_and_right_walk_the_positions_far_moves_left() -> anyhow::Result<()> 
 fn tab_review_fallback_supports_a_conversation_draft_and_jumplist() -> anyhow::Result<()> {
     let dir = testing::workspace("review-jumplist", testing::README)?;
     let thread = Store::open(testing::store_path(&dir))?.annotate(
-        Draft::new(
-            Author::agent("reviewer"),
-            Path::new("deleted.md"),
-            LineRange::new(1, 1),
-            "missing source",
-        ),
+        testing::at_working_tree(
+            &testing::root(&dir),
+            Draft::new(
+                Author::agent("reviewer"),
+                Path::new("deleted.md"),
+                LineRange::new(1, 1),
+                "missing source",
+            ),
+            "gone\n",
+        )?,
         "gone\n",
         1,
     )?;
@@ -544,12 +548,16 @@ fn same_file_info_fallback_opens_a_review_conversation_draft() -> anyhow::Result
     let dir = testing::workspace("same-file-info-reply", testing::README)?;
     fs::write(testing::root(&dir).join("binary.bin"), [0, 1, 2])?;
     let thread = Store::open(testing::store_path(&dir))?.annotate(
-        Draft::new(
-            Author::agent("reviewer"),
-            Path::new("binary.bin"),
-            LineRange::new(1, 1),
-            "binary source",
-        ),
+        testing::at_working_tree(
+            &testing::root(&dir),
+            Draft::new(
+                Author::agent("reviewer"),
+                Path::new("binary.bin"),
+                LineRange::new(1, 1),
+                "binary source",
+            ),
+            "source\n",
+        )?,
         "source\n",
         1,
     )?;

@@ -265,12 +265,16 @@ fn only_reviews_follows_thread_lifecycle_and_external_reload() -> anyhow::Result
     );
 
     let external = Store::open(testing::store_path(&dir))?.annotate(
-        Draft::new(
-            Author::agent("reviewer"),
-            Path::new("README.md"),
-            LineRange::new(3, 3),
-            "external finding",
-        ),
+        testing::at_working_tree(
+            &testing::root(&dir),
+            Draft::new(
+                Author::agent("reviewer"),
+                Path::new("README.md"),
+                LineRange::new(3, 3),
+                "external finding",
+            ),
+            testing::README,
+        )?,
         testing::README,
         10,
     )?;
@@ -327,12 +331,16 @@ fn assert_user_message_write_imports_current_head_review(
     press(&mut app, " Fo");
     assert_eq!(names(&app), ["README.md"]);
     Store::open(testing::store_path(&dir))?.annotate(
-        Draft::new(
-            Author::agent("reviewer"),
-            Path::new("b.md"),
-            LineRange::new(1, 1),
-            "new at HEAD",
-        ),
+        testing::at_working_tree(
+            &root,
+            Draft::new(
+                Author::agent("reviewer"),
+                Path::new("b.md"),
+                LineRange::new(1, 1),
+                "new at HEAD",
+            ),
+            "# B\n",
+        )?,
         "# B\n",
         2,
     )?;

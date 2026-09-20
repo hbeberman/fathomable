@@ -180,7 +180,11 @@ mod tests {
         let mut app = testing::app(&dir)?;
         let author = Author::agent("reviewer");
         let id = Store::open(testing::store_path(&dir))?.annotate(
-            Draft::on_file(author.clone(), Path::new("README.md"), "rename this"),
+            testing::at_working_tree(
+                &testing::root(&dir),
+                Draft::on_file(author.clone(), Path::new("README.md"), "rename this"),
+                testing::README,
+            )?,
             testing::README,
             1,
         )?;

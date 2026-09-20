@@ -96,4 +96,4 @@ supersede rather than edit history.
 - [0090 Direct workspace navigation](0090-direct-workspace-navigation.md)
 - [0091 Pane focus navigation](0091-pane-focus-navigation.md)
 - [0092 Per-call commit sources](0092-per-call-commit-sources.md)
-- [0093 Version-scoped viewer membership and durable landing](0093-version-scoped-viewer-membership.md)
+- [0093 Explicit review membership, retained focus, and durable landing](0093-version-scoped-viewer-membership.md)

@@ -166,6 +166,7 @@ the table below is a quick reference, not the full list.
 | `Space F Z` | fold or unfold all directories in File list |
 | `Space T s` `Space T x` | Thread-list scope / show resolved |
 | `Space T Z` | fold or unfold all file groups in Thread list |
+| `Space t s` `Space t x` | focus the current review / clear retained review focus |
 | `Space d n` `Space d u` `Space d o` | Normal / Unified / Off diff mode |
 | `Space d s` `Space d t` | pick the diff source / target |
 | `Space d d` | show uncommitted changes (current `HEAD` to working tree) |
@@ -272,8 +273,10 @@ commit**, and **show a specific commit…**. **show uncommitted changes**, or
 as Target; while a HEAD or Index transition choice is pending, it opens that
 choice instead. **show latest commit**, or `Space d l`, selects the immutable `HEAD~1`
 to `HEAD` pair. **show a specific commit…**, or `Space d c`, opens a
-commit-only picker and compares the chosen commit with its first parent; root
-commits are rejected explicitly. **save review point** and **manage review
+commit-only picker, compares the chosen commit with its first parent, and
+retains that commit as the active review. A root commit uses
+`EmptyTree -> commit`; merges use the first parent, and an unavailable parent
+fails. **save review point** and **manage review
 points…** follow a separator, and **ignore whitespace** follows another. The
 active Normal, Unified, or Off row carries the same `▌` marker as the top
 Diff menu. There is no comparison-control popup, **Start comparison at current
@@ -378,17 +381,40 @@ actions. On a thread row, `comment c` becomes `reply c`; where both fold
 actions apply, the footer uses `folding z/Z`.
 
 The stored board is shared across the repository's worktrees and survives
-commits and branch changes. Normal surfaces show only discussions belonging to
-the last successfully displayed Source/Target context: commit origins match
-the exact Target, with an additional active-Source route only for Base-side
-comments. Working-tree and index origins use legacy placement until exact
-per-file evidence durably lands them on a commit; landed origins follow that
-commit. Pending or failed comparisons retain the prior accepted context, and
-Diff Off has no Source route. The normal Thread list, counts, circles, paths,
-and traversal stay filtered even while an explicit history view is open.
+commits and branch changes. Thread membership is not inferred from mutable
+bytes or from a commit being the current `HEAD`. Each thread keeps immutable
+origin evidence plus either a typed review association or an exact typed
+content association. Working tree, index, commit, review point, and empty tree
+remain distinct identities.
 
-**Review** offers repository-wide **Recently resolved**, **Archived threads**,
-and **Clear board...**. Clearing archives the shared board after
+The **Review** menu's **Focus current comparison** (`Space t s`) starts and
+retains the selected review. Immutable endpoint pairs keep their exact pair;
+a comparison involving WorkingTree or Index gets a new checkout-qualified
+task identity that remains stable across edits, staging changes, and clean
+states. **Clear review focus** (`Space t x`) ends that task without changing
+Source, Target, or diff mode. The active focus appears in the status badge and
+survives endpoint changes, `HEAD` or branch movement, and restart. Each linked
+worktree has separate focus state.
+
+The commit-review routes `Space d l` and `Space d c` start and retain Review
+C automatically. This includes agent-created, contextless Commit(C) threads.
+You can then select `HEAD -> WorkingTree` or `HEAD -> Index` to make fixes
+without losing Review C from Threads or `Tab`/`Shift-Tab` traversal. Base-side
+and Target-side origins remain members of their associated review; observed
+comparison facts alone do not create membership. Generic Commit(C) threads do
+not appear merely because C is Source or the accepted mutable `HEAD`.
+
+Normal and Unified can project focused threads into current content when their
+anchors or context locate; detached threads remain in Threads and remain
+reply/resolution-actionable. Diff Off does not clear focus: focused threads
+remain in Threads, while inline marks are Target-only. Without focus, Diff Off
+matches exact typed Target identity and never treats WorkingTree or Index as
+`HEAD`. Landing adds an exact commit-content route but never rewrites origin or
+review association, and it does not turn Base-side evidence into Target
+content.
+
+**Review** also offers repository-wide **Recently resolved**, **Archived
+threads**, and **Clear board...**. Clearing archives the shared board after
 confirmation; the confirmation presents **clear** before **cancel**, accepts
 `Enter` or a click on **clear**, and cancels with `Esc`, a click on **cancel**,
 or a click outside. It does not delete history. Restore an archived entry
@@ -691,9 +717,9 @@ Product state lives under `$XDG_STATE_HOME/fathomable`
 
 | Relative path | Contents |
 | --- | --- |
-| `workspaces/<repository-hash>/threads.jsonl` | Discussion messages, origin excerpts, placement, and lifecycle history. |
+| `workspaces/<repository-hash>/threads.jsonl` | Discussion messages, immutable review associations and origin excerpts, placement, and lifecycle history. |
 | `workspaces/<repository-hash>/review-points/` | Explicitly saved manifests and content blobs. |
-| `workspaces/<checkout-hash>/comparison/comparison.json` | Last-used comparison preference for that checkout. |
+| `workspaces/<checkout-hash>/comparison/comparison.json` | Last-used endpoints, settings, and retained review focus for that checkout. |
 | `viewers/` | Viewer registrations. |
 | `log/` | Diagnostic logs and crash reports. |
 
@@ -728,7 +754,8 @@ External-editor drafts use `fathomable-comment-<pid>.md` in the system temporary
 and are removed after returning from the editor.
 
 The Git common directory identifies the repository, so linked worktrees
-share threads and review points but keep separate comparison preferences.
+share threads and review points but keep separate comparison preferences and
+retained review focus.
 Plain directories use their root identity. Running viewers do not control
 one another's comparison; the last successful preference write is restored
 on a later launch.
@@ -738,9 +765,9 @@ eligible changed content and rely on Git objects for unchanged committed
 files; they are not standalone backups. Outside Git, points capture all
 eligible files.
 
-Annotation format 6 and the intent-bearing comparison preference deliberately
-have no compatibility reader, migration, backfill, or inferred alias for their
-predecessors. Before manually deleting old `threads.jsonl` and
+Annotation format 7 and comparison preference format 2 deliberately have no
+compatibility reader, migration, backfill, or inferred review association for
+their predecessors. Before manually deleting old `threads.jsonl` and
 `comparison/comparison.json` state, stop every affected viewer and the agent
 host's MCP processes. Start only the new build after the reset. Fathomable
 refuses incompatible state and never deletes it during startup, build, or

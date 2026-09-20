@@ -620,6 +620,20 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
                 "Archive resolved threads",
             )),
             Row::Item(Item::action(app, Action::ClearBoard, "Clear board…")),
+            Row::Separator,
+            Row::Item(Item::action(
+                app,
+                Action::ReviewFocusStart,
+                "Focus current comparison",
+            )),
+            Row::Item(Item::action(
+                app,
+                Action::ReviewFocusClear,
+                app.review_focus_label().map_or_else(
+                    || "Clear review focus".to_owned(),
+                    |focus| format!("Clear focus: {focus}"),
+                ),
+            )),
             Row::Item(Item {
                 label: "Show resolved".to_owned(),
                 hint: "x".to_owned(),
@@ -792,12 +806,15 @@ fn action_available(app: &App, action: Action) -> bool {
                 thread.lifecycle() != fathomable_core::annotations::Lifecycle::Resolved
             }),
         Action::ComparisonSave => app.review_points.is_some(),
+        Action::ReviewFocusStart | Action::ComparisonWhitespace | Action::FilesChanged => {
+            app.diff_mode() != DiffMode::Off
+        }
+        Action::ReviewFocusClear => app.review_focus_label().is_some(),
         Action::ComparisonHeadParent | Action::ComparisonCommitParent => app.workspace.is_git(),
         Action::ComparisonManage => app
             .review_points
             .as_ref()
             .is_some_and(|store| !store.is_empty()),
-        Action::ComparisonWhitespace | Action::FilesChanged => app.diff_mode() != DiffMode::Off,
         Action::SourceView => app.source_view_available(),
         Action::ArchiveThread => app
             .thread_cursor()
@@ -1468,7 +1485,7 @@ mod tests {
         assert_eq!(rows(&app, Root::App).len(), 5);
         assert_eq!(rows(&app, Root::Layout).len(), 6);
         assert_eq!(rows(&app, Root::Go).len(), 13);
-        assert_eq!(rows(&app, Root::Review).len(), 16);
+        assert_eq!(rows(&app, Root::Review).len(), 19);
         let diff_rows = rows(&app, Root::Diff);
         assert_eq!(diff_rows.len(), 14);
         let diff_labels = diff_rows
@@ -1498,11 +1515,15 @@ mod tests {
             Some(("Threads", false))
         );
         assert_eq!(
-            review[5].item().map(|item| (&*item.label, item.checked)),
+            review[6].item().map(|item| item.label.as_str()),
+            Some("Focus current comparison")
+        );
+        assert_eq!(
+            review[8].item().map(|item| (&*item.label, item.checked)),
             Some(("Show resolved", false))
         );
         assert_eq!(
-            review[6].item().map(|item| (&*item.label, item.checked)),
+            review[9].item().map(|item| (&*item.label, item.checked)),
             Some(("Only current file", false))
         );
         assert_eq!(submenu_rows(&app, super::Submenu::Help).len(), 5);

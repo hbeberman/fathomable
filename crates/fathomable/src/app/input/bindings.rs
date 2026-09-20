@@ -295,6 +295,8 @@ actions! {
     DiffOff,
     ComparisonSave,
     ComparisonManage,
+    ReviewFocusStart,
+    ReviewFocusClear,
     ComparisonBase,
     ComparisonTarget,
     ComparisonHeadWorkingTree,
@@ -813,6 +815,20 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::ClearBoard,
         "Space menu",
         "threads: clear board",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('t'), c('s')]],
+        A::ReviewFocusStart,
+        "Space menu",
+        "threads: start review focus",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('t'), c('x')]],
+        A::ReviewFocusClear,
+        "Space menu",
+        "threads: clear review focus",
     ),
     bind(
         W::Any,
@@ -2053,7 +2069,7 @@ mod tests {
         assert_eq!(lookup(Where::View, &[c('['), c('f')]), Match::Miss);
         assert_eq!(
             keys(Where::View, &[c(' '), c('t')]),
-            ["R", "h", "a", "A", "c", "r", "e", "d", "f"]
+            ["R", "h", "a", "A", "s", "x", "c", "r", "e", "d", "f"]
         );
         assert_eq!(keys(Where::View, &[c(' '), c('T')]), ["s", "x", "Z"]);
         assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "r"]);

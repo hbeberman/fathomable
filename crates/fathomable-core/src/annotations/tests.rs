@@ -1200,6 +1200,12 @@ fn selected_commit_intent_remains_tagged_in_current_format() -> Result<(), Store
         .map_err(|error| StoreError::message(error.to_string()))?;
     let legacy = Draft::on_file(keyed_author("copilot:one"), Path::new("a.md"), "comment");
     let selected = legacy.clone().at_selected_commit(commit);
+    assert_eq!(
+        selected.provenance().review_association(),
+        &super::ReviewAssociation::review(super::ReviewScope::commit(
+            "0123456789abcdef0123456789abcdef01234567"
+        ))
+    );
 
     assert_eq!(
         start_intent(&legacy)?,
@@ -1209,7 +1215,7 @@ fn selected_commit_intent_remains_tagged_in_current_format() -> Result<(), Store
         start_intent(&selected)?,
         r#"{"operation":"start","path":"a.md","range":null,"body":"comment","source":{"kind":"commit","id":"0123456789abcdef0123456789abcdef01234567"}}"#
     );
-    assert_eq!(FORMAT_VERSION, 6);
+    assert_eq!(FORMAT_VERSION, 7);
     Ok(())
 }
 

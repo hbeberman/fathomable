@@ -364,6 +364,10 @@ impl App {
 
     /// The Space menu and the command line mean the same thing
     /// everywhere; the rest is looked up per surface.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the exhaustive action dispatch is intentionally centralized"
+    )]
     fn act_placed(&mut self, action: Action) -> Effect {
         let Some(place) = place(self) else {
             return Effect::None;
@@ -430,6 +434,8 @@ impl App {
             Action::DiffOff => self.select_diff_mode(DiffMode::Off),
             Action::ComparisonSave => self.request_review_point(),
             Action::ComparisonManage => self.request_review_point_manage(),
+            Action::ReviewFocusStart => self.start_review_focus(),
+            Action::ReviewFocusClear => self.clear_review_focus(),
             Action::ComparisonBase => self.pick_diff_side(false),
             Action::ComparisonTarget => self.pick_diff_side(true),
             Action::ComparisonHeadWorkingTree => self.select_head_working_tree(),

@@ -1,9 +1,12 @@
 // @okf-doc: /decisions/0093-version-scoped-viewer-membership.md
 //! Version-scoped membership for normal viewer surfaces.
 
-use fathomable_core::annotations::{OriginSide, OriginVersion, Thread, ThreadId};
+use fathomable_core::annotations::{
+    OriginSide, OriginVersion, ReviewAssociation, ReviewEndpoint, ReviewScope, Thread, ThreadId,
+};
 use fathomable_core::workspace::{ComparisonEndpoint, HeadObservation};
 
+use crate::app::comparison::review_endpoint;
 use crate::app::{App, Popup};
 
 /// Exact context whose content is installed on normal viewer surfaces.
@@ -53,44 +56,103 @@ impl App {
     /// Normal membership without the narrow active/parked draft exception.
     pub(crate) fn normal_thread_without_draft(&self, thread: &Thread) -> bool {
         !thread.is_archived()
-            && self
-                .thread_matches_presentation(thread)
-                .unwrap_or_else(|| self.reach.includes(thread))
+            && (self.thread_matches_focus(thread)
+                || self
+                    .thread_matches_presentation(thread)
+                    .unwrap_or_else(|| self.reach.includes(thread)))
     }
 
-    /// A definitive endpoint match, or `None` for legacy mutable origins.
+    /// Whether a thread belongs to the exact native scope of this presentation.
     pub(crate) fn thread_matches_presentation(&self, thread: &Thread) -> Option<bool> {
-        let presentation = self.accepted_presentation();
-        let source = presentation
-            .as_ref()
-            .and_then(|presentation| presentation.source.as_ref());
-        let target = presentation
-            .as_ref()
-            .and_then(|presentation| presentation.target.as_ref());
-        let accepted_head = presentation
-            .as_ref()
-            .and_then(|presentation| presentation.head.state().commit())
-            .map(fathomable_core::workspace::CommitId::as_str);
-        let source_commit = endpoint_commit(source, accepted_head);
-        let target_commit = endpoint_commit(target, accepted_head);
-        let commit_visible =
-            |commit: &str| source_commit == Some(commit) || target_commit == Some(commit);
-
-        match thread.origin_version() {
-            OriginVersion::Commit { id } => Some(
-                target_commit == Some(id.as_str())
-                    || (thread.origin_side() == OriginSide::Base
-                        && source_commit == Some(id.as_str())),
-            ),
-            OriginVersion::ReviewPoint { id, .. } => Some(
-                matches!(source, Some(ComparisonEndpoint::ReviewPoint(point)) if point == id)
-                    || thread.landed_commit().is_some_and(commit_visible),
-            ),
-            OriginVersion::WorkingTree { .. } | OriginVersion::Index { .. } => {
-                thread.landed_commit().map(commit_visible)
+        if matches!(
+            thread.review_association(),
+            ReviewAssociation::Content {
+                endpoint: ReviewEndpoint::Unknown
             }
-            OriginVersion::EmptyTree | OriginVersion::Unknown => None,
+        ) {
+            return None;
         }
+        let Some(presentation) = self.accepted_presentation() else {
+            return Some(false);
+        };
+        let source = presentation
+            .source
+            .as_ref()
+            .map(|endpoint| review_endpoint(endpoint, &self.workspace));
+        let target = presentation
+            .target
+            .as_ref()
+            .map(|endpoint| review_endpoint(endpoint, &self.workspace));
+        match thread.review_association() {
+            ReviewAssociation::Review {
+                scope: ReviewScope::Commit { .. } | ReviewScope::Mutable { .. },
+            } => Some(false),
+            ReviewAssociation::Review {
+                scope:
+                    ReviewScope::Comparison {
+                        source: expected_source,
+                        target: expected_target,
+                    },
+            } => Some(
+                source.as_ref() == Some(expected_source)
+                    && target.as_ref() == Some(expected_target),
+            ),
+            ReviewAssociation::Content { endpoint } => {
+                let displayed = if thread.origin_side() == OriginSide::Base {
+                    source.as_ref()
+                } else {
+                    target.as_ref()
+                };
+                let landed_off = thread.origin_side() != OriginSide::Base
+                    && self.diff_mode() == fathomable_core::config::DiffMode::Off
+                    && thread.landed_commit().is_some_and(|landed| {
+                        matches!(
+                            target.as_ref(),
+                            Some(ReviewEndpoint::Commit { id }) if id == landed
+                        )
+                    });
+                Some(displayed == Some(endpoint) || landed_off)
+            }
+        }
+    }
+
+    /// Whether a retained review explicitly owns this thread.
+    pub(crate) fn thread_matches_focus(&self, thread: &Thread) -> bool {
+        let Some(focus) = self.comparison.review_focus() else {
+            return false;
+        };
+        thread.review_association().scope() == Some(focus)
+            || matches!(
+                focus,
+                ReviewScope::Commit { target }
+                    if thread.landed_commit() == Some(target.as_str())
+                        && thread_origin_checkout(thread)
+                            == Some(&self.workspace.identity())
+            )
+    }
+
+    /// Whether the thread may project into the currently rendered content.
+    pub(crate) fn inline_thread(&self, thread: &Thread) -> bool {
+        if thread.is_archived() {
+            return false;
+        }
+        if self.diff_mode() != fathomable_core::config::DiffMode::Off {
+            return self.normal_thread(thread);
+        }
+        let Some(presentation) = self.accepted_presentation() else {
+            return false;
+        };
+        let Some(target) = presentation.target.as_ref() else {
+            return false;
+        };
+        if thread.origin_side() == OriginSide::Base {
+            return false;
+        }
+        let target = review_endpoint(target, &self.workspace);
+        thread_origin_endpoint(thread).is_some_and(|origin| origin == target)
+            || thread.landed_commit().is_some_and(
+                |landed| matches!(&target, ReviewEndpoint::Commit { id } if id == landed),
+            )
     }
 
     fn draft_parent_visible(&self, id: &ThreadId) -> bool {
@@ -120,13 +182,40 @@ impl App {
     }
 }
 
-fn endpoint_commit<'a>(
-    endpoint: Option<&'a ComparisonEndpoint>,
-    accepted_head: Option<&'a str>,
-) -> Option<&'a str> {
-    match endpoint {
-        Some(ComparisonEndpoint::Commit(id)) => Some(id.as_str()),
-        Some(ComparisonEndpoint::WorkingTree | ComparisonEndpoint::Index) => accepted_head,
-        _ => None,
+fn thread_origin_endpoint(thread: &Thread) -> Option<ReviewEndpoint> {
+    match thread.origin_version() {
+        OriginVersion::Commit { id } => Some(ReviewEndpoint::commit(id)),
+        OriginVersion::WorkingTree { .. } => thread
+            .provenance()
+            .working_tree()
+            .map(|facts| ReviewEndpoint::working_tree(facts.checkout().clone())),
+        OriginVersion::Index { .. } => thread
+            .provenance()
+            .index()
+            .map(|facts| ReviewEndpoint::index(facts.checkout().clone())),
+        OriginVersion::ReviewPoint { id, .. } => Some(ReviewEndpoint::review_point(id)),
+        OriginVersion::EmptyTree => Some(ReviewEndpoint::EmptyTree),
+        OriginVersion::Unknown => Some(ReviewEndpoint::Unknown),
     }
+}
+
+fn thread_origin_checkout(
+    thread: &Thread,
+) -> Option<&fathomable_core::workspace::CheckoutIdentity> {
+    thread
+        .provenance()
+        .working_tree()
+        .map(fathomable_core::annotations::WorkingTreeFacts::checkout)
+        .or_else(|| {
+            thread
+                .provenance()
+                .index()
+                .map(fathomable_core::annotations::IndexFacts::checkout)
+        })
+        .or_else(|| {
+            thread
+                .provenance()
+                .review_point()
+                .map(fathomable_core::annotations::ReviewPointFacts::checkout)
+        })
 }

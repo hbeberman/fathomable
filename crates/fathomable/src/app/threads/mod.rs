@@ -406,7 +406,7 @@ impl App {
         let visible: HashSet<ThreadId> = store
             .threads()
             .iter()
-            .filter(|thread| self.normal_thread(thread))
+            .filter(|thread| self.inline_thread(thread))
             .map(|thread| thread.id().clone())
             .collect();
         let Some(doc) = self.docs.get_mut(index) else {

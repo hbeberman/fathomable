@@ -956,9 +956,8 @@ fn unchanged_loaded_content_emits_no_file_edit_toast() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Board membership is ancestry-independent; every thread is projected into
-/// the displayed content or represented as detached. Another writer's append
-/// reaches the viewer through the store watch.
+/// Mutable browsing does not alias a commit origin to `HEAD`; content-only
+/// threads and another writer's append still reach the viewer.
 #[test]
 fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<()> {
     use fathomable_core::annotations::{Author, Draft, LineRange, Store};
@@ -973,7 +972,7 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
     let store_path = dir.0.join(".state/threads.jsonl");
     let text = "# Readme\n\nhello\n";
     let mut store = Store::open(&store_path)?;
-    let here = store.annotate(
+    let _here = store.annotate(
         Draft::new(
             Author::User,
             Path::new("README.md"),
@@ -1019,7 +1018,7 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
     app.settle_background();
     app.open(Path::new("README.md"));
     let ids: Vec<_> = app.marks().iter().map(|m| m.id().clone()).collect();
-    assert_eq!(ids, [here.clone(), unscoped.clone()]);
+    assert_eq!(ids.as_slice(), std::slice::from_ref(&unscoped));
 
     // Another writer appends while this viewer runs.
     let late = store.annotate(
@@ -1034,7 +1033,7 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
     )?;
     app.on_changes(vec![store_path.clone()]);
     let ids: Vec<_> = app.marks().iter().map(|m| m.id().clone()).collect();
-    assert_eq!(ids, [here, unscoped, late]);
+    assert_eq!(ids, [unscoped, late]);
     Ok(())
 }
 
@@ -1927,7 +1926,7 @@ fn unavailable_thread_store_points_to_doctor() -> anyhow::Result<()> {
     assert_eq!(
         app.message(),
         Some(
-            "threads unavailable: incompatible storage versions (3 on disk, 6 expected); run :doctor"
+            "threads unavailable: incompatible storage versions (3 on disk, 7 expected); run :doctor"
         )
     );
     assert_eq!(app.message_tone(), NoticeTone::Error);

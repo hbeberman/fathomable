@@ -1,21 +1,22 @@
 // @okf-doc: /decisions/0054-the-draft-is-written-in-the-thread.md
-//! The draft (ADR 0054): a comment, reply, or edit written in the rows
-//! of the text, in the thread it belongs to.
+//! The draft (ADR 0054): a comment, reply, or edit written in its
+//! conversation, inline or in the Review entry when source is absent.
 //!
 //! A reply is written at the bottom of its thread's expanded block, an
 //! edit in place of the message it edits, and a new comment in a draft
 //! block under its lines. The stubs (`stubs`) give the draft its rows;
 //! this module opens and closes it, edits its [`Buffer`] (ADR 0018),
 //! says where its rows and its cursor are, and keeps that cursor on
-//! screen. The review list opens the file to write and comes back when
-//! the draft closes. [`Popup::Compose`] is only the state that routes
-//! the keys here; nothing pops up. Leaving a file parks its draft in
-//! the document; showing that document again restores it.
+//! screen. The review list opens the file when it can and otherwise
+//! hosts a conversation-only draft. [`Popup::Compose`] is only the
+//! state that routes the keys here; nothing pops up. Leaving a file
+//! parks its draft in the document; showing that document again
+//! restores it.
 
 use fathomable_core::annotations::{
     Author, ComparisonFacts, ContentIdentity, Draft, FullFileDigest, IndexFacts, IndexState,
-    LineRange, MessageTarget, OriginSide, OriginVersion, Provenance, ReviewPointFacts, ThreadId,
-    UserSubmit, UserWriteOutcome, WorkingTreeFacts, WorkingTreeState,
+    LineRange, MessageTarget, OriginSide, OriginVersion, Provenance, ReviewAssociation,
+    ReviewPointFacts, ThreadId, UserSubmit, UserWriteOutcome, WorkingTreeFacts, WorkingTreeState,
 };
 use fathomable_core::clock::now;
 use fathomable_core::content::Content;
@@ -225,8 +226,8 @@ impl App {
     /// with the cursor on the message the draft answers or edits, and
     /// the draft's rows join the block (ADR 0054).
     pub(super) fn open_compose(&mut self, target: ComposeTarget) {
-        // A new thread or reply cannot be written against a missing file
-        // because there is no trustworthy current placement (ADR 0028).
+        // New annotations require displayed source. Existing conversations
+        // retain their immutable identity and lifecycle without a placement.
         let deleted = match &target {
             ComposeTarget::New(_) | ComposeTarget::OnFile => self
                 .current
@@ -236,16 +237,7 @@ impl App {
                         && doc.deleted != Some(crate::app::Deleted::ComparisonBase)
                 })
                 .map(|doc| doc.relative.clone()),
-            ComposeTarget::Reply(id) | ComposeTarget::Edit { thread: id, .. } => self
-                .thread(id)
-                .map(|thread| self.thread_path(thread).to_path_buf())
-                .filter(|path| {
-                    self.docs.iter().any(|doc| {
-                        doc.relative == *path
-                            && doc.deleted.is_some()
-                            && doc.deleted != Some(crate::app::Deleted::ComparisonBase)
-                    })
-                }),
+            ComposeTarget::Reply(_) | ComposeTarget::Edit { .. } => None,
         };
         if let Some(path) = deleted {
             self.notice(format!("{} was deleted; cannot comment", path.display()));
@@ -276,11 +268,10 @@ impl App {
         if let Some(id) = target.thread().cloned() {
             if !self.thread_source_is_displayable(&id) {
                 match self.land_on_thread(id.clone()) {
-                    Some(crate::app::threads::cursor::ThreadLanding::Source) => {}
-                    Some(crate::app::threads::cursor::ThreadLanding::Review) => {
-                        self.notice("source is unavailable; reply cannot be placed inline");
-                        return;
-                    }
+                    Some(
+                        crate::app::threads::cursor::ThreadLanding::Source
+                        | crate::app::threads::cursor::ThreadLanding::Review,
+                    ) => {}
                     None => return,
                 }
             }
@@ -527,7 +518,9 @@ impl App {
     /// 0067).
     fn draft_changed(&mut self) {
         self.place_stub_rows();
-        if let Some((row, _)) = self.draft_cursor_cell() {
+        if self.review_list.is_open() {
+            self.review_follow_draft();
+        } else if let Some((row, _)) = self.draft_cursor_cell() {
             self.view_mut().reveal_row(row, 0);
         }
     }
@@ -537,6 +530,12 @@ impl App {
     /// Columns the draft wraps at: the text width less the message
     /// indent, as a message body wraps.
     pub(crate) fn draft_width(&self) -> usize {
+        if self.review_list.is_open() {
+            return self
+                .column_width()
+                .saturating_sub(crate::app::threads::list::BODY_INDENT)
+                .max(1);
+        }
         self.view()
             .layout()
             .width()
@@ -563,6 +562,9 @@ impl App {
     /// The rendered row and the column from the gutter the draft's
     /// cursor is on, while the draft has rows.
     pub(crate) fn draft_cursor_cell(&self) -> Option<(usize, usize)> {
+        if self.review_list.is_open() {
+            return self.review_draft_cursor_cell();
+        }
         let compose = self.draft()?;
         let (block, author) = self.draft_slot()?;
         let cell = compose.buffer().cursor_cell(self.draft_width());
@@ -825,7 +827,13 @@ impl App {
             fathomable_core::workspace::ComparisonEndpoint::Commit(_)
             | fathomable_core::workspace::ComparisonEndpoint::EmptyTree => {}
         }
-        provenance
+        if self.diff_mode() != fathomable_core::config::DiffMode::Off
+            && let Some(scope) = self.comparison.review_focus().cloned()
+        {
+            provenance.with_review_association(ReviewAssociation::review(scope))
+        } else {
+            provenance
+        }
     }
 
     fn displayed_source_side(&self) -> OriginSide {

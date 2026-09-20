@@ -502,7 +502,7 @@ fn alt_left_and_right_walk_the_positions_far_moves_left() -> anyhow::Result<()> 
 }
 
 #[test]
-fn tab_review_fallback_round_trips_through_the_jumplist() -> anyhow::Result<()> {
+fn tab_review_fallback_supports_a_conversation_draft_and_jumplist() -> anyhow::Result<()> {
     let dir = testing::workspace("review-jumplist", testing::README)?;
     let thread = Store::open(testing::store_path(&dir))?.annotate(
         Draft::new(
@@ -524,15 +524,10 @@ fn tab_review_fallback_round_trips_through_the_jumplist() -> anyhow::Result<()> 
     assert!(review.contains("excerpt: gone"), "{review}");
 
     app.thread_reply();
-    assert!(
-        app.draft().is_none(),
-        "fallback must not open a hidden draft"
-    );
+    assert!(app.draft().is_some());
     assert!(app.review_list().is_open());
-    assert_eq!(
-        app.message(),
-        Some("source is unavailable; reply cannot be placed inline")
-    );
+    assert!(app.draft_cursor_cell().is_some());
+    app.compose_cancel();
 
     alt(&mut app, KeyCode::Left);
     assert!(!app.review_list().is_open());
@@ -545,7 +540,7 @@ fn tab_review_fallback_round_trips_through_the_jumplist() -> anyhow::Result<()> 
 }
 
 #[test]
-fn same_file_info_fallback_cannot_open_a_hidden_reply() -> anyhow::Result<()> {
+fn same_file_info_fallback_opens_a_review_conversation_draft() -> anyhow::Result<()> {
     let dir = testing::workspace("same-file-info-reply", testing::README)?;
     fs::write(testing::root(&dir).join("binary.bin"), [0, 1, 2])?;
     let thread = Store::open(testing::store_path(&dir))?.annotate(
@@ -567,12 +562,9 @@ fn same_file_info_fallback_cannot_open_a_hidden_reply() -> anyhow::Result<()> {
     assert_eq!(app.thread_cursor().thread(), Some(&thread));
     app.thread_reply();
 
-    assert!(app.draft().is_none());
+    assert!(app.draft().is_some());
     assert!(app.review_list().is_open());
-    assert_eq!(
-        app.message(),
-        Some("source is unavailable; reply cannot be placed inline")
-    );
+    assert!(app.draft_cursor_cell().is_some());
     Ok(())
 }
 

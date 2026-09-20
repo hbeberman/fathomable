@@ -1303,3 +1303,109 @@ fn a_persistence_error_keeps_the_draft_intact() -> anyhow::Result<()> {
     fs::rename(aside, path)?;
     Ok(())
 }
+
+#[test]
+fn retained_detached_review_supports_conversation_actions_without_placement() -> anyhow::Result<()>
+{
+    let dir = TempDir::new("detached-review-conversation")?;
+    git::init(&dir.0)?;
+    git::commit_and_stage(&dir.0, &[("base.md", "base\n")])?;
+    git::commit_and_stage(&dir.0, &[("gone.md", "reviewed\n")])?;
+    let reviewed = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("reviewed commit")?;
+    git::commit_and_stage(&dir.0, &[])?;
+
+    let store_path = dir.0.join("threads.jsonl");
+    let mut store = Store::open(&store_path)?;
+    let id = store.annotate(
+        Draft::new(
+            Author::agent("reviewer"),
+            Path::new("gone.md"),
+            LineRange::new(1, 1),
+            "detached finding",
+        )
+        .at_selected_commit(CommitId::parse(&reviewed)?),
+        "reviewed\n",
+        1,
+    )?;
+    let mut app = testing::AppBuilder::at(&dir.0)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.select_commit_parent(&CommitId::parse(&reviewed)?, None);
+    app.settle_background();
+    app.select_head_working_tree();
+    app.settle_background();
+
+    app.open_review();
+    app.set_thread_cursor(id.clone());
+    app.thread_reply();
+    assert!(app.review_list().is_open());
+    assert_eq!(app.current_path(), Path::new(""));
+    assert!(matches!(
+        app.draft().map(super::Compose::target),
+        Some(ComposeTarget::Reply(thread)) if thread == &id
+    ));
+    assert!(app.draft_cursor_cell().is_some());
+    press(&mut app, "first reply");
+    assert!(
+        screen(&app)?
+            .iter()
+            .any(|line| line.contains("first reply"))
+    );
+    app.compose_submit();
+
+    app.thread_edit_newest_own();
+    assert!(matches!(
+        app.draft().map(super::Compose::target),
+        Some(ComposeTarget::Edit {
+            thread,
+            message: MessageTarget::Reply(0)
+        }) if thread == &id
+    ));
+    app.set_compose_text("edited reply");
+    app.compose_submit();
+    let thread = app.thread(&id).context("thread after edit")?;
+    assert_eq!(thread.path(), Path::new("gone.md"));
+    assert_eq!(thread.range(), Some(LineRange::new(1, 1)));
+    assert_eq!(thread.replies()[0].body(), "edited reply");
+    app.thread_toggle_resolved();
+    assert_eq!(
+        app.thread(&id).map(Thread::lifecycle),
+        Some(Lifecycle::Resolved)
+    );
+    app.thread_toggle_resolved();
+    assert_eq!(
+        app.thread(&id).map(Thread::lifecycle),
+        Some(Lifecycle::Active)
+    );
+
+    app.start_new_comment();
+    assert!(app.draft().is_none());
+    assert_eq!(app.message(), Some("open a file to annotate it"));
+
+    app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+    app.settle_background();
+    app.open_review();
+    app.set_thread_cursor(id.clone());
+    app.thread_reply();
+    press(&mut app, "off reply");
+    app.compose_submit();
+    app.thread_edit_newest_own();
+    app.set_compose_text("edited off reply");
+    app.compose_submit();
+    assert_eq!(
+        app.thread(&id).context("thread in Diff Off")?.replies()[1].body(),
+        "edited off reply"
+    );
+    app.thread_toggle_resolved();
+    assert_eq!(
+        app.thread(&id).map(Thread::lifecycle),
+        Some(Lifecycle::Resolved)
+    );
+    Ok(())
+}

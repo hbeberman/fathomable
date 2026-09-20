@@ -108,6 +108,35 @@ pub fn commit_and_stage(root: &Path, files: &[(&str, &str)]) -> Result<(), GitEr
     stage(root, files)
 }
 
+/// Write a merge commit whose first parent is `HEAD`, then stage its tree.
+///
+/// # Errors
+///
+/// Returns [`GitError`] when the repository, parent, objects, or index cannot
+/// be read or written.
+pub fn merge_commit_and_stage(
+    root: &Path,
+    files: &[(&str, &str)],
+    second_parent: &str,
+) -> Result<String, GitError> {
+    let repo = git(gix::open_opts(root, open_options()))?;
+    let tree = write_tree(&repo, files)?;
+    let first_parent = git(repo.head_id())?.detach();
+    let second_parent = git(gix::ObjectId::from_hex(second_parent.as_bytes()))?;
+    let author = signature("3 +0000");
+    let commit = git(repo.commit_as(
+        author,
+        author,
+        "HEAD",
+        "merge",
+        tree,
+        [first_parent, second_parent],
+    ))?
+    .detach();
+    stage(root, files)?;
+    Ok(commit.to_hex().to_string())
+}
+
 /// Commit and stage one flat path with arbitrary regular-file bytes.
 ///
 /// # Errors

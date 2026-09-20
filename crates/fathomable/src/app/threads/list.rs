@@ -316,6 +316,17 @@ pub(crate) enum Row {
         dim: bool,
         selected: bool,
     },
+    /// The author row of a conversation-only reply or edit draft.
+    DraftAuthor {
+        entry: usize,
+        author: String,
+    },
+    /// One editable text row of a conversation-only reply or edit draft.
+    DraftBody {
+        entry: usize,
+        row: usize,
+        text: String,
+    },
     Blank,
 }
 
@@ -381,7 +392,9 @@ impl Rows {
             Row::Message { entry, message, .. } | Row::Body { entry, message, .. } => {
                 Some(Landing::Message(*entry, *message))
             }
-            Row::Evidence { .. } | Row::Blank => None,
+            Row::Evidence { .. } | Row::DraftAuthor { .. } | Row::DraftBody { .. } | Row::Blank => {
+                None
+            }
         }
     }
 
@@ -404,6 +417,24 @@ impl Rows {
         Some(start..start + len)
     }
 
+    fn draft_range(&self, entry: usize) -> Option<std::ops::Range<usize>> {
+        let start = self
+            .rows
+            .iter()
+            .position(|row| matches!(row, Row::DraftAuthor { entry: e, .. } if *e == entry))?;
+        let len = self.rows[start..]
+            .iter()
+            .take_while(|row| {
+                matches!(
+                    row,
+                    Row::DraftAuthor { entry: e, .. } | Row::DraftBody { entry: e, .. }
+                        if *e == entry
+                )
+            })
+            .count();
+        Some(start..start + len)
+    }
+
     /// The stops of `j` / `k` in row order (ADR 0076): every file row,
     /// and every thread with a header or a folded row, which is every
     /// thread of an unfolded file.
@@ -413,7 +444,12 @@ impl Rows {
             .filter_map(|row| match row {
                 Row::File { path, .. } => Some(Stop::File(path.clone())),
                 Row::Header { entry, .. } | Row::Stub { entry, .. } => Some(Stop::Entry(*entry)),
-                Row::Message { .. } | Row::Body { .. } | Row::Evidence { .. } | Row::Blank => None,
+                Row::Message { .. }
+                | Row::Body { .. }
+                | Row::Evidence { .. }
+                | Row::DraftAuthor { .. }
+                | Row::DraftBody { .. }
+                | Row::Blank => None,
             })
             .collect()
     }
@@ -670,10 +706,7 @@ impl App {
             .store
             .iter()
             .flat_map(Store::threads)
-            .filter(|thread| {
-                self.thread_matches_presentation(thread)
-                    .unwrap_or_else(|| self.reach.here(thread))
-            })
+            .filter(|thread| self.normal_thread_without_draft(thread))
             .filter(|thread| self.thread_path(thread).starts_with(directory))
             .filter(|thread| {
                 self.thread_matches_presentation(thread).unwrap_or(false)
@@ -699,10 +732,9 @@ impl App {
             .into_iter()
             .filter(|entry| {
                 entry.worktree.is_none()
-                    && self.thread(entry.id()).is_some_and(|thread| {
-                        self.thread_matches_presentation(thread)
-                            .unwrap_or_else(|| self.reach.here(thread))
-                    })
+                    && self
+                        .thread(entry.id())
+                        .is_some_and(|thread| self.normal_thread_without_draft(thread))
             })
         {
             match out.iter_mut().find(|(path, _)| path == entry.path()) {
@@ -909,6 +941,10 @@ impl App {
         });
         let selected_message =
             selected.then(|| self.thread_cursor().message().min(thread.replies().len()));
+        let compose = self
+            .draft()
+            .filter(|compose| compose.target().thread() == Some(&entry.id));
+        let edited_message = compose.and_then(|compose| compose.target().edited_message());
         let layouts = self
             .message_layout_cache
             .layout(thread, body_width, self.highlighter());
@@ -917,6 +953,12 @@ impl App {
         // agent, the comment's the same as a reply's.
         let mut message =
             |message: usize, author: &Author, created: u64, badge: Option<&'static str>| {
+                if edited_message == Some(message) {
+                    if let Some(compose) = compose {
+                        Self::push_review_draft(out, index, user, compose, body_width);
+                    }
+                    return;
+                }
                 let message_selected = selected_message == Some(message);
                 out.rows.push(Row::Message {
                     entry: index,
@@ -947,6 +989,10 @@ impl App {
             let badge = reply.proposes_resolution().then_some("proposes resolving");
             message(reply_index + 1, reply.author(), reply.created(), badge);
         }
+        if let Some(compose) = compose.filter(|compose| compose.target().edited_message().is_none())
+        {
+            Self::push_review_draft(out, index, user, compose, body_width);
+        }
         if let Some(evidence) = &entry.evidence {
             for line in Layout::render_message(evidence, body_width, self.highlighter()).lines() {
                 out.rows.push(Row::Evidence {
@@ -960,10 +1006,62 @@ impl App {
         out.rows.push(Row::Blank);
     }
 
+    pub(crate) fn review_draft_cursor_cell(&self) -> Option<(usize, usize)> {
+        let compose = self.draft()?;
+        let id = compose.target().thread()?;
+        let rows = self.review_rows(self.column_width());
+        let entry = rows.entries.iter().position(|entry| entry.id() == id)?;
+        let draft = rows.draft_range(entry)?;
+        let cell = compose.buffer().cursor_cell(self.draft_width());
+        Some((draft.start + 1 + cell.row, BODY_INDENT + cell.column))
+    }
+
+    pub(crate) fn review_follow_draft(&mut self) {
+        let Some((row, _)) = self.review_draft_cursor_cell() else {
+            return;
+        };
+        let visible = self.list_rows();
+        if row < self.review_list.scroll {
+            self.review_list.scroll = row;
+        } else if row >= self.review_list.scroll + visible {
+            self.review_list.scroll = row + 1 - visible;
+        }
+    }
+
     /// Rows the list has for its entries: the column minus its header
     /// and its key bar (ADR 0059).
     fn list_rows(&self) -> usize {
         self.text_rows().saturating_sub(2).max(1)
+    }
+
+    fn push_review_draft(
+        out: &mut Rows,
+        entry: usize,
+        user: &str,
+        compose: &super::Compose,
+        body_width: usize,
+    ) {
+        out.rows.push(Row::DraftAuthor {
+            entry,
+            author: user.to_owned(),
+        });
+        let buffer = compose.buffer();
+        let rows = buffer.rows(body_width);
+        if rows.is_empty() {
+            out.rows.push(Row::DraftBody {
+                entry,
+                row: 0,
+                text: String::new(),
+            });
+            return;
+        }
+        for (row, range) in rows.into_iter().enumerate() {
+            out.rows.push(Row::DraftBody {
+                entry,
+                row,
+                text: buffer.row_text(range).to_owned(),
+            });
+        }
     }
 
     /// The cursor's entry, or the first entry when the cursor's thread

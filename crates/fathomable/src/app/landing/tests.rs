@@ -2,8 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use fathomable_core::annotations::{
-    Author, ContentIdentity, Draft, FullFileDigest, Lifecycle, LineRange, Store, ThreadId,
-    WorkingTreeFacts, WorkingTreeState,
+    Author, ContentIdentity, Draft, FullFileDigest, Lifecycle, LineRange, ReviewEndpoint,
+    ReviewScope, Store, ThreadId, WorkingTreeFacts, WorkingTreeState,
 };
 use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Workspace};
 use fathomable_testing::{TempDir, git};
@@ -514,7 +514,7 @@ fn byte_bounded_reconciliation_resumes_after_an_older_mismatch() -> anyhow::Resu
 }
 
 #[test]
-fn landing_hidden_board_selection_cannot_receive_lifecycle_action() -> anyhow::Result<()> {
+fn landing_keeps_focused_board_selection_actionable() -> anyhow::Result<()> {
     let dir = TempDir::new("landing-hidden-board-cursor")?;
     let root = dir.0.join("ws");
     git::init(&root)?;
@@ -523,6 +523,12 @@ fn landing_hidden_board_selection_cannot_receive_lifecycle_action() -> anyhow::R
     let old = workspace
         .head_commit()
         .ok_or_else(|| anyhow::anyhow!("old HEAD"))?;
+    let scope = ReviewScope::mutable(
+        workspace.identity(),
+        "landing-focused",
+        ReviewEndpoint::EmptyTree,
+        ReviewEndpoint::working_tree(workspace.identity()),
+    );
     fs::write(root.join("a.md"), "landed\n")?;
     let mut store = Store::open(dir.0.join("threads.jsonl"))?;
     let id = store.annotate(
@@ -532,6 +538,7 @@ fn landing_hidden_board_selection_cannot_receive_lifecycle_action() -> anyhow::R
             LineRange::new(1, 1),
             "candidate",
         )
+        .in_review(scope.clone())
         .with_working_tree_facts(WorkingTreeFacts::new(
             Some(old.clone()),
             WorkingTreeState::Modified,
@@ -549,6 +556,7 @@ fn landing_hidden_board_selection_cannot_receive_lifecycle_action() -> anyhow::R
             options
         })
         .build()?;
+    app.comparison.set_review_focus(scope);
     app.set_comparison_base(ComparisonEndpoint::EmptyTree);
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&old)?));
     app.settle_background();
@@ -561,19 +569,19 @@ fn landing_hidden_board_selection_cannot_receive_lifecycle_action() -> anyhow::R
         .ok_or_else(|| anyhow::anyhow!("landed HEAD"))?;
     app.trigger_landing(Some(CommitId::parse(&landed)?));
     app.settle_background();
-    assert!(app.thread_cursor().thread().is_none());
+    assert_eq!(app.thread_cursor().thread(), Some(&id));
 
     app.thread_toggle_resolved();
     assert_eq!(
         app.thread(&id)
             .map(fathomable_core::annotations::Thread::lifecycle),
-        Some(Lifecycle::Active)
+        Some(Lifecycle::Resolved)
     );
     Ok(())
 }
 
 #[test]
-fn concurrently_folded_landing_clears_hidden_board_selection() -> anyhow::Result<()> {
+fn concurrently_folded_landing_keeps_focused_selection() -> anyhow::Result<()> {
     let dir = TempDir::new("landing-concurrent-fold")?;
     let root = dir.0.join("ws");
     let store_path = dir.0.join("threads.jsonl");
@@ -583,6 +591,12 @@ fn concurrently_folded_landing_clears_hidden_board_selection() -> anyhow::Result
     let old = workspace
         .head_commit()
         .ok_or_else(|| anyhow::anyhow!("old HEAD"))?;
+    let scope = ReviewScope::mutable(
+        workspace.identity(),
+        "landing-concurrent-focused",
+        ReviewEndpoint::EmptyTree,
+        ReviewEndpoint::working_tree(workspace.identity()),
+    );
     fs::write(root.join("a.md"), "new\n")?;
     let mut store = Store::open(&store_path)?;
     let id = store.annotate(
@@ -592,6 +606,7 @@ fn concurrently_folded_landing_clears_hidden_board_selection() -> anyhow::Result
             LineRange::new(1, 1),
             "candidate",
         )
+        .in_review(scope.clone())
         .with_working_tree_facts(WorkingTreeFacts::new(
             Some(old.clone()),
             WorkingTreeState::Modified,
@@ -610,6 +625,7 @@ fn concurrently_folded_landing_clears_hidden_board_selection() -> anyhow::Result
             options
         })
         .build()?;
+    app.comparison.set_review_focus(scope);
     app.set_comparison_base(ComparisonEndpoint::EmptyTree);
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&old)?));
     app.settle_background();
@@ -637,12 +653,12 @@ fn concurrently_folded_landing_clears_hidden_board_selection() -> anyhow::Result
         app.thread(&id).and_then(|thread| thread.landed_commit()),
         Some(landed.as_str())
     );
-    assert!(app.thread_cursor().thread().is_none());
+    assert_eq!(app.thread_cursor().thread(), Some(&id));
     app.thread_toggle_resolved();
     assert_eq!(
         app.thread(&id)
             .map(fathomable_core::annotations::Thread::lifecycle),
-        Some(Lifecycle::Active)
+        Some(Lifecycle::Resolved)
     );
     Ok(())
 }

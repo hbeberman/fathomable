@@ -568,7 +568,11 @@ mod tests {
 
         assert!(app.local_thread_paths.is_empty());
         assert_eq!(app.current_path(), Path::new("a.md"));
-        assert_eq!(app.marks().len(), 1);
+        assert_eq!(
+            app.marks().len(),
+            0,
+            "the mutable target does not alias a commit-origin thread"
+        );
         Ok(())
     }
 

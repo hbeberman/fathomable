@@ -354,7 +354,17 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         Some(Popup::Compose(_)) => {
             // The terminal cursor sits on the draft's cell in the text
             // (ADR 0054), when its row is on screen.
-            if let Some((row, col)) = app.draft_cursor_cell()
+            if app.review_list().is_open() {
+                if let Some((row, col)) = app.review_draft_cursor_cell()
+                    && let Some(screen_row) = row.checked_sub(app.review_list().scroll())
+                    && screen_row < usize::from(text_area.height).saturating_sub(2)
+                {
+                    frame.set_cursor_position((
+                        text_area.x + u16_of(col),
+                        text_area.y + 1 + u16_of(screen_row),
+                    ));
+                }
+            } else if let Some((row, col)) = app.draft_cursor_cell()
                 && let Some(screen_row) = row.checked_sub(view.scroll())
                 && screen_row < usize::from(text_area.height)
             {
@@ -4071,6 +4081,38 @@ fn list_row<'a>(context: &ListRender<'a>, row: &Row) -> Line<'a> {
                 )
             }));
             message_line(spans, width, theme.info)
+        }
+        Row::DraftAuthor { author, .. } => {
+            let surface = theme
+                .thread_draft
+                .bg
+                .map_or_else(Style::default, |bg| Style::default().bg(bg));
+            message_line(
+                vec![
+                    Span::raw(" ".repeat(NEST + 3)),
+                    Span::styled(
+                        author.clone(),
+                        name_style(theme, &fathomable_core::annotations::Author::User, false),
+                    ),
+                    Span::styled("  draft", theme.info),
+                ],
+                width,
+                surface,
+            )
+        }
+        Row::DraftBody { text, .. } => {
+            let surface = theme
+                .thread_draft
+                .bg
+                .map_or_else(Style::default, |bg| Style::default().bg(bg));
+            message_line(
+                vec![
+                    Span::raw(" ".repeat(BODY_INDENT)),
+                    Span::styled(text.clone(), theme.text),
+                ],
+                width,
+                surface,
+            )
         }
         Row::Blank => Line::from(""),
     }

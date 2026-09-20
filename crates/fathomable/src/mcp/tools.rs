@@ -13,7 +13,8 @@ use fathomable_core::annotations::{
     AgentReplyCommand, ArchiveRecord, Author, AutoResolve, ComparisonFacts, ContentIdentity,
     IndexFacts, Lifecycle, LineHashes, LineRange, MAX_MESSAGE_BYTES, Message, OriginSide,
     OriginVersion, Placement, PlacementContext, Reply, ResolutionOutcome, ResolutionRecord,
-    RestoreRecord, ReviewPointFacts, Status, Store, Thread, ThreadId, WorkingTreeFacts,
+    RestoreRecord, ReviewAssociation, ReviewEndpoint, ReviewPointFacts, ReviewScope, Status, Store,
+    Thread, ThreadId, WorkingTreeFacts,
 };
 use fathomable_core::clock::now;
 use fathomable_core::context::map_context;
@@ -322,6 +323,7 @@ pub(super) struct OriginOutput {
     truncated: bool,
     version: VersionOutput,
     side: SideOutput,
+    association: ReviewAssociationOutput,
     #[serde(skip_serializing_if = "Option::is_none")]
     comparison: Option<ComparisonOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -375,6 +377,45 @@ pub(super) enum SideOutput {
     Base,
     Target,
     Unspecified,
+}
+
+/// Immutable review membership, distinct from source evidence.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub(super) enum ReviewAssociationOutput {
+    Review { scope: ReviewScopeOutput },
+    Content { endpoint: ReviewEndpointOutput },
+}
+
+/// A deliberately started review scope.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub(super) enum ReviewScopeOutput {
+    Commit {
+        target: String,
+    },
+    Comparison {
+        source: ReviewEndpointOutput,
+        target: ReviewEndpointOutput,
+    },
+    Mutable {
+        checkout: PathBuf,
+        id: String,
+        source: ReviewEndpointOutput,
+        target: ReviewEndpointOutput,
+    },
+}
+
+/// One exact endpoint identity used for review membership.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub(super) enum ReviewEndpointOutput {
+    Commit { id: String },
+    WorkingTree { checkout: PathBuf },
+    Index { checkout: PathBuf },
+    ReviewPoint { id: String },
+    EmptyTree,
+    Unknown,
 }
 
 /// The human comparison whose lines were shown, when supplied.
@@ -557,6 +598,61 @@ impl From<OriginSide> for SideOutput {
             OriginSide::Base => Self::Base,
             OriginSide::Target => Self::Target,
             OriginSide::Unspecified => Self::Unspecified,
+        }
+    }
+}
+
+impl From<&ReviewAssociation> for ReviewAssociationOutput {
+    fn from(association: &ReviewAssociation) -> Self {
+        match association {
+            ReviewAssociation::Review { scope } => Self::Review {
+                scope: ReviewScopeOutput::from(scope),
+            },
+            ReviewAssociation::Content { endpoint } => Self::Content {
+                endpoint: ReviewEndpointOutput::from(endpoint),
+            },
+        }
+    }
+}
+
+impl From<&ReviewScope> for ReviewScopeOutput {
+    fn from(scope: &ReviewScope) -> Self {
+        match scope {
+            ReviewScope::Commit { target } => Self::Commit {
+                target: target.clone(),
+            },
+            ReviewScope::Comparison { source, target } => Self::Comparison {
+                source: ReviewEndpointOutput::from(source),
+                target: ReviewEndpointOutput::from(target),
+            },
+            ReviewScope::Mutable {
+                checkout,
+                id,
+                source,
+                target,
+            } => Self::Mutable {
+                checkout: checkout.checkout().to_path_buf(),
+                id: id.clone(),
+                source: ReviewEndpointOutput::from(source),
+                target: ReviewEndpointOutput::from(target),
+            },
+        }
+    }
+}
+
+impl From<&ReviewEndpoint> for ReviewEndpointOutput {
+    fn from(endpoint: &ReviewEndpoint) -> Self {
+        match endpoint {
+            ReviewEndpoint::Commit { id } => Self::Commit { id: id.clone() },
+            ReviewEndpoint::WorkingTree { checkout } => Self::WorkingTree {
+                checkout: checkout.checkout().to_path_buf(),
+            },
+            ReviewEndpoint::Index { checkout } => Self::Index {
+                checkout: checkout.checkout().to_path_buf(),
+            },
+            ReviewEndpoint::ReviewPoint { id } => Self::ReviewPoint { id: id.clone() },
+            ReviewEndpoint::EmptyTree => Self::EmptyTree,
+            ReviewEndpoint::Unknown => Self::Unknown,
         }
     }
 }
@@ -861,6 +957,7 @@ impl Shown {
                 truncated: thread.origin().evidence_truncated(),
                 version: VersionOutput::from(thread.origin_version()),
                 side: SideOutput::from(thread.origin_side()),
+                association: ReviewAssociationOutput::from(thread.review_association()),
                 comparison: thread.comparison().map(ComparisonOutput::from),
                 working_tree: thread
                     .provenance()

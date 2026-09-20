@@ -553,6 +553,10 @@ fn commit_source_captures_historical_text_and_echoes_full_id() -> Result<()> {
         json!({"kind": "commit", "id": commit})
     );
     assert_eq!(
+        selected["structuredContent"]["threads"][0]["origin"]["association"],
+        json!({"kind": "review", "scope": {"kind": "commit", "target": commit}})
+    );
+    assert_eq!(
         selected["structuredContent"]["threads"][1]["placement"],
         "detached"
     );
@@ -867,6 +871,7 @@ fn commit_source_filter_excludes_lookalikes_and_preserves_lifecycle_filters() ->
     let full_content = FullFileDigest::from_bytes(text.as_bytes());
     let mut store = fixture.store()?;
     let mut selected = Vec::new();
+    let mut landed_mutable = None;
     for (body, version, side) in [
         (
             "base",
@@ -931,10 +936,22 @@ fn commit_source_filter_excludes_lookalikes_and_preserves_lifecycle_filters() ->
         if matches!(body, "base" | "target") {
             selected.push(id);
         } else {
+            if body == "working" {
+                landed_mutable = Some(id.clone());
+            }
             store.resolve(&id, Some(commit.as_str()), 11)?;
             store.reopen(&id, 12)?;
         }
     }
+    let landed_mutable = landed_mutable.context("mutable origin")?;
+    let candidate = store
+        .thread(&landed_mutable)
+        .and_then(fathomable_core::annotations::Thread::landing_candidate)
+        .context("landing candidate")?;
+    assert_eq!(
+        store.land(&candidate, &commit)?,
+        fathomable_core::annotations::LandingOutcome::Applied
+    );
     store.resolve(&selected[1], None, 20)?;
     let archived = store.annotate(
         Draft::on_file(Author::User, Path::new("a.md"), "archived")

@@ -29,7 +29,7 @@ Start here before changing documented behavior or adding project documentation.
 - [Direct workspace navigation](decisions/0090-direct-workspace-navigation.md)
 - [Pane focus navigation](decisions/0091-pane-focus-navigation.md)
 - [Per-call commit sources](decisions/0092-per-call-commit-sources.md)
-- [Version-scoped viewer membership and durable landing](decisions/0093-version-scoped-viewer-membership.md)
+- [Explicit review membership, retained focus, and durable landing](decisions/0093-version-scoped-viewer-membership.md)
 - [Parked ideas and open investigations](parked.md)
 - [Documentation system](okf.md)
 - [Tag vocabulary](tags.md)

@@ -535,7 +535,9 @@ fn a_deleted_file_keeps_its_content_and_refuses_new_comments() -> anyhow::Result
     assert!(app.message().is_some_and(|m| m.contains("deleted")));
     app.expand_thread(id.clone());
     app.thread_reply();
-    assert!(!matches!(app.popup(), Some(Popup::Compose(_))));
+    assert!(matches!(app.popup(), Some(Popup::Compose(_))));
+    assert!(app.review_list().is_open());
+    app.compose_cancel();
 
     // Shown again while still gone: the retained source remains searchable.
     app.open(Path::new("other.md"));

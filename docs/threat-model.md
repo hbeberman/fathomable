@@ -95,7 +95,8 @@ them:
   produce explicit, bounded failures rather than misleading success or leaked
   content. Examine limits before allocation or expensive work. Commit-selected
   starts reject absent or non-regular entries, binary and invalid UTF-8 text,
-  and apply one 64 MiB raw-blob budget per call; that bound does not cover
+  apply one 64 MiB raw-blob budget per call, and reject commit or tree metadata
+  objects over 64 MiB before decoding them; those bounds do not cover
   pre-existing board loading or current-checkout projection.
 - A selected full commit ID identifies an immutable local object, not trusted
   remote provenance or retention. `HEAD` is pinned once per call, selected

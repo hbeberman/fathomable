@@ -622,8 +622,10 @@ A fresh selected start has one 64 MiB raw blob budget across its distinct paths,
 including loaded blobs rejected as binary or invalid UTF-8. Repeated paths
 reuse the first result, including failures. Absent paths and Git directories,
 symlinks, submodules, unsupported modes, or non-blob entries fail explicitly;
-binary and invalid UTF-8 blobs are rejected as text sources. A selected read
-loads no historical file bodies beyond the origin evidence already stored.
+binary and invalid UTF-8 blobs are rejected as text sources. Commit and tree
+metadata objects over 64 MiB are rejected before decoding, and exact object
+loads use the same allocation ceiling. A selected read loads no historical
+file bodies beyond the origin evidence already stored.
 
 Writes need native chat identity: Copilot CLI's `COPILOT_AGENT_SESSION_ID`,
 Claude Code's `CLAUDE_CODE_SESSION_ID`, VS Code's

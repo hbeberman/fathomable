@@ -16,6 +16,17 @@ use fathomable_testing::git::{init, open_options, stage, write_tree};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
+fn write_loose_object(root: &Path, id: &str, compressed: &[u8]) -> TestResult {
+    let objects = root.join(".git/objects").join(&id[..2]);
+    fs::create_dir_all(&objects)?;
+    let object = objects.join(&id[2..]);
+    if object.exists() {
+        fs::remove_file(&object)?;
+    }
+    fs::write(object, compressed)?;
+    Ok(())
+}
+
 /// Commit `files` (root-relative path, content) as the only tree of `HEAD`.
 fn commit(root: &Path, files: &[(&str, &str)]) -> Result<(), Box<dyn Error>> {
     let repo = gix::open_opts(root, open_options())?;
@@ -199,12 +210,11 @@ fn commit_source_rejects_blob_commit_ids_before_loading_their_bodies() -> TestRe
     let dir = TempDir::new("git-selected-noncommit-header")?;
     init(&dir.0)?;
     let id = CommitId::parse("1111111111111111111111111111111111111111")?;
-    let objects = dir.0.join(".git/objects/11");
-    fs::create_dir_all(&objects)?;
     // A valid zlib stream containing only "blob 4096\0", with no blob body.
-    fs::write(
-        objects.join(&id.as_str()[2..]),
-        [
+    write_loose_object(
+        &dir.0,
+        id.as_str(),
+        &[
             120, 156, 75, 202, 201, 79, 82, 48, 49, 176, 52, 99, 0, 0, 17, 107, 2, 147,
         ],
     )?;
@@ -221,6 +231,72 @@ fn commit_source_rejects_blob_commit_ids_before_loading_their_bodies() -> TestRe
             "the header must reject this blob before its missing body is read: {error}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn commit_source_rejects_oversized_commit_before_loading_its_body() -> TestResult {
+    let dir = TempDir::new("git-selected-oversized-commit")?;
+    init(&dir.0)?;
+    let id = CommitId::parse("2222222222222222222222222222222222222222")?;
+    // A valid zlib stream containing only "commit 67108865\0".
+    write_loose_object(
+        &dir.0,
+        id.as_str(),
+        &[
+            120, 156, 75, 206, 207, 205, 205, 44, 81, 48, 51, 55, 52, 176, 176, 48, 51, 101, 0, 0,
+            44, 129, 4, 83,
+        ],
+    )?;
+    fs::write(dir.0.join(".git/HEAD"), format!("{id}\n"))?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    for result in [
+        workspace.commit(&id).map(|_| ()),
+        workspace.exact_head_commit().map(|_| ()),
+        workspace.commit_blob(&id, Path::new("a.md"), 0).map(|_| ()),
+    ] {
+        let error = result.err().ok_or("oversized commit was accepted")?;
+        assert!(
+            error
+                .to_string()
+                .contains("commit object exceeds the 67108864-byte metadata limit"),
+            "the header must reject this commit before its missing body is read: {error}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn commit_source_rejects_oversized_tree_before_loading_its_body() -> TestResult {
+    let dir = TempDir::new("git-selected-oversized-tree")?;
+    init(&dir.0)?;
+    commit(&dir.0, &[("a.md", "one\n")])?;
+    let repo = gix::open_opts(&dir.0, open_options())?;
+    let commit = repo.head_commit()?;
+    let selected = CommitId::parse(commit.id.to_hex().to_string())?;
+    let tree = commit.tree_id()?.to_hex().to_string();
+    drop(commit);
+    drop(repo);
+    // A valid zlib stream containing only "tree 67108865\0".
+    write_loose_object(
+        &dir.0,
+        &tree,
+        &[
+            120, 156, 43, 41, 74, 77, 85, 48, 51, 55, 52, 176, 176, 48, 51, 101, 0, 0, 31, 156, 3,
+            122,
+        ],
+    )?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let error = workspace
+        .commit_blob(&selected, Path::new("a.md"), 64)
+        .err()
+        .ok_or("oversized tree was accepted")?;
+    assert!(
+        error
+            .to_string()
+            .contains("commit tree exceeds the 67108864-byte metadata limit"),
+        "the header must reject this tree before its missing body is read: {error}"
+    );
     Ok(())
 }
 
@@ -558,6 +634,28 @@ fn commit_source_exact_head_follows_only_symbolic_references() -> TestResult {
             "{object} must not peel through a tag or replacement"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn commit_source_reads_the_shared_store_from_a_linked_worktree() -> TestResult {
+    let dir = TempDir::new("git-selected-linked-worktree")?;
+    let main = dir.0.join("main");
+    let linked = dir.0.join("linked");
+    fs::create_dir(&main)?;
+    init(&main)?;
+    commit(&main, &[("a.md", "shared\n")])?;
+    fathomable_testing::git::worktree_add(&main, &linked, "feature")?;
+
+    let mut workspace = Workspace::discover(&linked)?;
+    let selected = workspace.exact_head_commit()?.id();
+    assert_eq!(
+        workspace
+            .commit_blob(&selected, Path::new("a.md"), 7)?
+            .ok_or("linked-worktree blob is missing")?
+            .bytes(),
+        b"shared\n"
+    );
     Ok(())
 }
 

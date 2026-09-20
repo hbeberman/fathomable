@@ -382,6 +382,12 @@ pub(crate) struct EndpointFile {
 /// walks more of the history a rewrite orphaned.
 const REACH_SLACK: gix::date::SecondsSinceUnixEpoch = 7 * 24 * 60 * 60;
 
+/// Largest commit or tree metadata object accepted by exact source reads.
+///
+/// This matches the MCP selected-source body budget. Larger Git metadata is
+/// not needed for review and must be rejected before `gix` allocates it.
+const MAX_EXACT_METADATA_BYTES: u64 = 64 * 1_024 * 1_024;
+
 /// The committer time of the commit `hex` names, `None` when the object
 /// store does not hold such a commit.
 fn commit_time(repo: &gix::Repository, hex: &str) -> Option<gix::date::SecondsSinceUnixEpoch> {
@@ -714,9 +720,10 @@ impl Workspace {
     /// # Errors
     ///
     /// Returns [`WorkspaceError`] when this workspace is not Git, the object
-    /// is unavailable or corrupt, or the exact object is not a commit.
+    /// is unavailable, corrupt, or oversized, or the exact object is not a
+    /// commit.
     pub fn commit(&self, id: &CommitId) -> Result<Commit, WorkspaceError> {
-        let repo = self.exact_repository(id.as_str())?;
+        let repo = self.exact_repository(id.as_str(), MAX_EXACT_METADATA_BYTES)?;
         let object_id = ObjectId::from_hex(id.as_str().as_bytes()).map_err(|error| {
             self.revision_error(id.as_str(), &format!("invalid commit object ID: {error}"))
         })?;
@@ -733,9 +740,10 @@ impl Workspace {
     /// # Errors
     ///
     /// Returns [`WorkspaceError`] outside Git, for unborn or unreadable `HEAD`,
-    /// or when its original target is unavailable, corrupt, or not a commit.
+    /// or when its original target is unavailable, corrupt, oversized, or not
+    /// a commit.
     pub fn exact_head_commit(&self) -> Result<Commit, WorkspaceError> {
-        let repo = self.exact_repository("HEAD")?;
+        let repo = self.exact_repository("HEAD", MAX_EXACT_METADATA_BYTES)?;
         let mut head = repo
             .find_reference("HEAD")
             .map_err(|error| self.revision_error("HEAD", &error.to_string()))?;
@@ -748,16 +756,29 @@ impl Workspace {
             .map_err(|message| self.revision_error("HEAD", &message))
     }
 
-    fn exact_repository(&self, revision: &str) -> Result<gix::Repository, WorkspaceError> {
+    fn exact_repository(
+        &self,
+        revision: &str,
+        max_object_bytes: u64,
+    ) -> Result<gix::Repository, WorkspaceError> {
         let git = self.ignore.as_ref().ok_or_else(|| {
             self.revision_error(
                 revision,
                 "exact commit lookup is unavailable outside a Git repository",
             )
         })?;
-        // A clone starts with empty caches and leaves viewer replacement semantics intact.
-        // Set the object-store flag directly: configuration must not redirect exact reads.
-        let mut repo = git.repo.clone();
+        let mut repo = gix::open_opts(
+            git.repo.git_dir(),
+            exact_open_options(max_object_bytes).open_path_as_is(true),
+        )
+        .map_err(|error| {
+            self.revision_error(
+                revision,
+                &format!("cannot reopen exact object store: {error}"),
+            )
+        })?;
+        // Keep viewer replacement semantics intact. Configuration must not
+        // redirect exact reads.
         repo.objects.ignore_replacements = true;
         Ok(repo)
     }
@@ -1285,7 +1306,8 @@ impl Workspace {
     /// accepted; directories, symbolic links, submodules, unsupported modes,
     /// and entries naming non-blob objects are rejected. Intermediate entries
     /// must have directory mode and name actual trees before their data is
-    /// loaded. Git replacements are ignored throughout. The blob header is
+    /// loaded. Commit and tree metadata are independently bounded before
+    /// decoding. Git replacements are ignored throughout. The blob header is
     /// checked against `max_bytes` before allocating blob data.
     ///
     /// # Errors
@@ -1320,7 +1342,7 @@ impl Workspace {
         {
             return Err(failure("invalid repository-relative path".to_owned()));
         }
-        let repo = self.exact_repository(id.as_str())?;
+        let repo = self.exact_repository(id.as_str(), max_bytes.max(MAX_EXACT_METADATA_BYTES))?;
         let object_id = ObjectId::from_hex(id.as_str().as_bytes())
             .map_err(|error| failure(format!("invalid commit object ID: {error}")))?;
         check_commit_header(&repo, object_id).map_err(failure)?;
@@ -1331,6 +1353,7 @@ impl Workspace {
             .tree_id()
             .map_err(|error| failure(format!("cannot read commit tree ID: {error}")))?
             .detach();
+        drop(commit);
         let mut mode = FileMode::Directory;
         let mut components = path.split(|byte| *byte == b'/').peekable();
         while let Some(component) = components.next() {
@@ -1343,11 +1366,13 @@ impl Workspace {
                     "directory entry names a non-tree object".to_owned(),
                 ));
             }
+            check_exact_metadata_size(header.size(), "commit tree").map_err(failure)?;
             let tree = repo
                 .find_tree(object_id)
                 .map_err(|error| failure(format!("cannot read commit tree: {error}")))?;
             let mut found = None;
             for entry in tree.iter() {
+                self.check_scan()?;
                 let entry =
                     entry.map_err(|error| failure(format!("cannot read tree entry: {error}")))?;
                 if entry.filename() == component.as_bstr() {
@@ -2835,6 +2860,15 @@ fn check_commit_header(repo: &gix::Repository, id: ObjectId) -> Result<(), Strin
     if header.kind() != gix::objs::Kind::Commit {
         return Err(format!("{id} is not a commit object"));
     }
+    check_exact_metadata_size(header.size(), "commit object")
+}
+
+fn check_exact_metadata_size(size: u64, object: &str) -> Result<(), String> {
+    if size > MAX_EXACT_METADATA_BYTES {
+        return Err(format!(
+            "{object} exceeds the {MAX_EXACT_METADATA_BYTES}-byte metadata limit"
+        ));
+    }
     Ok(())
 }
 
@@ -3168,6 +3202,11 @@ fn open_options() -> gix::open::Options {
     let mut permissions = gix::open::Permissions::default();
     permissions.env.git_prefix = gix::sec::Permission::Deny;
     gix::open::Options::default().permissions(permissions)
+}
+
+fn exact_open_options(max_object_bytes: u64) -> gix::open::Options {
+    let max_object_bytes = usize::try_from(max_object_bytes).unwrap_or(usize::MAX);
+    open_options().config_overrides([format!("gitoxide.objects.allocLimit={max_object_bytes}")])
 }
 
 /// How many tracked files under a changed directory make reading its

@@ -85,11 +85,14 @@ evidence.
 
 One call caches each distinct selected path, including failures, and admits at
 most 64 MiB of raw blob bytes across those paths. Loaded bytes count even when
-binary or UTF-8 validation rejects them. Missing files fail rather than becoming empty
-content. Directories, symlinks, submodules, unsupported Git modes, and entries
-that do not name blobs fail explicitly. Binary blobs and invalid UTF-8 fail as
-text sources. Whole-batch validation still precedes fresh writes; existing
-partial-write reporting remains truthful.
+binary or UTF-8 validation rejects them. Each commit or tree metadata object is
+also limited to 64 MiB before decoding, and the exact-object reader applies a
+matching allocation ceiling while inspecting headers and loading objects.
+Missing files fail rather than becoming empty content. Directories, symlinks,
+submodules, unsupported Git modes, and entries that do not name blobs fail
+explicitly. Binary blobs and invalid UTF-8 fail as text sources. Whole-batch
+validation still precedes fresh writes; existing partial-write reporting
+remains truthful.
 
 Selected commit identity is part of a keyed start's durable intent. A matching
 replay returns the existing thread without requiring the source object to
@@ -130,9 +133,10 @@ is then pinned to one commit; a full ID must name that exact commit object.
 Neither form follows Git replacement objects. Intermediate path entries must
 have directory mode and name actual tree objects before their data is loaded;
 non-directory entries are never traversed to look up a descendant.
-The resulting tree and regular blobs are read through the in-process Git
-object store. No fetch, remote access, Git subprocess, checkout, ref update,
-or working-tree fallback occurs.
+Tree entry scans remain cooperatively cancellable. The resulting tree and
+regular blobs are read through the bounded in-process Git object store. No
+fetch, remote access, Git subprocess, checkout, ref update, or working-tree
+fallback occurs.
 
 This boundary differs from checkout-confined working-tree reads: immutable
 object lookup does not follow filesystem paths or symlinks from the commit,

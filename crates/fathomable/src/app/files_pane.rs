@@ -42,7 +42,7 @@ pub(super) fn expand_tree(
     workspace.set_cancellation(cancellation);
     let mut tree = request.tree;
     let incomplete = tree
-        .toggle_all(&mut workspace)
+        .unfold_all(&mut workspace)
         .err()
         .map(|error| error.to_string())
         .or_else(|| tree.listing_incomplete().map(ToString::to_string));
@@ -82,8 +82,28 @@ impl App {
         self.tree_walk.cancel();
     }
 
-    pub(crate) fn toggle_all_directories(&mut self) {
+    /// Toggle the File list's persistent recursive-unfold mode.
+    pub(crate) fn toggle_file_auto_unfold(&mut self) {
+        if self.files_auto_unfold {
+            self.files_auto_unfold = false;
+            self.cancel_file_auto_unfold_scan();
+            if let Some(tree) = self.tree.as_mut() {
+                tree.fold_all();
+            }
+            self.scroll_tree();
+            self.refresh_directory_selection();
+            return;
+        }
         if !self.ensure_tree() {
+            return;
+        }
+        self.files_auto_unfold = true;
+        self.maintain_file_auto_unfold();
+    }
+
+    /// Keep recursive unfolding active after the tree's contents change.
+    pub(super) fn maintain_file_auto_unfold(&mut self) {
+        if !self.files_auto_unfold {
             return;
         }
         let Some(tree) = self.tree.clone() else {
@@ -97,8 +117,32 @@ impl App {
         }) {
             let message = format!("cannot start directory discovery: {error}");
             self.tree_issue = Some(message.clone());
+            self.files_auto_unfold = false;
             self.notice(message);
         }
+    }
+
+    /// Stop auto-unfold without changing the fold requested by the user.
+    pub(crate) fn cancel_file_auto_unfold(&mut self) {
+        if !self.files_auto_unfold {
+            return;
+        }
+        self.files_auto_unfold = false;
+        self.cancel_file_auto_unfold_scan();
+    }
+
+    fn cancel_file_auto_unfold_scan(&mut self) {
+        self.tree_walk.cancel();
+        self.tree_issue = self
+            .tree
+            .as_ref()
+            .and_then(Tree::listing_incomplete)
+            .map(ToString::to_string);
+    }
+
+    #[must_use]
+    pub(crate) const fn file_auto_unfold_active(&self) -> bool {
+        self.files_auto_unfold
     }
 
     /// Run `f` on the tree, then keep the cursor on screen.
@@ -118,6 +162,7 @@ impl App {
         if let Some(Activation::Open(path)) = activation {
             self.open(&path);
         }
+        self.maintain_file_auto_unfold();
     }
 
     /// A tree operation that can fail: report the error on the status line.
@@ -148,6 +193,13 @@ impl App {
         if self.tree().is_none_or(|tree| index >= tree.rows().len()) {
             self.focus_pane(Focus::Tree);
             return;
+        }
+        if self
+            .tree()
+            .and_then(|tree| tree.rows().get(index))
+            .is_some_and(fathomable_core::tree::Row::is_dir)
+        {
+            self.cancel_file_auto_unfold();
         }
         self.cancel_tree_target();
         self.with_tree_result(|tree, workspace| {
@@ -260,6 +312,9 @@ impl App {
         if path.as_os_str().is_empty() {
             return;
         }
+        if self.files_auto_unfold {
+            self.cancel_tree_scan();
+        }
         let revealed = match self.tree.as_mut() {
             Some(tree) => match tree.reveal(&mut self.workspace, path) {
                 Ok(revealed) => revealed,
@@ -270,6 +325,7 @@ impl App {
             },
             None => false,
         };
+        self.maintain_file_auto_unfold();
         if !self.sidebar.tree {
             return;
         }

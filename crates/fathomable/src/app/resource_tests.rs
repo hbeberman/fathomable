@@ -134,7 +134,7 @@ fn folding_a_truncated_flat_tree_does_not_erase_its_coverage_warning() -> anyhow
     let mut app = App::new(workspace, 100, 30, options);
     app.show_tree();
     assert!(app.comparison_badge().contains("files partial"));
-    app.toggle_all_directories();
+    app.toggle_file_auto_unfold();
     app.settle_background();
     assert_eq!(app.tree().map(|tree| tree.rows().len()), Some(3));
     assert!(app.comparison_badge().contains("files partial"));

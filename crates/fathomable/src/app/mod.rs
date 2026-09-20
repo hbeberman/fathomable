@@ -809,6 +809,8 @@ pub(crate) struct App {
     off_target_paths: Option<Vec<PathBuf>>,
     tree_walk: background::Worker<files_pane::TreeRequest, files_pane::TreeResult>,
     tree_issue: Option<String>,
+    /// Whether File list keeps every admitted directory unfolded.
+    files_auto_unfold: bool,
     /// The changed-only Files rule retained while Off does not apply it.
     dormant_changed_filter: bool,
     /// Truthful broad workspace observation state.
@@ -959,6 +961,7 @@ impl App {
             off_target_paths: None,
             tree_walk: background::Worker::new(files_pane::expand_tree),
             tree_issue: None,
+            files_auto_unfold: false,
             dormant_changed_filter: false,
             watch_status: watch::WatchStatus::default(),
             status_stale: false,

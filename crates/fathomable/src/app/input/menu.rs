@@ -1070,6 +1070,7 @@ impl App {
             Action::FilesReviews,
             Action::FilesUntracked,
             Action::FilesIgnored,
+            Action::FilesAutoUnfold,
         ] {
             menu.push_toggle_enabled(
                 action,

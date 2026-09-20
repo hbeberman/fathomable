@@ -930,26 +930,33 @@ impl Tree {
     /// Returns [`WorkspaceError`] when a directory cannot be read. Directories
     /// expanded before that failure remain expanded and visible.
     pub fn toggle_all(&mut self, workspace: &mut Workspace) -> Result<(), WorkspaceError> {
-        workspace.begin_listing_scan();
-        let cursor = self.current().map(|row| row.path.clone());
         let unfold = self.rows.iter().any(|row| {
             row.is_dir
                 && !row.expanded
                 && find_node(&mut self.root, &row.path)
                     .is_some_and(|node| node.kind == EntryKind::Dir)
         });
-        let result = if unfold {
-            self.expand_all(workspace)
+        if unfold {
+            self.unfold_all(workspace)
         } else {
-            let mut expanded = Vec::new();
-            expanded_dirs(&self.root, Path::new(""), &mut expanded);
-            for path in expanded {
-                if self.admitted.admits(&path, true) {
-                    self.collapse_path(&path);
-                }
-            }
+            self.fold_all();
             Ok(())
-        };
+        }
+    }
+
+    /// Recursively expand every listed directory.
+    ///
+    /// Repeating this operation keeps every directory expanded. Filters still
+    /// apply, and directory symlinks are not expanded recursively.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when a directory cannot be read. Directories
+    /// expanded before that failure remain expanded and visible.
+    pub fn unfold_all(&mut self, workspace: &mut Workspace) -> Result<(), WorkspaceError> {
+        workspace.begin_listing_scan();
+        let cursor = self.current().map(|row| row.path.clone());
+        let result = self.expand_all(workspace);
         workspace.end_listing_scan();
         if let Some(error) = result
             .as_ref()
@@ -959,14 +966,22 @@ impl Tree {
             self.listing_issue = Some(error.clone());
         }
         self.rebuild();
-        if let Some(cursor) = cursor {
-            for path in cursor.ancestors() {
-                if self.select_path(path) {
-                    break;
-                }
-            }
-        }
+        self.restore_cursor(cursor.as_deref());
         result
+    }
+
+    /// Collapse every retained directory.
+    ///
+    /// The cursor keeps its path or the nearest visible ancestor.
+    pub fn fold_all(&mut self) {
+        let cursor = self.current().map(|row| row.path.clone());
+        let mut expanded = Vec::new();
+        expanded_dirs(&self.root, Path::new(""), &mut expanded);
+        for path in expanded {
+            self.collapse_path(&path);
+        }
+        self.rebuild();
+        self.restore_cursor(cursor.as_deref());
     }
 
     fn expand_all(&mut self, workspace: &mut Workspace) -> Result<(), WorkspaceError> {
@@ -1089,6 +1104,17 @@ impl Tree {
     fn collapse_path(&mut self, path: &Path) {
         if let Some(node) = find_node(&mut self.root, path) {
             node.expanded = false;
+        }
+    }
+
+    fn restore_cursor(&mut self, cursor: Option<&Path>) {
+        let Some(cursor) = cursor else {
+            return;
+        };
+        for path in cursor.ancestors() {
+            if self.select_path(path) {
+                break;
+            }
         }
     }
 

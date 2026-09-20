@@ -183,6 +183,27 @@ fn all_directory_folds_preserve_the_path_or_its_visible_ancestor()
 }
 
 #[test]
+fn explicit_unfold_is_idempotent_and_fold_closes_every_directory()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = fixture("explicit-fold-all")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+
+    tree.unfold_all(&mut workspace)?;
+    assert!(tree.contains(Path::new("src/nested/deep.rs")));
+    tree.unfold_all(&mut workspace)?;
+    assert!(
+        tree.contains(Path::new("src/nested/deep.rs")),
+        "repeated unfolding must not toggle the tree closed"
+    );
+
+    tree.fold_all();
+    assert!(tree.rows().iter().all(|row| !row.expanded()));
+    assert!(!tree.contains(Path::new("src/main.rs")));
+    Ok(())
+}
+
+#[test]
 fn unfolding_all_obeys_filters_and_reports_unreadable_directories()
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = fixture("fold-all-filtered")?;

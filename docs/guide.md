@@ -97,7 +97,8 @@ a comment in File; elsewhere `c` remains contextual, including **only
 changed** in File list and reply in the thread surfaces.
 
 The **File list** title menu has four session filters: **only changed**,
-**only reviews**, **hide untracked**, and **show ignored**. `Space F c`,
+**only reviews**, **hide untracked**, and **show ignored**, plus
+**auto-unfold**. `Space F c`,
 `Space F o`, `Space F u`, and `Space F i` toggle them from any pane. The same
 `c`, `o`, `u`, and `i` keys work while File list has focus. Only
 reviews means files with an active or resolution-proposed, non-archived thread
@@ -106,8 +107,8 @@ filters compactly as `c`, `r`, `u`, and `i`.
 
 `Space f` contains file-opening workflows: `f` opens the ordinary picker, `i`
 includes ignored paths, and `r` lists files opened during this viewer session.
-`Space F` contains File-list controls: the four filters plus `Z` to fold or
-unfold all directories without moving focus from another pane. `Space t`
+`Space F` contains File-list controls: the four filters plus `Z` to toggle
+auto-unfold without moving focus from another pane. `Space t`
 contains thread workflows, while `Space T` contains Thread-list controls:
 `s` and `x` change scope and resolved visibility, and `Z` folds or unfolds all
 file groups without moving focus. Section rules in mixed leader menus separate
@@ -130,8 +131,11 @@ sidebar divider resizes it.
 In File list, `z` folds or unfolds the selected directory, or the immediate
 parent when a file is selected. Folding a file's parent leaves the cursor on
 that directory, so another `z` unfolds it. A root-level file has no foldable
-parent row. `Z` unfolds every directory admitted by the current filters, or
-folds them all when already expanded. Recursive unfolding skips directory
+parent row. `Z` turns on auto-unfold: every directory admitted by the current
+filters is recursively unfolded, including directories added or revealed
+later, and the File-list status shows `Z`. Press `Z` again to fold everything
+and leave the mode. A manual keyboard or mouse fold/unfold also leaves the
+mode; navigation and selection do not. Recursive unfolding skips directory
 symlinks. Previewing a file keeps its draft parked; explicitly opening File
 resumes it.
 
@@ -163,7 +167,7 @@ the table below is a quick reference, not the full list.
 | `Space f f` `Space f i` `Space f r` | file picker / including ignored / recent files |
 | `Space F c` `Space F o` | only changed / only reviews in File list |
 | `Space F u` `Space F i` | hide untracked / show ignored in File list |
-| `Space F Z` | fold or unfold all directories in File list |
+| `Space F Z` | toggle auto-unfold in File list |
 | `Space T s` `Space T x` | Thread-list scope / show resolved |
 | `Space T Z` | fold or unfold all file groups in Thread list |
 | `Space d n` `Space d u` `Space d o` | Normal / Unified / Off diff mode |
@@ -184,7 +188,7 @@ the table below is a quick reference, not the full list.
 | `]w` `[w` | next / previous worktree |
 | `c` `Space t f` | line comment or reply / file comment |
 | `r` `R` | resolve or reopen / toggle one-shot auto-resolve |
-| `z` `Z` | fold/unfold the nearest directory / all directories in File list; threads elsewhere |
+| `z` `Z` | fold/unfold the nearest directory / toggle File-list auto-unfold; threads elsewhere |
 | `Enter` `Ctrl-Enter` | submit draft / submit with auto-resolve enabled |
 | `Shift-Enter` `Alt-Enter` | draft newline / draft newline fallback |
 | `Ctrl-e` | edit with `$VISUAL` or `$EDITOR` |

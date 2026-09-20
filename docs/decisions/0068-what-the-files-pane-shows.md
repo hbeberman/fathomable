@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: What the files pane shows
-description: The Files pane filters changed, review-bearing, untracked, and ignored paths through live-labelled keys under `Space F` and checked settings under its clickable title; the header marks active filters compactly before the diff totals, while row menus remain item-local.
+description: The File list filters paths and can keep directories recursively unfolded through keys under `Space F` and checked settings under its clickable title.
 resource: crates/fathomable/src/app/files_shown.rs
 related_resources:
   - crates/fathomable-core/src/tree.rs
@@ -62,6 +62,13 @@ bare while Files has focus. File-opening workflows live under lowercase
 `Space f`: `f` opens the ordinary picker, `i` includes ignored paths, and
 `r` opens recent files.
 
+Amended 2026-09-20: `Z` is a persistent auto-unfold toggle, also available as
+a checked **auto-unfold** row in the File-list title menu. While active it
+keeps newly added or newly admitted directories recursively unfolded and shows
+exactly `Z` as the list's status marker. A second `Z` folds everything and
+exits the mode. A manual keyboard or mouse fold/unfold exits the mode; ordinary
+navigation and selection do not.
+
 ## Context
 
 The files pane lists every non-ignored file under the workspace, with a
@@ -97,14 +104,14 @@ pane's has.
 
 ## Decision
 
-### Four toggles
+### Filters and auto-unfold
 
 ```
 Space F c    only changed      /  all files
 Space F o    only reviews      /  all files
 Space F u    hide untracked    /  show untracked
 Space F i    show ignored      /  hide ignored
-Space F Z    fold all          /  unfold all
+Space F Z    auto-unfold       /  fold all
 
 Space f f    open file
 Space f i    open incl. ignored
@@ -134,8 +141,12 @@ Space f r    recent files
   `Space F c/o/u/i` works from any pane, and bare `c/o/u/i` mirrors it while
   Files has focus. Toggling while Files is hidden changes the pane all the
   same and a status-line notice names the new state.
-- `Space F Z` performs the File list's existing `Z` action from any pane,
-  without transferring focus.
+- `Space F Z` and direct `Z` in File list toggle the same session mode without
+  transferring focus. Activation recursively unfolds every admitted directory
+  and keeps directories that appear or become admitted later unfolded. A
+  second press folds every directory and exits the mode.
+- A manual fold or unfold by `z`, `h`, `l`, Enter, a directory click, or its
+  row menu exits auto-unfold. Navigation and file selection leave it active.
 - Rules compose by intersection. A review-bearing file must also satisfy
   *only changed*, untracked, ignored, and selected-comparison snapshot rules
   that are active. Directories appear only when they lead to an admitted file.
@@ -158,7 +169,7 @@ Space f r    recent files
   the outcome of pressing the key now, in the fewest words.
 - A left-click on the header's **`Files` title** opens a pane settings menu
   with stable `only changed`, `only reviews`, `hide untracked`, and
-  `show ignored` labels.
+  `show ignored` labels, plus a checked `auto-unfold` mode.
   Each active setting carries a checkmark; inactive settings reserve the
   same space without one. The menu aligns to the sidebar's left edge and
   begins on the row below the header instead of at the pointer. The title is
@@ -178,6 +189,8 @@ Space f r    recent files
   as the former words, compacted into the comma-list `c,r,u,i`: changed-only,
   reviews-only, untracked hidden, and ignored shown. The comparison's `+n -m`
   totals (0017) follow the marker, separated by a space.
+- While auto-unfold is active, the status marker is exactly `Z`, replacing the
+  filter comma-list until the mode ends.
 - `Files                                  c,u +12 -3`. The compact marker is
   retained while it fits; as before, it drops before either diff total.
   Repository and active-worktree identity live in the global menu bar under
@@ -190,8 +203,8 @@ Space f r    recent files
   settings also have direct pane keys. Pickers move to lowercase `Space f`.
 - 0056's map: `Space F` is `c` / `o` / `u` / `i` / `Z`; `Space f` is
   `f` / `i` / `r`.
-- 0050's Files title opens the four pane settings. Row context menus stay
-  item-local, and right-click on the header remains inert.
+- 0050's Files title opens the four pane filters and auto-unfold. Row context
+  menus stay item-local, and right-click on the header remains inert.
 - 0017's tree bullet: the pane may list a subset; the letters, the
   counts, and the root totals are unchanged.
 - 0087's comparison model (amended 2026-09-17): with a non-working target,
@@ -201,9 +214,9 @@ Space f r    recent files
 
 ## Consequences
 
-- `app/files_shown.rs`, which this record backs, holds the four
-  toggles' actions, the live labels, the notice while the pane is
-  hidden, and the header's filter words.
+- `app/files_shown.rs`, which this record backs, holds the filters and
+  auto-unfold state labels, the live labels, the notice while the pane is
+  hidden, and the header marker.
 - `fathomable_core::tree` gains `Shown`, what the tree lists: four
   rules with `Shown::all()` as the start, toggled by `Rule`. `Tree`
   keeps a `Shown`, caller-supplied review paths, and the paths it admits under
@@ -216,10 +229,10 @@ Space f r    recent files
 - `bindings::menu_entries` and `bindings::menu` take a relabel
   function; `App::which_key` supplies the live labels, and the drawing
   and the mouse go through it. The binding table gains `FilesChanged`,
-  `FilesReviews`, `FilesUntracked`, `FilesIgnored`, and `FilesFoldAll` under
-  `Space F`.
+  `FilesReviews`, `FilesUntracked`, `FilesIgnored`, and `FilesAutoUnfold`
+  under `Space F`.
 - `draw::tree_lines` builds the header through `Header`; `Tone` gains
   the diff colours for the counts. Header layout retains the totals while
   dropping the compact filter marker first.
-- The guide's key table, its files pane passage, and its mouse passage
-  name the four toggles.
+- The guide's key table, its files pane passage, and its mouse passage name
+  the four filters and auto-unfold.

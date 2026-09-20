@@ -443,7 +443,7 @@ impl App {
             Action::FilesReviews => self.files_toggle(Rule::Reviews),
             Action::FilesUntracked => self.files_toggle(Rule::Untracked),
             Action::FilesIgnored => self.files_toggle(Rule::Ignored),
-            Action::FilesFoldAll => self.toggle_all_directories(),
+            Action::FilesAutoUnfold => self.toggle_file_auto_unfold(),
             Action::ThreadsFoldAll => self.threads_pane_fold_all(),
             Action::PaneScope => self.threads_pane_toggle_scope(),
             Action::ReviewResolved => self.review_toggle_resolved(),
@@ -531,6 +531,25 @@ impl App {
 
     fn act_tree(&mut self, action: Action) -> Effect {
         let before = tree_highlight(self);
+        let manual_fold = match action {
+            Action::Fold => true,
+            Action::Confirm => self
+                .tree()
+                .and_then(Tree::current)
+                .is_some_and(fathomable_core::tree::Row::is_dir),
+            Action::MoveLeft => self
+                .tree()
+                .and_then(Tree::current)
+                .is_some_and(|row| row.is_dir() && row.expanded()),
+            Action::MoveRight => self
+                .tree()
+                .and_then(Tree::current)
+                .is_some_and(|row| row.is_dir() && !row.expanded()),
+            _ => false,
+        };
+        if manual_fold {
+            self.cancel_file_auto_unfold();
+        }
         if matches!(
             action,
             Action::MoveDown
@@ -564,7 +583,7 @@ impl App {
             Action::Confirm => self.with_tree_result(Tree::activate),
             Action::Fold => self.with_tree_result(Tree::toggle_nearest_directory),
             Action::FoldAll => {
-                self.toggle_all_directories();
+                self.toggle_file_auto_unfold();
             }
             Action::CopyPath => return self.copy_tree_path(),
             Action::CopyFullPath => return self.copy_tree_full_path(),

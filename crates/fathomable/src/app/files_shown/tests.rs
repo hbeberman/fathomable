@@ -159,25 +159,132 @@ fn focused_file_list_uses_the_same_filter_suffixes() -> anyhow::Result<()> {
 }
 
 #[test]
-fn file_list_fold_all_works_without_moving_focus() -> anyhow::Result<()> {
-    let dir = fixture("remote-fold-all")?;
+fn file_list_auto_unfold_uses_both_entry_paths_and_marks_its_state() -> anyhow::Result<()> {
+    let dir = fixture("auto-unfold-entry-paths")?;
     let mut app = AppBuilder::new(&dir).build()?;
     app.show_tree();
-    app.focus_pane(Focus::View);
-    assert_eq!(app.focus(), Focus::View);
+    app.window_files();
     assert!(!names(&app).iter().any(|path| path == "src/lib.rs"));
 
-    press(&mut app, " F");
-    assert_eq!(label_of(&app, 'Z')?, "fold or unfold all");
     press(&mut app, "Z");
-    app.settle_background();
-    assert_eq!(app.focus(), Focus::View);
+    assert_eq!(app.focus(), Focus::Tree);
+    assert!(app.file_auto_unfold_active());
     assert!(names(&app).iter().any(|path| path == "src/lib.rs"));
+    assert_eq!(app.files_shown_marker(), "Z");
+    let header = header_row(&app)?;
+    assert!(header.contains(" Z +2 -1"), "{header}");
 
-    press(&mut app, " FZ");
-    app.settle_background();
-    assert_eq!(app.focus(), Focus::View);
+    press(&mut app, "Z");
+    assert!(!app.file_auto_unfold_active());
+    assert_eq!(app.files_shown_marker(), "");
     assert!(!names(&app).iter().any(|path| path == "src/lib.rs"));
+
+    app.focus_pane(Focus::View);
+    press(&mut app, " F");
+    assert_eq!(label_of(&app, 'Z')?, "auto-unfold");
+    press(&mut app, "Z");
+    assert_eq!(app.focus(), Focus::View);
+    assert!(app.file_auto_unfold_active());
+    assert!(names(&app).iter().any(|path| path == "src/lib.rs"));
+    press(&mut app, " F");
+    assert_eq!(label_of(&app, 'Z')?, "fold all");
+    press(&mut app, "Z");
+    assert!(!app.file_auto_unfold_active());
+    Ok(())
+}
+
+#[test]
+fn auto_unfold_follows_live_and_filter_revealed_directories() -> anyhow::Result<()> {
+    use crate::app::watch::Event;
+
+    let dir = fixture("auto-unfold-live")?;
+    let root = testing::root(&dir);
+    let mut app = AppBuilder::new(&dir).build()?;
+    app.show_tree();
+    press(&mut app, " Fc FZ");
+    assert!(
+        !names(&app).iter().any(|path| path == "src"),
+        "the changed-only filter hides the clean directory"
+    );
+
+    press(&mut app, " Fc");
+    assert!(
+        names(&app).iter().any(|path| path == "src/lib.rs"),
+        "a directory revealed by a filter change is unfolded"
+    );
+
+    fs::create_dir_all(root.join("new/deep"))?;
+    fs::write(root.join("new/deep/file.rs"), "fn new() {}\n")?;
+    app.on_events(vec![Event::Created(root.join("new/deep/file.rs"))]);
+    app.settle_background();
+    assert!(
+        names(&app).iter().any(|path| path == "new/deep/file.rs"),
+        "a directory added while the mode is active is unfolded"
+    );
+    assert!(app.file_auto_unfold_active());
+    Ok(())
+}
+
+#[test]
+fn hidden_file_list_keeps_auto_unfold_through_navigation() -> anyhow::Result<()> {
+    let dir = fixture("auto-unfold-hidden-navigation")?;
+    let mut app = AppBuilder::new(&dir).build()?;
+    assert!(app.tree().is_none(), "File list starts hidden");
+
+    app.toggle_file_auto_unfold();
+    app.synchronize_tree_to(Path::new("README.md"));
+    app.settle_background();
+    app.show_tree();
+
+    assert!(app.file_auto_unfold_active());
+    assert!(
+        names(&app).iter().any(|path| path == "src/lib.rs"),
+        "hidden-list navigation must restart recursive unfolding"
+    );
+    Ok(())
+}
+
+#[test]
+fn manual_folds_cancel_auto_unfold_but_navigation_does_not() -> anyhow::Result<()> {
+    let dir = fixture("auto-unfold-cancel")?;
+    let mut app = AppBuilder::new(&dir).build()?;
+    app.show_tree();
+    app.window_files();
+    press(&mut app, "Z");
+
+    press(&mut app, "j");
+    assert!(
+        app.file_auto_unfold_active(),
+        "ordinary navigation keeps the mode active"
+    );
+    press(&mut app, "z");
+    assert!(!app.file_auto_unfold_active());
+    assert_eq!(app.files_shown_marker(), "");
+
+    press(&mut app, "Z");
+    let src = app
+        .tree()
+        .and_then(|tree| {
+            tree.rows()
+                .iter()
+                .position(|row| row.path() == Path::new("src"))
+        })
+        .context("src row")?;
+    let screen_row = app.pane_top() + 1 + src.saturating_sub(app.tree_scroll());
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: u16::try_from(screen_row)?,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+    assert!(
+        !app.file_auto_unfold_active(),
+        "clicking a directory cancels the mode"
+    );
+    assert_eq!(app.files_shown_marker(), "");
     Ok(())
 }
 
@@ -681,6 +788,7 @@ fn the_files_title_opens_checked_settings() -> anyhow::Result<()> {
             ("only reviews".to_owned(), Some(false)),
             ("hide untracked".to_owned(), Some(false)),
             ("show ignored".to_owned(), Some(false)),
+            ("auto-unfold".to_owned(), Some(false)),
         ]
     );
     handle_mouse(
@@ -705,6 +813,7 @@ fn the_files_title_opens_checked_settings() -> anyhow::Result<()> {
             ("only reviews".to_owned(), Some(false)),
             ("hide untracked".to_owned(), Some(false)),
             ("show ignored".to_owned(), Some(false)),
+            ("auto-unfold".to_owned(), Some(false)),
         ]
     );
     app.close_popup();
@@ -717,6 +826,7 @@ fn the_files_title_opens_checked_settings() -> anyhow::Result<()> {
             ("only reviews".to_owned(), Some(false)),
             ("hide untracked".to_owned(), Some(true)),
             ("show ignored".to_owned(), Some(true)),
+            ("auto-unfold".to_owned(), Some(false)),
         ]
     );
     assert!(
@@ -738,6 +848,54 @@ fn the_files_title_opens_checked_settings() -> anyhow::Result<()> {
         },
     );
     assert!(app.menu().is_none(), "right-click leaves the header inert");
+    Ok(())
+}
+
+#[test]
+fn the_files_title_menu_toggles_auto_unfold() -> anyhow::Result<()> {
+    let dir = fixture("auto-unfold-menu")?;
+    let mut app = AppBuilder::new(&dir).build()?;
+    app.show_tree();
+    let click_title = |app: &mut App| {
+        let row = app.pane_top();
+        handle_mouse(
+            app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row: u16::try_from(row).unwrap_or(u16::MAX),
+                modifiers: KeyModifiers::NONE,
+            },
+        )
+    };
+
+    click_title(&mut app);
+    let grid = app.menu().context("File list menu")?.grid_in(
+        app.size().0,
+        app.pane_top(),
+        app.pane_rows(),
+    );
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: u16::try_from(grid.x + 1)?,
+            row: u16::try_from(grid.y + 5)?,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+    app.settle_background();
+    assert!(app.file_auto_unfold_active());
+
+    click_title(&mut app);
+    let auto_unfold = app
+        .menu()
+        .context("File list menu")?
+        .entries()
+        .iter()
+        .find(|entry| entry.label() == "auto-unfold")
+        .context("auto-unfold setting")?;
+    assert_eq!(auto_unfold.checked(), Some(true));
     Ok(())
 }
 

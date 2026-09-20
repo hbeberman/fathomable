@@ -316,8 +316,8 @@ actions! {
     FilesUntracked,
     /// `Space F i`: show ignored files in the files pane (ADR 0068).
     FilesIgnored,
-    /// `Space F Z`: fold or unfold all directories in the files pane.
-    FilesFoldAll,
+    /// `Space F Z`: toggle persistent auto-unfold in the files pane.
+    FilesAutoUnfold,
     /// `Space T Z`: fold or unfold all files in the threads pane.
     ThreadsFoldAll,
     ChangeNext,
@@ -780,9 +780,9 @@ pub(crate) const BINDINGS: &[Binding] = &[
     bind(
         W::Any,
         &[&[c(' '), c('F'), c('Z')]],
-        A::FilesFoldAll,
+        A::FilesAutoUnfold,
         "Space menu",
-        "files: fold or unfold all",
+        "files: auto-unfold",
     ),
     bind(W::Any, &[&[c('f')]], A::FileView, "Views", "open File"),
     bind(W::Any, &[&[c('t')]], A::Review, "Threads", "open Threads"),
@@ -1024,7 +1024,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c('Z')]],
         A::FoldAll,
         "File list",
-        "fold every directory, or unfold them all",
+        "toggle auto-unfold",
     ),
     bind(
         W::Tree,
@@ -2115,7 +2115,7 @@ mod tests {
         for place in PANES {
             assert_eq!(
                 lookup(place, &[c(' '), c('F'), c('Z')]),
-                Match::Exact(Action::FilesFoldAll),
+                Match::Exact(Action::FilesAutoUnfold),
                 "{place:?}"
             );
             assert_eq!(

@@ -1,7 +1,6 @@
 // @okf-doc: /decisions/0068-what-the-files-pane-shows.md
-//! What the files pane shows (ADR 0068): four session toggles under
-//! `Space F`, only changed files (`c`), only files with reviews (`o`), hide
-//! untracked files (`u`), and show ignored files (`i`), working from any pane.
+//! What the files pane shows (ADR 0068): four filters and persistent
+//! auto-unfold under `Space F`, working from any pane.
 //!
 //! The rules themselves are the tree's [`Shown`]; this module is the
 //! app's hands on them: the toggle, the live label a which-key entry
@@ -29,16 +28,19 @@ impl App {
         if !self.ensure_tree() {
             return;
         }
-        self.refresh_review_paths();
+        self.cancel_tree_scan();
         let status = self.files_filter_status();
         let virtual_paths = self.comparison_virtual_paths();
         let snapshot_paths = self.comparison_snapshot_paths();
+        let review_paths = self.review_paths();
         let Some(tree) = self.tree.as_mut() else {
             return;
         };
+        tree.set_review_paths(&mut self.workspace, &status, review_paths);
         let shown = tree.shown().toggled(rule);
         if let Err(error) = tree.set_shown(&mut self.workspace, &status, shown) {
             self.notice(error.to_string());
+            self.maintain_file_auto_unfold();
             return;
         }
         if let Some(paths) = snapshot_paths {
@@ -48,6 +50,7 @@ impl App {
         }
         self.refresh_tree_target();
         self.refresh_directory_selection();
+        self.maintain_file_auto_unfold();
         if !self.sidebar.tree {
             // The header that names the state is not on screen.
             let words = shown_words(shown);
@@ -77,6 +80,7 @@ impl App {
             self.refresh_tree_target();
             self.refresh_directory_selection();
         }
+        self.maintain_file_auto_unfold();
     }
 
     /// Re-project qualifying current-workspace threads into tree paths.
@@ -92,6 +96,7 @@ impl App {
             self.refresh_tree_target();
             self.refresh_directory_selection();
         }
+        self.maintain_file_auto_unfold();
     }
 
     fn review_paths(&self) -> Vec<PathBuf> {
@@ -139,16 +144,19 @@ impl App {
         if self.dormant_changed_filter || !shown.changed_only() {
             return;
         }
+        self.cancel_tree_scan();
         let status = self.comparison_status().clone();
         if let Some(tree) = self.tree.as_mut() {
             if let Err(error) =
                 tree.set_shown(&mut self.workspace, &status, shown.toggled(Rule::Changed))
             {
                 self.notice(error.to_string());
+                self.maintain_file_auto_unfold();
                 return;
             }
             self.dormant_changed_filter = true;
         }
+        self.maintain_file_auto_unfold();
     }
 
     /// Reapply the retained changed-only rule after leaving Off.
@@ -156,6 +164,7 @@ impl App {
         if !self.dormant_changed_filter {
             return;
         }
+        self.cancel_tree_scan();
         let shown = self.files_shown();
         let status = self.comparison_status().clone();
         if let Some(tree) = self.tree.as_mut()
@@ -163,9 +172,11 @@ impl App {
                 tree.set_shown(&mut self.workspace, &status, shown.toggled(Rule::Changed))
         {
             self.notice(error.to_string());
+            self.maintain_file_auto_unfold();
             return;
         }
         self.dormant_changed_filter = false;
+        self.maintain_file_auto_unfold();
     }
 
     /// What pressing a toggle's key does now, when that differs from the
@@ -179,6 +190,7 @@ impl App {
             Action::FilesReviews if shown.reviews_only() => Some("all files"),
             Action::FilesUntracked if !shown.untracked() => Some("show untracked"),
             Action::FilesIgnored if shown.ignored() => Some("hide ignored"),
+            Action::FilesAutoUnfold if self.file_auto_unfold_active() => Some("fold all"),
             _ => None,
         }
     }
@@ -190,6 +202,7 @@ impl App {
             Action::FilesReviews => "only reviews",
             Action::FilesUntracked => "hide untracked",
             Action::FilesIgnored => "show ignored",
+            Action::FilesAutoUnfold => "auto-unfold",
             _ => "",
         }
     }
@@ -202,6 +215,7 @@ impl App {
             Action::FilesReviews => shown.reviews_only(),
             Action::FilesUntracked => !shown.untracked(),
             Action::FilesIgnored => shown.ignored(),
+            Action::FilesAutoUnfold => self.file_auto_unfold_active(),
             _ => false,
         }
     }
@@ -241,6 +255,9 @@ impl App {
 
     /// The compact marker the files pane's header uses for active rules.
     pub(crate) fn files_shown_marker(&self) -> String {
+        if self.file_auto_unfold_active() {
+            return "Z".to_owned();
+        }
         let shown = self.files_shown();
         let mut markers = Vec::new();
         if shown.changed_only() && self.diff_mode() != fathomable_core::config::DiffMode::Off {

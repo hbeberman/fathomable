@@ -41,7 +41,10 @@ use gix::revision::walk::Sorting;
 use gix::traverse::commit::simple::CommitTimeOrder;
 use gix::worktree::stack::state::attributes::Source as AttrSource;
 use gix::worktree::stack::state::ignore::Source;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
+use crate::annotations::FullFileDigest;
 use crate::content::{self, Attr};
 use crate::diff::{Comparison, Diff, FileMode, PathChange, PathInfo, PathState};
 use crate::status::{self, Changes, State, Status};
@@ -188,6 +191,13 @@ pub struct CommitBlob {
     bytes: Vec<u8>,
 }
 
+struct CommitBlobSource {
+    repo: gix::Repository,
+    mode: FileMode,
+    size: u64,
+    object: ObjectId,
+}
+
 impl CommitBlob {
     /// The regular or executable Git file mode.
     #[must_use]
@@ -272,6 +282,389 @@ impl fmt::Display for CommitIdError {
 }
 
 impl std::error::Error for CommitIdError {}
+
+/// Immutable identity of one checkout and its shared repository.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CheckoutIdentity {
+    checkout: PathBuf,
+    repository: PathBuf,
+}
+
+impl CheckoutIdentity {
+    pub(crate) fn from_canonical_paths(checkout: PathBuf, repository: PathBuf) -> Self {
+        Self {
+            checkout,
+            repository,
+        }
+    }
+
+    /// The canonical checkout root.
+    #[must_use]
+    pub fn checkout(&self) -> &Path {
+        &self.checkout
+    }
+
+    /// The canonical repository key shared by linked worktrees.
+    #[must_use]
+    pub fn repository(&self) -> &Path {
+        &self.repository
+    }
+
+    pub(crate) fn is_valid(&self) -> bool {
+        self.checkout.is_absolute() && self.repository.is_absolute()
+    }
+}
+
+/// A typed observation of the active checkout's `HEAD`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeadState {
+    /// A symbolic reference resolved to one full commit ID.
+    Symbolic {
+        /// Full Git reference name.
+        reference: String,
+        /// Commit currently named by the reference.
+        commit: CommitId,
+    },
+    /// A directly checked-out commit.
+    Detached {
+        /// The checked-out commit.
+        commit: CommitId,
+    },
+    /// A symbolic `HEAD` whose reference has no commit yet.
+    Unborn,
+    /// `HEAD` could not be observed reliably.
+    Unavailable {
+        /// Stable diagnostic suitable for logs and UI status.
+        error: String,
+    },
+}
+
+impl HeadState {
+    /// The observed commit, when `HEAD` names one.
+    #[must_use]
+    pub const fn commit(&self) -> Option<&CommitId> {
+        match self {
+            Self::Symbolic { commit, .. } | Self::Detached { commit } => Some(commit),
+            Self::Unborn | Self::Unavailable { .. } => None,
+        }
+    }
+}
+
+/// One generation-qualified `HEAD` observation for a checkout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeadObservation {
+    generation: u64,
+    checkout: CheckoutIdentity,
+    state: HeadState,
+}
+
+impl HeadObservation {
+    /// Comparison generation associated with this observation.
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Checkout and repository observed.
+    #[must_use]
+    pub const fn checkout(&self) -> &CheckoutIdentity {
+        &self.checkout
+    }
+
+    /// Typed `HEAD` state.
+    #[must_use]
+    pub const fn state(&self) -> &HeadState {
+        &self.state
+    }
+}
+
+/// A generation-qualified change between two active-checkout observations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeadTransition {
+    generation: u64,
+    checkout: CheckoutIdentity,
+    previous: HeadState,
+    current: HeadState,
+}
+
+impl HeadTransition {
+    /// Construct a transition when both observations belong to one checkout.
+    #[must_use]
+    pub fn between(previous: &HeadObservation, current: &HeadObservation) -> Option<Self> {
+        (previous.checkout == current.checkout && previous.state != current.state).then(|| Self {
+            generation: current.generation,
+            checkout: current.checkout.clone(),
+            previous: previous.state.clone(),
+            current: current.state.clone(),
+        })
+    }
+
+    /// Generation in which the transition was observed.
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Checkout whose `HEAD` moved.
+    #[must_use]
+    pub const fn checkout(&self) -> &CheckoutIdentity {
+        &self.checkout
+    }
+
+    /// Previous typed `HEAD` state.
+    #[must_use]
+    pub const fn previous(&self) -> &HeadState {
+        &self.previous
+    }
+
+    /// Current typed `HEAD` state.
+    #[must_use]
+    pub const fn current(&self) -> &HeadState {
+        &self.current
+    }
+}
+
+/// One immutable path expectation for exact commit reconciliation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExactFile {
+    checkout: CheckoutIdentity,
+    path: PathBuf,
+    digest: FullFileDigest,
+}
+
+impl ExactFile {
+    /// Construct a named exact-file expectation.
+    #[must_use]
+    pub fn new(
+        checkout: CheckoutIdentity,
+        path: impl Into<PathBuf>,
+        digest: FullFileDigest,
+    ) -> Self {
+        Self {
+            checkout,
+            path: path.into(),
+            digest,
+        }
+    }
+
+    /// Checkout and repository allowed to verify this expectation.
+    #[must_use]
+    pub const fn checkout(&self) -> &CheckoutIdentity {
+        &self.checkout
+    }
+
+    /// Repository-relative path to verify.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Expected full-file identity.
+    #[must_use]
+    pub const fn digest(&self) -> &FullFileDigest {
+        &self.digest
+    }
+}
+
+/// Exact result for one commit reconciliation candidate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExactFileMatch {
+    /// The regular commit blob has exactly the expected digest and length.
+    Match,
+    /// The path is absent from the commit.
+    Missing,
+    /// The regular commit blob has different bytes.
+    Mismatch,
+    /// The path or object could not be verified.
+    Unavailable(String),
+}
+
+/// One result from a bounded exact commit reconciliation job.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExactFileResult {
+    path: PathBuf,
+    result: ExactFileMatch,
+}
+
+impl ExactFileResult {
+    /// Candidate path.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Exact verification result.
+    #[must_use]
+    pub const fn result(&self) -> &ExactFileMatch {
+        &self.result
+    }
+}
+
+/// Progress made by one bounded exact-file verification batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExactFileProgress {
+    /// Every candidate was examined.
+    Complete,
+    /// Aggregate bytes were exhausted before this candidate.
+    ContinueAt {
+        /// Candidate index at which a fresh aggregate budget must resume.
+        next: usize,
+    },
+}
+
+/// Results and typed continuation for exact commit-file verification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExactFileBatch {
+    results: Vec<ExactFileResult>,
+    progress: ExactFileProgress,
+}
+
+impl ExactFileBatch {
+    /// Examined candidate results.
+    #[must_use]
+    pub fn results(&self) -> &[ExactFileResult] {
+        &self.results
+    }
+
+    /// Whether and where verification must continue with a fresh budget.
+    #[must_use]
+    pub const fn progress(&self) -> ExactFileProgress {
+        self.progress
+    }
+
+    /// Consume the batch into its results and continuation.
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<ExactFileResult>, ExactFileProgress) {
+        (self.results, self.progress)
+    }
+}
+
+fn exact_file_result(
+    candidate: &ExactFile,
+    loaded: &Result<Option<FullFileDigest>, String>,
+) -> ExactFileResult {
+    ExactFileResult {
+        path: candidate.path.clone(),
+        result: match loaded {
+            Ok(Some(actual)) if actual == candidate.digest() => ExactFileMatch::Match,
+            Ok(Some(_)) => ExactFileMatch::Mismatch,
+            Ok(None) => ExactFileMatch::Missing,
+            Err(error) => ExactFileMatch::Unavailable(error.clone()),
+        },
+    }
+}
+
+/// Why a coherent Git index manifest is unavailable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IndexManifestUnavailable {
+    /// At least one path has unresolved conflict stages.
+    Conflict {
+        /// Raw path carrying conflict stages.
+        path: Box<[u8]>,
+    },
+    /// At least one path is only an intent-to-add placeholder.
+    IntentToAdd {
+        /// Raw path carrying the placeholder.
+        path: Box<[u8]>,
+    },
+    /// Sparse-directory entries cannot be used as a complete tree.
+    Sparse,
+    /// An entry uses a mode or path shape this build cannot interpret.
+    Unsupported {
+        /// Raw path, or empty when the condition is index-wide.
+        path: Box<[u8]>,
+        /// Reason the entry cannot form an exact tree.
+        detail: String,
+    },
+}
+
+/// One raw tree-relevant entry from a captured Git index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexManifestEntry {
+    path: Box<[u8]>,
+    mode: FileMode,
+    object: String,
+    assume_unchanged: bool,
+    skip_worktree: bool,
+}
+
+impl IndexManifestEntry {
+    /// Canonical slash-separated raw Git path bytes.
+    #[must_use]
+    pub fn path_bytes(&self) -> &[u8] {
+        &self.path
+    }
+
+    /// Git tree mode represented by this entry.
+    #[must_use]
+    pub const fn mode(&self) -> FileMode {
+        self.mode
+    }
+
+    /// Exact object ID represented by this entry.
+    #[must_use]
+    pub fn object(&self) -> &str {
+        &self.object
+    }
+
+    /// Whether Git may assume the worktree copy is unchanged.
+    #[must_use]
+    pub const fn assume_unchanged(&self) -> bool {
+        self.assume_unchanged
+    }
+
+    /// Whether sparse checkout normally skips the worktree copy.
+    #[must_use]
+    pub const fn skip_worktree(&self) -> bool {
+        self.skip_worktree
+    }
+}
+
+/// One bounded, immutable snapshot of the complete Git index tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexManifest {
+    checkout: CheckoutIdentity,
+    identity: String,
+    entries: Box<[IndexManifestEntry]>,
+}
+
+impl IndexManifest {
+    /// Checkout and repository from which the index was captured.
+    #[must_use]
+    pub const fn checkout(&self) -> &CheckoutIdentity {
+        &self.checkout
+    }
+
+    /// Full SHA-256 over canonical length-delimited entries.
+    #[must_use]
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    /// Every tree-relevant index entry in raw-path order.
+    #[must_use]
+    pub fn entries(&self) -> &[IndexManifestEntry] {
+        &self.entries
+    }
+
+    /// Find one captured entry by canonical raw path bytes.
+    #[must_use]
+    pub fn entry(&self, path: &[u8]) -> Option<&IndexManifestEntry> {
+        self.entries
+            .binary_search_by(|entry| entry.path.as_ref().cmp(path))
+            .ok()
+            .map(|index| &self.entries[index])
+    }
+}
+
+/// Result of attempting to capture a complete index tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IndexManifestCapture {
+    /// The complete bounded index was captured.
+    Available(IndexManifest),
+    /// The index cannot safely stand for a complete Git tree.
+    Unavailable(IndexManifestUnavailable),
+}
 
 /// The kind of named revision offered to a viewer picker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -557,7 +950,7 @@ impl Workspace {
 
     pub(crate) fn check_path_count(&self, count: usize) -> Result<(), WorkspaceError> {
         self.check_scan()?;
-        if count > self.limits.comparison_paths.min(self.limits.retained_paths) {
+        if count > self.limits.comparison_path_limit() {
             return Err(
                 self.scan_error("comparison limited by path budget; coverage is incomplete")
             );
@@ -604,6 +997,12 @@ impl Workspace {
     #[must_use]
     pub fn key(&self) -> &Path {
         &self.key
+    }
+
+    /// Immutable identity of this checkout and its shared repository.
+    #[must_use]
+    pub fn identity(&self) -> CheckoutIdentity {
+        CheckoutIdentity::from_canonical_paths(self.root.clone(), self.key.clone())
     }
 
     /// Every worktree of the repository (ADR 0070): the main one first,
@@ -683,6 +1082,54 @@ impl Workspace {
                 tracing::debug!(%error, "no HEAD commit");
                 None
             }
+        }
+    }
+
+    /// Observe `HEAD` without conflating read failures with an unborn branch.
+    #[must_use]
+    pub fn observe_head(&self, generation: u64) -> HeadObservation {
+        let state = self.ignore.as_ref().map_or_else(
+            || HeadState::Unavailable {
+                error: "HEAD is unavailable outside a Git repository".to_owned(),
+            },
+            |git| match git.repo.head() {
+                Err(error) => HeadState::Unavailable {
+                    error: format!("cannot read HEAD: {error}"),
+                },
+                Ok(head) if head.is_unborn() => HeadState::Unborn,
+                Ok(head) => {
+                    let detached = head.is_detached();
+                    let reference = head.referent_name().map(ToString::to_string);
+                    match head.id().map(gix::Id::detach) {
+                        None => HeadState::Unavailable {
+                            error: "born HEAD has no object ID".to_owned(),
+                        },
+                        Some(id) => {
+                            if let Err(error) = check_commit_header(&git.repo, id) {
+                                HeadState::Unavailable {
+                                    error: format!("HEAD target is unavailable: {error}"),
+                                }
+                            } else {
+                                let commit = CommitId(id.to_hex().to_string());
+                                if detached {
+                                    HeadState::Detached { commit }
+                                } else if let Some(reference) = reference {
+                                    HeadState::Symbolic { reference, commit }
+                                } else {
+                                    HeadState::Unavailable {
+                                        error: "symbolic HEAD has no reference name".to_owned(),
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        );
+        HeadObservation {
+            generation,
+            checkout: self.identity(),
+            state,
         }
     }
 
@@ -1047,9 +1494,46 @@ impl Workspace {
         base: ComparisonEndpoint,
         target: ComparisonEndpoint,
     ) -> Result<Comparison, WorkspaceError> {
+        self.compare_with_manifest(base, target, None)
+    }
+
+    /// Compare endpoints while using one previously captured index snapshot.
+    ///
+    /// Every Index enumeration and read in this comparison uses `manifest`,
+    /// even if the live index changes while the comparison is running.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the manifest belongs to another
+    /// checkout or an endpoint cannot be read within the configured limits.
+    pub fn compare_with_index_manifest(
+        &mut self,
+        base: ComparisonEndpoint,
+        target: ComparisonEndpoint,
+        manifest: &IndexManifest,
+    ) -> Result<Comparison, WorkspaceError> {
+        self.compare_with_manifest(base, target, Some(manifest))
+    }
+
+    fn compare_with_manifest(
+        &mut self,
+        base: ComparisonEndpoint,
+        target: ComparisonEndpoint,
+        manifest: Option<&IndexManifest>,
+    ) -> Result<Comparison, WorkspaceError> {
         self.begin_comparison();
-        let base_files = self.endpoint_files(&base)?;
-        let target_files = self.endpoint_files(&target)?;
+        let endpoint_files = |workspace: &mut Self,
+                              endpoint: &ComparisonEndpoint|
+         -> Result<BTreeMap<PathBuf, EndpointFile>, WorkspaceError> {
+            if endpoint == &ComparisonEndpoint::Index
+                && let Some(manifest) = manifest
+            {
+                return workspace.index_manifest_files(manifest);
+            }
+            workspace.endpoint_files(endpoint)
+        };
+        let base_files = endpoint_files(self, &base)?;
+        let target_files = endpoint_files(self, &target)?;
         let target_paths = target_files
             .iter()
             .filter(|(_, file)| !file.info.mode().is_directory())
@@ -1071,7 +1555,7 @@ impl Workspace {
                 PathState::Present(file.info.clone())
             });
             let base_bytes = if base_file.is_some_and(|file| file.info.is_supported()) {
-                match self.endpoint_bytes(&base, &path) {
+                match self.endpoint_bytes_with_manifest(&base, &path, manifest) {
                     Ok(bytes) => bytes,
                     Err(error) => {
                         base_state = PathState::Missing(error.to_string());
@@ -1082,7 +1566,7 @@ impl Workspace {
                 None
             };
             let target_bytes = if target_file.is_some_and(|file| file.info.is_supported()) {
-                match self.endpoint_bytes(&target, &path) {
+                match self.endpoint_bytes_with_manifest(&target, &path, manifest) {
                     Ok(bytes) => bytes,
                     Err(error) => {
                         target_state = PathState::Missing(error.to_string());
@@ -1117,6 +1601,20 @@ impl Workspace {
             }
         }
         Ok(Comparison::from_parts(base, target, target_paths, changes))
+    }
+
+    fn endpoint_bytes_with_manifest(
+        &self,
+        endpoint: &ComparisonEndpoint,
+        relative: &Path,
+        manifest: Option<&IndexManifest>,
+    ) -> Result<Option<Vec<u8>>, WorkspaceError> {
+        if endpoint == &ComparisonEndpoint::Index
+            && let Some(manifest) = manifest
+        {
+            return self.index_manifest_bytes(manifest, relative, self.content_limit());
+        }
+        self.endpoint_bytes(endpoint, relative)
     }
 
     /// Enumerate every non-directory path present at one endpoint.
@@ -1300,28 +1798,12 @@ impl Workspace {
             })
     }
 
-    /// Load one bounded regular-file blob from an exact commit tree.
-    ///
-    /// `None` means the path is absent. Regular and executable blobs are
-    /// accepted; directories, symbolic links, submodules, unsupported modes,
-    /// and entries naming non-blob objects are rejected. Intermediate entries
-    /// must have directory mode and name actual trees before their data is
-    /// loaded. Commit and tree metadata are independently bounded before
-    /// decoding. Git replacements are ignored throughout. The blob header is
-    /// checked against `max_bytes` before allocating blob data.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`WorkspaceError`] when the commit, tree, path metadata, or
-    /// blob is unavailable or corrupt, the entry is not a regular file, or
-    /// its bytes exceed `max_bytes`. Paths must be nonempty, repository-relative,
-    /// and contain no NUL, empty, `.` or `..` components.
-    pub fn commit_blob(
+    fn commit_blob_source(
         &mut self,
         id: &CommitId,
         relative: &Path,
-        max_bytes: u64,
-    ) -> Result<Option<CommitBlob>, WorkspaceError> {
+        max_object_bytes: u64,
+    ) -> Result<Option<CommitBlobSource>, WorkspaceError> {
         self.check_scan()?;
         let failure = |message: String| WorkspaceError {
             path: self.root.join(relative),
@@ -1342,7 +1824,8 @@ impl Workspace {
         {
             return Err(failure("invalid repository-relative path".to_owned()));
         }
-        let repo = self.exact_repository(id.as_str(), max_bytes.max(MAX_EXACT_METADATA_BYTES))?;
+        let repo =
+            self.exact_repository(id.as_str(), max_object_bytes.max(MAX_EXACT_METADATA_BYTES))?;
         let object_id = ObjectId::from_hex(id.as_str().as_bytes())
             .map_err(|error| failure(format!("invalid commit object ID: {error}")))?;
         check_commit_header(&repo, object_id).map_err(failure)?;
@@ -1397,23 +1880,566 @@ impl Workspace {
         if header.kind() != gix::objs::Kind::Blob {
             return Err(failure("entry names a non-blob object".to_owned()));
         }
-        let size = header.size();
-        if size > max_bytes {
-            return Err(failure(format!("blob exceeds the {max_bytes}-byte limit")));
-        }
-        let blob = repo
-            .find_blob(object_id)
+        Ok(Some(CommitBlobSource {
+            repo,
+            mode,
+            size: header.size(),
+            object: object_id,
+        }))
+    }
+
+    fn load_commit_blob(
+        &mut self,
+        id: &CommitId,
+        relative: &Path,
+        source: &CommitBlobSource,
+    ) -> Result<CommitBlob, WorkspaceError> {
+        self.check_scan()?;
+        let failure = |message: String| WorkspaceError {
+            path: self.root.join(relative),
+            message: format!(
+                "commit {} path {}: {message}",
+                id.short(),
+                relative.display()
+            ),
+        };
+        let blob = source
+            .repo
+            .find_blob(source.object)
             .map_err(|error| failure(format!("cannot read commit blob: {error}")))?;
         let bytes = blob.detach().data;
-        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != size {
+        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != source.size {
             return Err(failure("blob header size does not match data".to_owned()));
         }
-        Ok(Some(CommitBlob {
-            mode,
-            size,
-            object: object_id.to_hex().to_string(),
+        Ok(CommitBlob {
+            mode: source.mode,
+            size: source.size,
+            object: source.object.to_hex().to_string(),
             bytes,
+        })
+    }
+
+    /// Load one bounded regular-file blob from an exact commit tree.
+    ///
+    /// `None` means the path is absent. Regular and executable blobs are
+    /// accepted; directories, symbolic links, submodules, unsupported modes,
+    /// and entries naming non-blob objects are rejected. Intermediate entries
+    /// must have directory mode and name actual trees before their data is
+    /// loaded. Commit and tree metadata are independently bounded before
+    /// decoding. Git replacements are ignored throughout. The blob header is
+    /// checked against `max_bytes` before allocating blob data.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the commit, tree, path metadata, or
+    /// blob is unavailable or corrupt, the entry is not a regular file, or
+    /// its bytes exceed `max_bytes`. Paths must be nonempty, repository-relative,
+    /// and contain no NUL, empty, `.` or `..` components.
+    pub fn commit_blob(
+        &mut self,
+        id: &CommitId,
+        relative: &Path,
+        max_bytes: u64,
+    ) -> Result<Option<CommitBlob>, WorkspaceError> {
+        let Some(source) = self.commit_blob_source(id, relative, max_bytes)? else {
+            return Ok(None);
+        };
+        if source.size > max_bytes {
+            return Err(WorkspaceError {
+                path: self.root.join(relative),
+                message: format!(
+                    "commit {} path {}: blob exceeds the {max_bytes}-byte limit",
+                    id.short(),
+                    relative.display()
+                ),
+            });
+        }
+        self.load_commit_blob(id, relative, &source).map(Some)
+    }
+
+    /// Verify named regular commit blobs against full-file identities.
+    ///
+    /// Distinct paths, including failures, are read at most once. Candidate
+    /// count and loaded bytes share the configured comparison budgets. A file
+    /// larger than the total byte budget is reported as unavailable so later
+    /// candidates can progress. A file that fits the total budget but not the
+    /// remaining aggregate budget returns typed continuation before loading.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the commit itself is unavailable or
+    /// the candidate or path budget is exceeded.
+    pub fn match_commit_files(
+        &mut self,
+        id: &CommitId,
+        candidates: &[ExactFile],
+    ) -> Result<ExactFileBatch, WorkspaceError> {
+        self.check_path_count(candidates.len())?;
+        let checkout = self.identity();
+        if candidates
+            .iter()
+            .any(|candidate| candidate.checkout() != &checkout)
+        {
+            return Err(
+                self.scan_error("exact-file candidate belongs to another checkout or repository")
+            );
+        }
+        self.commit(id)?;
+        self.begin_comparison();
+        let total_limit = self.limits.comparison_bytes;
+        let mut cache = BTreeMap::<PathBuf, Result<Option<FullFileDigest>, String>>::new();
+        let mut results = Vec::with_capacity(candidates.len());
+        for (index, candidate) in candidates.iter().enumerate() {
+            if let Some(result) = cache.get(candidate.path()) {
+                results.push(exact_file_result(candidate, result));
+                continue;
+            }
+            self.check_path_count(cache.len().saturating_add(1))?;
+            let source = match self.commit_blob_source(id, candidate.path(), total_limit) {
+                Ok(source) => source,
+                Err(error) => {
+                    let loaded = Err(error.to_string());
+                    results.push(exact_file_result(candidate, &loaded));
+                    cache.insert(candidate.path.clone(), loaded);
+                    continue;
+                }
+            };
+            let Some(source) = source else {
+                let loaded = Ok(None);
+                results.push(exact_file_result(candidate, &loaded));
+                cache.insert(candidate.path.clone(), loaded);
+                continue;
+            };
+            if source.size > total_limit {
+                let loaded = Err(format!(
+                    "commit {} path {}: blob exceeds the {total_limit}-byte limit",
+                    id.short(),
+                    candidate.path.display()
+                ));
+                results.push(exact_file_result(candidate, &loaded));
+                cache.insert(candidate.path.clone(), loaded);
+                continue;
+            }
+            if source.size > self.content_limit() {
+                return Ok(ExactFileBatch {
+                    results,
+                    progress: ExactFileProgress::ContinueAt { next: index },
+                });
+            }
+
+            self.charge_content(usize::try_from(source.size).unwrap_or(usize::MAX))?;
+            let result = self
+                .load_commit_blob(id, candidate.path(), &source)
+                .map(|blob| Some(FullFileDigest::from_bytes(blob.bytes())))
+                .map_err(|error| error.to_string());
+            results.push(exact_file_result(candidate, &result));
+            cache.insert(candidate.path.clone(), result);
+        }
+        Ok(ExactFileBatch {
+            results,
+            progress: ExactFileProgress::Complete,
+        })
+    }
+
+    /// Capture one complete immutable index manifest within comparison limits.
+    ///
+    /// Split indexes are resolved by the index reader. Conflicts,
+    /// intent-to-add entries, sparse directories, invalid paths, and unknown
+    /// modes return an explicit unavailable result rather than a partial
+    /// manifest.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the index cannot be read or a finite
+    /// path/manifest-byte limit is exceeded.
+    pub fn index_manifest(&self) -> Result<IndexManifestCapture, WorkspaceError> {
+        let index = self.bounded_index()?;
+        self.check_path_count(index.entries().len())?;
+        if index.is_sparse() {
+            return Ok(IndexManifestCapture::Unavailable(
+                IndexManifestUnavailable::Sparse,
+            ));
+        }
+        let mut entries = Vec::with_capacity(index.entries().len());
+        let mut canonical_bytes = 8_u64;
+        for entry in index.entries() {
+            self.check_scan()?;
+            let path = entry.path(&index);
+            if entry.stage() != gix::index::entry::Stage::Unconflicted {
+                return Ok(IndexManifestCapture::Unavailable(
+                    IndexManifestUnavailable::Conflict {
+                        path: Box::from(path.as_ref()),
+                    },
+                ));
+            }
+            if entry
+                .flags
+                .contains(gix::index::entry::Flags::INTENT_TO_ADD)
+            {
+                return Ok(IndexManifestCapture::Unavailable(
+                    IndexManifestUnavailable::IntentToAdd {
+                        path: Box::from(path.as_ref()),
+                    },
+                ));
+            }
+            if !valid_git_path(path.as_ref()) {
+                return Ok(IndexManifestCapture::Unavailable(
+                    IndexManifestUnavailable::Unsupported {
+                        path: Box::from(path.as_ref()),
+                        detail: "invalid repository-relative path".to_owned(),
+                    },
+                ));
+            }
+            let mode = index_mode(entry.mode);
+            if matches!(mode, FileMode::Directory | FileMode::Other(_)) {
+                return Ok(IndexManifestCapture::Unavailable(
+                    IndexManifestUnavailable::Unsupported {
+                        path: Box::from(path.as_ref()),
+                        detail: format!("unsupported index mode {mode:?}"),
+                    },
+                ));
+            }
+            canonical_bytes = canonical_bytes
+                .saturating_add(8)
+                .saturating_add(u64::try_from(path.len()).unwrap_or(u64::MAX))
+                .saturating_add(4)
+                .saturating_add(u64::try_from(entry.id.as_bytes().len()).unwrap_or(u64::MAX));
+            if canonical_bytes > self.limits.comparison_bytes {
+                return Err(self.scan_error(
+                    "index manifest limited by comparison byte budget; coverage is incomplete",
+                ));
+            }
+            entries.push(IndexManifestEntry {
+                path: Box::from(path.as_ref()),
+                mode,
+                object: entry.id.to_hex().to_string(),
+                assume_unchanged: entry.flags.contains(gix::index::entry::Flags::ASSUME_VALID),
+                skip_worktree: entry
+                    .flags
+                    .contains(gix::index::entry::Flags::SKIP_WORKTREE),
+            });
+        }
+        entries.sort_by(|left, right| left.path.cmp(&right.path));
+        if entries.windows(2).any(|pair| pair[0].path == pair[1].path) {
+            return Ok(IndexManifestCapture::Unavailable(
+                IndexManifestUnavailable::Unsupported {
+                    path: Box::new([]),
+                    detail: "duplicate index path".to_owned(),
+                },
+            ));
+        }
+        let identity = manifest_identity(&entries);
+        Ok(IndexManifestCapture::Available(IndexManifest {
+            checkout: self.identity(),
+            identity,
+            entries: entries.into_boxed_slice(),
         }))
+    }
+
+    fn bounded_index(&self) -> Result<gix::index::File, WorkspaceError> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Err(self.scan_error("index manifest is unavailable outside a Git repository"));
+        };
+        let index_exists = match fs::metadata(git.repo.index_path()) {
+            Ok(metadata) if metadata.len() > self.limits.comparison_bytes => {
+                return Err(self.scan_error(
+                    "index file limited by comparison byte budget; coverage is incomplete",
+                ));
+            }
+            Ok(_) => true,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+            Err(error) => {
+                return Err(self.scan_error(format!("cannot inspect the index: {error}")));
+            }
+        };
+        let repo = gix::open_opts(
+            git.repo.git_dir(),
+            exact_open_options(self.limits.comparison_bytes).open_path_as_is(true),
+        )
+        .map_err(|error| self.scan_error(format!("cannot open the bounded index: {error}")))?;
+        if index_exists {
+            repo.open_index().map_err(|error| {
+                self.scan_error(format!("cannot read the index manifest: {error}"))
+            })
+        } else {
+            Ok(gix::index::File::from_state(
+                gix::index::State::new(repo.object_hash()),
+                repo.index_path(),
+            ))
+        }
+    }
+
+    /// Read bytes for one path from a captured index manifest.
+    ///
+    /// The captured object ID is used even if the live index changes. No
+    /// checkout filters are executed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] for a foreign manifest, invalid path,
+    /// unsupported mode, missing/non-blob object, or an exceeded byte limit.
+    pub fn index_manifest_bytes(
+        &self,
+        manifest: &IndexManifest,
+        relative: &Path,
+        max_bytes: u64,
+    ) -> Result<Option<Vec<u8>>, WorkspaceError> {
+        if manifest.checkout != self.identity() {
+            return Err(self.scan_error("index manifest belongs to another checkout"));
+        }
+        let path = unix_path(relative);
+        if !valid_git_path(path.as_ref()) {
+            return Err(self.scan_error("invalid index manifest path"));
+        }
+        let Some(entry) = manifest.entry(path.as_ref()) else {
+            return Ok(None);
+        };
+        if !matches!(
+            entry.mode,
+            FileMode::Regular | FileMode::Executable | FileMode::Symlink
+        ) {
+            return Err(self.scan_error(format!(
+                "index manifest path has unsupported {:?} mode",
+                entry.mode
+            )));
+        }
+        let git = self
+            .ignore
+            .as_ref()
+            .ok_or_else(|| self.scan_error("index manifest content is unavailable outside Git"))?;
+        let id = ObjectId::from_hex(entry.object.as_bytes())
+            .map_err(|error| self.scan_error(format!("invalid manifest object ID: {error}")))?;
+        let header = git
+            .repo
+            .find_header(id)
+            .map_err(|error| self.scan_error(format!("cannot inspect manifest blob: {error}")))?;
+        if header.kind() != gix::objs::Kind::Blob {
+            return Err(self.scan_error("index manifest entry names a non-blob object"));
+        }
+        if header.size() > max_bytes {
+            return Err(self.scan_error(format!(
+                "index manifest blob exceeds the {max_bytes}-byte limit"
+            )));
+        }
+        self.charge_content(usize::try_from(header.size()).map_err(|_error| {
+            self.scan_error("index manifest blob size exceeds the platform limit")
+        })?)?;
+        let bytes = git
+            .repo
+            .find_blob(id)
+            .map_err(|error| self.scan_error(format!("cannot read manifest blob: {error}")))?
+            .detach()
+            .data;
+        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != header.size() {
+            return Err(self.scan_error("manifest blob header size does not match data"));
+        }
+        Ok(Some(bytes))
+    }
+
+    /// Report captured Index facts for one repository-relative path.
+    ///
+    /// Gitlinks are metadata-only and are never dereferenced in the
+    /// superproject object database.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] for a foreign manifest, invalid path, or
+    /// malformed/missing blob metadata for a supported file mode.
+    pub fn index_manifest_path_info(
+        &self,
+        manifest: &IndexManifest,
+        relative: &Path,
+    ) -> Result<Option<PathInfo>, WorkspaceError> {
+        if manifest.checkout != self.identity() {
+            return Err(self.scan_error("index manifest belongs to another checkout"));
+        }
+        let path = unix_path(relative);
+        if !valid_git_path(path.as_ref()) {
+            return Err(self.scan_error("invalid index manifest path"));
+        }
+        let Some(entry) = manifest.entry(path.as_ref()) else {
+            return Ok(None);
+        };
+        let size = if entry.mode == FileMode::Submodule {
+            None
+        } else {
+            let git = self.ignore.as_ref().ok_or_else(|| {
+                self.scan_error("index manifest content is unavailable outside Git")
+            })?;
+            let id = ObjectId::from_hex(entry.object.as_bytes())
+                .map_err(|error| self.scan_error(format!("invalid manifest object ID: {error}")))?;
+            let header = git.repo.find_header(id).map_err(|error| {
+                self.scan_error(format!("cannot inspect manifest blob: {error}"))
+            })?;
+            if matches!(
+                entry.mode,
+                FileMode::Regular | FileMode::Executable | FileMode::Symlink
+            ) && header.kind() != gix::objs::Kind::Blob
+            {
+                return Err(self.scan_error("index manifest entry names a non-blob object"));
+            }
+            Some(header.size())
+        };
+        Ok(Some(
+            PathInfo::new(entry.mode, size, Some(entry.object.clone()), false)
+                .with_supported(endpoint_size_supported(entry.mode, size)),
+        ))
+    }
+
+    /// Enumerate non-directory paths from one captured Index manifest.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] for a foreign manifest or invalid path.
+    pub fn index_manifest_paths(
+        &self,
+        manifest: &IndexManifest,
+    ) -> Result<Vec<PathBuf>, WorkspaceError> {
+        if manifest.checkout != self.identity() {
+            return Err(self.scan_error("index manifest belongs to another checkout"));
+        }
+        self.check_path_count(manifest.entries.len())?;
+        let mut paths = Vec::with_capacity(manifest.entries.len());
+        for entry in &manifest.entries {
+            self.check_scan()?;
+            if !valid_git_path(&entry.path) {
+                return Err(self.scan_error("invalid index manifest path"));
+            }
+            paths.push(gix::path::from_bstr(entry.path.as_bstr()).into_owned());
+        }
+        Ok(paths)
+    }
+
+    /// Compare a captured index manifest with one exact commit tree.
+    ///
+    /// Equality covers raw path bytes, Git modes, and exact object IDs. It
+    /// does not write trees or execute checkout filters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] for a foreign manifest, unavailable commit
+    /// tree, cancellation, or exceeded path/manifest-byte limits.
+    pub fn index_manifest_matches_commit(
+        &self,
+        manifest: &IndexManifest,
+        id: &CommitId,
+    ) -> Result<bool, WorkspaceError> {
+        if manifest.checkout.repository != self.key {
+            return Err(self.scan_error("index manifest belongs to another repository"));
+        }
+        let entries = self.exact_commit_entries(id)?;
+        Ok(entries.len() == manifest.entries.len()
+            && entries
+                .iter()
+                .zip(manifest.entries.iter())
+                .all(|(left, right)| {
+                    left.path == right.path
+                        && left.mode == right.mode
+                        && left.object == right.object
+                }))
+    }
+
+    fn exact_commit_entries(
+        &self,
+        id: &CommitId,
+    ) -> Result<Vec<IndexManifestEntry>, WorkspaceError> {
+        self.begin_comparison();
+        let repo = self.exact_repository(id.as_str(), MAX_EXACT_METADATA_BYTES)?;
+        let object_id = ObjectId::from_hex(id.as_str().as_bytes()).map_err(|error| {
+            self.revision_error(id.as_str(), &format!("invalid commit object ID: {error}"))
+        })?;
+        check_commit_header(&repo, object_id)
+            .map_err(|message| self.revision_error(id.as_str(), &message))?;
+        let commit = repo.find_commit(object_id).map_err(|error| {
+            self.revision_error(id.as_str(), &format!("cannot read commit object: {error}"))
+        })?;
+        let tree = commit
+            .tree_id()
+            .map_err(|error| {
+                self.revision_error(id.as_str(), &format!("cannot read commit tree ID: {error}"))
+            })?
+            .detach();
+        drop(commit);
+        let traversal_limit = self.limits.retained_paths;
+        let mut traversal_items = 0_usize;
+        self.charge_tree_item(&mut traversal_items, traversal_limit)?;
+        let mut pending = vec![(tree, Vec::<u8>::new())];
+        let mut entries = Vec::new();
+        while let Some((tree, prefix)) = pending.pop() {
+            self.check_scan()?;
+            let header = repo.find_header(tree).map_err(|error| {
+                self.revision_error(id.as_str(), &format!("cannot inspect commit tree: {error}"))
+            })?;
+            if header.kind() != gix::objs::Kind::Tree {
+                return Err(self.revision_error(
+                    id.as_str(),
+                    "commit directory entry names a non-tree object",
+                ));
+            }
+            check_exact_metadata_size(header.size(), "commit tree")
+                .map_err(|message| self.revision_error(id.as_str(), &message))?;
+            self.charge_content(usize::try_from(header.size()).map_err(|_error| {
+                self.scan_error("commit tree size exceeds the platform limit")
+            })?)?;
+            let tree = repo.find_tree(tree).map_err(|error| {
+                self.revision_error(id.as_str(), &format!("cannot read commit tree: {error}"))
+            })?;
+            for entry in tree.iter() {
+                self.check_scan()?;
+                self.charge_tree_item(&mut traversal_items, traversal_limit)?;
+                let entry = entry.map_err(|error| {
+                    self.revision_error(id.as_str(), &format!("cannot read tree entry: {error}"))
+                })?;
+                let separator = usize::from(!prefix.is_empty());
+                let path_len = prefix
+                    .len()
+                    .saturating_add(separator)
+                    .saturating_add(entry.filename().len());
+                let fixed_bytes = 8_usize
+                    .saturating_add(4)
+                    .saturating_add(entry.id().as_bytes().len());
+                self.charge_content(path_len.saturating_add(fixed_bytes))?;
+                let mut path = Vec::with_capacity(path_len);
+                path.extend_from_slice(&prefix);
+                if separator != 0 {
+                    path.push(b'/');
+                }
+                path.extend_from_slice(entry.filename());
+                if !valid_git_path(&path) {
+                    return Err(self.revision_error(
+                        id.as_str(),
+                        "commit tree contains an invalid repository-relative path",
+                    ));
+                }
+                let mode = tree_mode(entry.mode());
+                if mode == FileMode::Directory {
+                    self.charge_tree_item(&mut traversal_items, traversal_limit)?;
+                    self.charge_content(path.len())?;
+                    pending.push((entry.id().detach(), path));
+                    continue;
+                }
+                self.check_path_count(entries.len().saturating_add(1))?;
+                entries.push(IndexManifestEntry {
+                    path: path.into_boxed_slice(),
+                    mode,
+                    object: entry.id().to_hex().to_string(),
+                    assume_unchanged: false,
+                    skip_worktree: false,
+                });
+            }
+        }
+        entries.sort_by(|left, right| left.path.cmp(&right.path));
+        Ok(entries)
+    }
+
+    fn charge_tree_item(&self, used: &mut usize, limit: usize) -> Result<(), WorkspaceError> {
+        *used = used.saturating_add(1);
+        if *used > limit {
+            return Err(self.scan_error(
+                "commit tree traversal limited by item budget; coverage is incomplete",
+            ));
+        }
+        Ok(())
     }
 
     pub(crate) fn endpoint_files(
@@ -1432,6 +2458,26 @@ impl Workspace {
                 ),
             }),
         }
+    }
+
+    fn index_manifest_files(
+        &mut self,
+        manifest: &IndexManifest,
+    ) -> Result<BTreeMap<PathBuf, EndpointFile>, WorkspaceError> {
+        if manifest.checkout != self.identity() {
+            return Err(self.scan_error("index manifest belongs to another checkout"));
+        }
+        self.check_path_count(manifest.entries.len())?;
+        let mut files = BTreeMap::new();
+        for entry in &manifest.entries {
+            self.check_scan()?;
+            let path = gix::path::from_bstr(entry.path.as_bstr()).into_owned();
+            let info = self
+                .index_manifest_path_info(manifest, &path)?
+                .ok_or_else(|| self.scan_error("index manifest path disappeared"))?;
+            files.insert(path, EndpointFile { info });
+        }
+        Ok(files)
     }
 
     fn revision_error(&self, revision: &str, detail: &str) -> WorkspaceError {
@@ -3003,6 +4049,59 @@ fn index_mode(mode: gix::index::entry::Mode) -> FileMode {
     }
 }
 
+fn git_mode(mode: FileMode) -> u32 {
+    match mode {
+        FileMode::Directory => 0o040_000,
+        FileMode::Regular => 0o100_644,
+        FileMode::Executable => 0o100_755,
+        FileMode::Symlink => 0o120_000,
+        FileMode::Submodule => 0o160_000,
+        FileMode::Other(raw) => raw,
+    }
+}
+
+fn manifest_identity(entries: &[IndexManifestEntry]) -> String {
+    use fmt::Write as _;
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"fathomable-index-manifest-v1\0");
+    hasher.update(
+        u64::try_from(entries.len())
+            .unwrap_or(u64::MAX)
+            .to_be_bytes(),
+    );
+    for entry in entries {
+        hasher.update(
+            u64::try_from(entry.path.len())
+                .unwrap_or(u64::MAX)
+                .to_be_bytes(),
+        );
+        hasher.update(entry.path.as_ref());
+        hasher.update(git_mode(entry.mode).to_be_bytes());
+        hasher.update(
+            u64::try_from(entry.object.len())
+                .unwrap_or(u64::MAX)
+                .to_be_bytes(),
+        );
+        hasher.update(entry.object.as_bytes());
+    }
+    let mut out = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+fn valid_git_path(path: &[u8]) -> bool {
+    !path.is_empty()
+        && !path.starts_with(b"/")
+        && !path.ends_with(b"/")
+        && !path.contains(&0)
+        && path
+            .split(|byte| *byte == b'/')
+            .all(|part| !part.is_empty() && part != b"." && part != b"..")
+}
+
 fn working_tree_mode(metadata: &fs::Metadata) -> FileMode {
     if metadata.is_symlink() {
         return FileMode::Symlink;
@@ -3399,9 +4498,7 @@ fn collect_blobs(
             let entry = entry.map_err(|error| error.to_string())?;
             let mut path = prefix.clone();
             path.extend_from_slice(entry.filename());
-            if out.len().saturating_add(pending.len())
-                >= limits.retained_paths.min(limits.comparison_paths)
-            {
+            if out.len().saturating_add(pending.len()) >= limits.comparison_path_limit() {
                 return Err(
                     "Git discovery limited by retained-path budget; coverage is incomplete"
                         .to_owned(),

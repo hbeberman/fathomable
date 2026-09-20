@@ -98,7 +98,10 @@ impl App {
         self.store
             .iter()
             .flat_map(Store::threads)
-            .filter(|thread| self.reach.here(thread))
+            .filter(|thread| {
+                self.thread_matches_presentation(thread)
+                    .unwrap_or_else(|| self.reach.here(thread))
+            })
             .filter(|thread| {
                 matches!(
                     thread.lifecycle(),

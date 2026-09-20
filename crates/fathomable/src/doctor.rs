@@ -477,7 +477,7 @@ mod tests {
         assert!(!report.passed());
         assert!(report.lines().iter().any(|line| {
             line.kind == Kind::Fail
-                && line.text == "incompatible thread storage versions: 3 on disk, 5 expected"
+                && line.text == "incompatible thread storage versions: 3 on disk, 6 expected"
         }));
         assert!(report.lines().iter().any(|line| {
             line.kind == Kind::Info

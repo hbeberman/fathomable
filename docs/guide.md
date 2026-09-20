@@ -251,13 +251,26 @@ These choices never fetch, check out, or modify Git. A pending new-line or
 new-file comment must be submitted or cancelled before changing mode, Source,
 or Target.
 
-A fresh Git workspace compares a pinned `HEAD` to the working tree. Committing
-does **not** advance that Source; choose the new commit explicitly. The `Space d`
+A fresh Git workspace compares symbolic `HEAD` to the working tree and
+remembers that following intent separately from the resolved commit. When the
+same branch advances, every policy immediately displays new
+`HEAD -> WorkingTree`; `diff.head-transition` decides whether future movement
+continues to follow or pins the new commit. `ask-pin` (the default) follows and
+offers **Pin here**; `ask-follow` pins and offers **Follow HEAD**; `pin` and
+`follow` apply those outcomes without asking. Branch switches and detached,
+unborn, unavailable, or linked-worktree HEAD movement do not change symbolic
+intent.
+
+The persistent choice appears even when `watch.toast` is zero. Click it, choose
+the transition row in the Diff menu, or press `Space d d` to open the same
+two-choice card. `Esc` or clicking outside dismisses the choice and keeps the
+policy's immediate outcome. A newer transition supersedes it. The `Space d`
 card begins with **normal diff**, **unified diff**, and **diff off**, then
 **pick source…**, **pick target…**, **show uncommitted changes**, **show latest
 commit**, and **show a specific commit…**. **show uncommitted changes**, or
-`Space d d`, pins the current `HEAD` as Source and selects the working tree as
-Target. **show latest commit**, or `Space d l`, selects the immutable `HEAD~1`
+`Space d d`, normally selects symbolic `HEAD` as Source and the working tree
+as Target; while a HEAD or Index transition choice is pending, it opens that
+choice instead. **show latest commit**, or `Space d l`, selects the immutable `HEAD~1`
 to `HEAD` pair. **show a specific commit…**, or `Space d c`, opens a
 commit-only picker and compares the chosen commit with its first parent; root
 commits are rejected explicitly. **save review point** and **manage review
@@ -321,6 +334,14 @@ pinned `HEAD` (or EmptyTree) while preserving Target, diff mode, and
 whitespace. A pending new annotation must be submitted or cancelled before
 management.
 
+Threads created from a review point belong to that exact point, not merely to
+its Git baseline. They can also become visible at a commit after Fathomable
+verifies that the regular blob at their recorded path exactly matches the
+complete captured point-side bytes. This per-file landing is independent:
+some files from a point can land while others remain point-only. Deleting a
+point removes the point view but preserves immutable thread evidence and any
+durable landed-commit association.
+
 Use `Shift-Down` or `J` and `Shift-Up` or `K` to cycle every comparison
 change across the workspace. Text hunks are individual stops; a changed path
 with no text hunk, such as a binary or mode-only change, is one stop. Use
@@ -356,9 +377,18 @@ The File footer keeps the core loop visible as
 actions. On a thread row, `comment c` becomes `reply c`; where both fold
 actions apply, the footer uses `folding z/Z`.
 
-The board is shared across the repository's worktrees and survives commits
-and branch changes. **Review** offers **Recently resolved**, **Archived
-threads**, and **Clear board...**. Clearing archives the shared board after
+The stored board is shared across the repository's worktrees and survives
+commits and branch changes. Normal surfaces show only discussions belonging to
+the last successfully displayed Source/Target context: commit origins match
+the exact Target, with an additional active-Source route only for Base-side
+comments. Working-tree and index origins use legacy placement until exact
+per-file evidence durably lands them on a commit; landed origins follow that
+commit. Pending or failed comparisons retain the prior accepted context, and
+Diff Off has no Source route. The normal Thread list, counts, circles, paths,
+and traversal stay filtered even while an explicit history view is open.
+
+**Review** offers repository-wide **Recently resolved**, **Archived threads**,
+and **Clear board...**. Clearing archives the shared board after
 confirmation; the confirmation presents **clear** before **cancel**, accepts
 `Enter` or a click on **clear**, and cancels with `Esc`, a click on **cancel**,
 or a click outside. It does not delete history. Restore an archived entry
@@ -421,6 +451,7 @@ diff {
     mode "normal" // Startup presentation: "normal", "unified", or "off".
     context 3 // Unchanged lines shown around each diff hunk.
     ignore-whitespace #false // Default only; saved comparisons keep their whitespace rule.
+    head-transition "ask-pin" // After HEAD moves: "ask-pin", "ask-follow", "pin", or "follow".
 }
 
 user {
@@ -538,8 +569,9 @@ abbreviations, branches, tags, parent expressions, ranges, paths, URLs,
 whitespace-padded values, and lowercase `head` are rejected. Hex input may be
 uppercase, but every successful selected response includes the canonical
 lowercase full ID as top-level `resolved_commit`, including empty reads,
-zero-limit reads, and keyed write replays. Omit `source` or pass `null` for the existing
-working-tree behavior. `thread_reply` has no `source` field and is unchanged.
+zero-limit reads, and keyed write replays. Omit `source` or pass `null` for a
+repository-wide board read or a working-tree start. `thread_reply` has no
+`source` field and is unchanged.
 
 For example, a selected read with no matches still confirms the pinned source:
 
@@ -586,6 +618,8 @@ Deleted discussions cannot be recreated by retrying their keys.
 A selected read returns only discussions whose immutable
 `origin.version.kind` is `commit` with that exact ID. Working-tree, index, and
 review-point origins are excluded even when their observed `HEAD` matches.
+They remain excluded after durable viewer landing on that commit: landing does
+not rewrite immutable origin or broaden MCP source selection.
 `path` filters the immutable `origin.path`. In each result, `origin` remains
 the historical evidence; top-level `path`, `anchor_range`, and
 `placement_evidence` are the stored current references; and top-level
@@ -704,12 +738,16 @@ eligible changed content and rely on Git objects for unchanged committed
 files; they are not standalone backups. Outside Git, points capture all
 eligible files.
 
-After upgrading, restart viewers and the agent host's MCP connection
-together. Incompatible annotation stores are refused, not automatically
-migrated or deleted. State persists across ordinary restarts of a compatible
-build, but an upgrade or downgrade may require an explicit operator reset.
-Stop affected processes before backing up or resetting app-owned state and
-review the actual XDG paths; never remove repository files as part of a reset.
+Annotation format 6 and the intent-bearing comparison preference deliberately
+have no compatibility reader, migration, backfill, or inferred alias for their
+predecessors. Before manually deleting old `threads.jsonl` and
+`comparison/comparison.json` state, stop every affected viewer and the agent
+host's MCP processes. Start only the new build after the reset. Fathomable
+refuses incompatible state and never deletes it during startup, build, or
+installation. State persists across ordinary restarts of a compatible build,
+but an upgrade or downgrade may require another explicit operator reset.
+Review the actual XDG paths before backing up or resetting app-owned state;
+never remove repository files as part of a reset.
 A backup is recovery material for a build that understands that exact stored
 format, not a migration format for another build. Configuration is preserved
 by default, but obsolete settings may need manual changes.

@@ -41,7 +41,7 @@ use thiserror::Error;
 use crate::content;
 use crate::diff::{Comparison, FileMode, PathChange, PathInfo, PathState};
 use crate::workspace::{
-    CommitId, ComparisonEndpoint, EndpointFile, Filter, Workspace, WorkspaceError,
+    CheckoutIdentity, CommitId, ComparisonEndpoint, EndpointFile, Filter, Workspace, WorkspaceError,
 };
 
 const INDEX_FILE: &str = "review-points.jsonl";
@@ -94,6 +94,12 @@ impl ReviewPoint {
     #[must_use]
     pub fn workspace_key(&self) -> &Path {
         &self.workspace_key
+    }
+
+    /// Immutable checkout and repository identity that owns this point.
+    #[must_use]
+    pub fn checkout_identity(&self) -> CheckoutIdentity {
+        CheckoutIdentity::from_canonical_paths(self.checkout.clone(), self.workspace_key.clone())
     }
 
     /// The observed committed baseline, or `None` for an unborn/non-Git point.

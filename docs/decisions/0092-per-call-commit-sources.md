@@ -15,6 +15,12 @@ tags:
 
 Status: accepted (2026-09-19)
 
+Viewer membership amended 2026-09-20 by
+[0093](0093-version-scoped-viewer-membership.md). Durable landing can make a
+mutable or review-point origin visible with a commit in the viewer, but it
+does not change selected MCP reads: those still match only the immutable
+commit creation origin. Unselected reads remain repository-wide.
+
 Amends [0061](0061-agents-start-threads.md),
 [0082](0082-three-tool-review-core.md),
 [0084](0084-explicit-mcp-contracts.md),

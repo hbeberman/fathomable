@@ -25,6 +25,7 @@ mod goto_file;
 mod highlight;
 pub(crate) mod input;
 mod jumplist;
+mod landing;
 mod licenses;
 mod mcp_setup;
 mod menu_bar;
@@ -53,8 +54,8 @@ use fathomable_core::annotations::{
     self, ActivityCursor, MessageTarget, ResolutionOutcome, Store, StoreError, ThreadId,
 };
 use fathomable_core::config::{
-    DiffConfig, DiffMode, MarkdownConfig, SidebarConfig, ThreadsConfig, UserConfig, ViewerConfig,
-    WatchConfig,
+    DiffConfig, DiffMode, HeadTransitionPolicy, MarkdownConfig, SidebarConfig, ThreadsConfig,
+    UserConfig, ViewerConfig, WatchConfig,
 };
 use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
@@ -195,6 +196,10 @@ pub(crate) enum PickerKind {
     ReviewPointManage,
     /// The worktrees of the workspace, the active one marked (ADR 0070).
     Worktree,
+    /// A pending HEAD transition decision.
+    HeadTransition,
+    /// A pending Index-to-working-tree transition decision.
+    IndexTransition,
 }
 
 /// How a nested comparison picker applies its selected commit.
@@ -235,6 +240,12 @@ pub(crate) struct CommitSearch {
     prefix: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TransitionPrompt {
+    Head(comparison::HeadPrompt),
+    Index(comparison::IndexPrompt),
+}
+
 /// The open picker popup.
 #[derive(Debug)]
 pub(crate) struct PickerState {
@@ -247,6 +258,7 @@ pub(crate) struct PickerState {
     scroll: usize,
     scope: Option<String>,
     id_search: Option<PickerSearch>,
+    transition: Option<TransitionPrompt>,
 }
 
 impl PickerState {
@@ -268,6 +280,7 @@ impl PickerState {
             scroll: 0,
             scope,
             id_search: None,
+            transition: None,
         }
     }
 
@@ -779,12 +792,19 @@ pub(crate) struct App {
     review_points: Option<fathomable_core::review_points::ReviewPointStore>,
     /// The one comparison selection for this checkout.
     comparison: comparison::State,
+    /// Ordered, bounded annotation landing reconciliation.
+    landing: landing::Landing,
     /// Cached path/count projection for the current comparison generation.
     comparison_status: Status,
     /// The explicitly selected session-wide diff presentation.
     diff_mode: DiffMode,
     /// The active presentation restored when Base is selected while Off.
     last_active_diff_mode: DiffMode,
+    /// Policy for qualifying same-branch `HEAD` movement.
+    head_transition_policy: HeadTransitionPolicy,
+    /// Transition decision retained independently of transient notices.
+    head_transition_prompt: Option<comparison::HeadPrompt>,
+    index_transition_prompt: Option<comparison::IndexPrompt>,
     /// Target-only path boundary while diff presentation is Off.
     off_target_paths: Option<Vec<PathBuf>>,
     tree_walk: background::Worker<files_pane::TreeRequest, files_pane::TreeResult>,
@@ -929,9 +949,13 @@ impl App {
             toasts: Vec::new(),
             review_points,
             comparison,
+            landing: landing::Landing::new(),
             comparison_status: Status::default(),
             diff_mode,
             last_active_diff_mode,
+            head_transition_policy: diff.head_transition,
+            head_transition_prompt: None,
+            index_transition_prompt: None,
             off_target_paths: None,
             tree_walk: background::Worker::new(files_pane::expand_tree),
             tree_issue: None,
@@ -1083,6 +1107,7 @@ impl App {
                     };
                 }
                 self.refresh_after_thread_store_change();
+                self.trigger_landing(None);
                 StoreReload {
                     changed: true,
                     healthy: true,
@@ -1197,6 +1222,11 @@ impl App {
 
         let activities = store
             .agent_activity_since(self.activity_cursor)
+            .filter(|activity| {
+                store
+                    .thread(activity.thread())
+                    .is_none_or(|thread| self.normal_thread_without_draft(thread))
+            })
             .collect::<Vec<_>>();
         if activities.is_empty() {
             self.activity_cursor = end;
@@ -2508,7 +2538,12 @@ impl App {
                 }
             }
             jumplist::Position::Review { thread } => {
-                self.show_thread_in_review(thread);
+                if self
+                    .thread(thread)
+                    .is_some_and(|candidate| self.normal_thread(candidate))
+                {
+                    self.show_thread_in_review(thread);
+                }
             }
         }
     }
@@ -2671,6 +2706,24 @@ impl App {
         {
             return;
         }
+        let transition = match kind {
+            PickerKind::HeadTransition => self
+                .head_transition_prompt
+                .clone()
+                .map(TransitionPrompt::Head),
+            PickerKind::IndexTransition => self
+                .index_transition_prompt
+                .clone()
+                .map(TransitionPrompt::Index),
+            _ => None,
+        };
+        if matches!(
+            kind,
+            PickerKind::HeadTransition | PickerKind::IndexTransition
+        ) && transition.is_none()
+        {
+            return;
+        }
         let items = match kind {
             PickerKind::Files => self.index(Filter::Visible),
             PickerKind::AllFiles => self.index(Filter::All),
@@ -2690,8 +2743,15 @@ impl App {
             PickerKind::ReviewPointName => vec!["save without a name".to_owned()],
             PickerKind::ReviewPointManage => self.review_point_manage_choices(),
             PickerKind::Worktree => self.worktree_choices(),
+            PickerKind::HeadTransition => vec!["Follow HEAD".to_owned(), "Pin here".to_owned()],
+            PickerKind::IndexTransition => {
+                vec!["Pin new commit".to_owned(), "Keep Index".to_owned()]
+            }
         };
         self.open_scoped_picker(kind, items, None);
+        if let Some(Popup::Picker(picker)) = &mut self.popup {
+            picker.transition = transition;
+        }
     }
 
     pub(crate) fn open_scoped_picker(
@@ -2724,6 +2784,8 @@ impl App {
 
     pub(crate) fn background_pending(&self) -> bool {
         self.comparison.pending()
+            || self.comparison.index_prompt_pending()
+            || self.landing.pending()
             || self.file_index.pending()
             || self.all_index.pending()
             || self.tree_walk.pending()
@@ -2778,6 +2840,18 @@ impl App {
                 self.apply_refreshed_comparison(false);
             }
         }
+        let index_prompt = self.comparison.poll_index_prompt();
+        let index_prompt_changed = index_prompt.is_some();
+        if let Some(result) = index_prompt {
+            match result {
+                Ok(Some(prompt)) => self.index_transition_prompt = Some(prompt),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "cannot evaluate Index transition");
+                    self.notice(format!("Index transition proof unavailable: {error}"));
+                }
+            }
+        }
         let target = self.comparison.poll_paths();
         let target_changed = target.is_some();
         if let Some(result) = target {
@@ -2794,11 +2868,12 @@ impl App {
                 }
             }
         }
+        let landed = self.poll_landing();
         let indexed = self.file_index.poll() | self.all_index.poll();
         if indexed || compared || target_changed {
             self.refresh_active_file_picker();
         }
-        tree_changed || indexed || compared || target_changed
+        tree_changed || indexed || compared || index_prompt_changed || target_changed || landed
     }
 
     #[cfg(test)]
@@ -2889,6 +2964,13 @@ impl App {
     }
 
     pub(crate) fn picker_escape(&mut self) {
+        let transition = self
+            .picker_mut()
+            .and_then(|picker| picker.transition.clone());
+        if let Some(prompt) = transition {
+            self.dismiss_transition_picker(prompt);
+            return;
+        }
         let parent = self.picker_mut().map(|picker| match picker.kind {
             PickerKind::ComparisonBranchCommits(side) => Some(PickerKind::ComparisonBranches(side)),
             PickerKind::ComparisonTags(side)
@@ -2903,6 +2985,24 @@ impl App {
         }
     }
 
+    fn dismiss_transition_picker(&mut self, prompt: TransitionPrompt) {
+        self.refresh_comparison();
+        match prompt {
+            TransitionPrompt::Head(prompt)
+                if self.head_transition_prompt.as_ref() == Some(&prompt) =>
+            {
+                self.head_transition_prompt = None;
+            }
+            TransitionPrompt::Index(prompt)
+                if self.index_transition_prompt.as_ref() == Some(&prompt) =>
+            {
+                self.index_transition_prompt = None;
+            }
+            TransitionPrompt::Head(_) | TransitionPrompt::Index(_) => {}
+        }
+        self.close_popup();
+    }
+
     /// Enter in the picker: open the file, or show the thread.
     pub(crate) fn picker_confirm(&mut self) {
         let choice = self.picker_mut().and_then(|picker| {
@@ -2911,6 +3011,7 @@ impl App {
                     picker.kind,
                     picker.item(m).to_owned(),
                     picker.input().to_owned(),
+                    picker.transition.clone(),
                 ))
             } else if matches!(
                 picker.kind,
@@ -2925,6 +3026,7 @@ impl App {
                     picker.kind,
                     picker.input().to_owned(),
                     picker.input().to_owned(),
+                    picker.transition.clone(),
                 ))
             } else {
                 None
@@ -2932,7 +3034,7 @@ impl App {
         });
         self.popup = None;
         match choice {
-            Some((PickerKind::Files | PickerKind::AllFiles | PickerKind::Recent, path, _)) => {
+            Some((PickerKind::Files | PickerKind::AllFiles | PickerKind::Recent, path, _, _)) => {
                 self.open(Path::new(&path));
             }
             Some((
@@ -2941,6 +3043,7 @@ impl App {
                 | PickerKind::ComparisonCommit),
                 item,
                 input,
+                _,
             )) => {
                 self.choose_diff_side_input(kind, &item, &input);
             }
@@ -2952,10 +3055,11 @@ impl App {
                 | PickerKind::ComparisonAdvanced(_)),
                 item,
                 input,
+                _,
             )) => {
                 self.choose_nested_comparison(kind, &item, &input);
             }
-            Some((PickerKind::ReviewPointName, item, input)) => {
+            Some((PickerKind::ReviewPointName, item, input, _)) => {
                 let name = if input.trim().is_empty() {
                     None
                 } else {
@@ -2964,11 +3068,17 @@ impl App {
                 let _ = item;
                 self.save_review_point(name);
             }
-            Some((PickerKind::ReviewPointManage, item, input)) => {
+            Some((PickerKind::ReviewPointManage, item, input, _)) => {
                 self.request_review_point_action(&item, &input);
             }
-            Some((PickerKind::Worktree, item, _)) => self.choose_worktree(&item),
-            None => {}
+            Some((PickerKind::Worktree, item, _, _)) => self.choose_worktree(&item),
+            Some((PickerKind::HeadTransition, item, _, Some(TransitionPrompt::Head(prompt)))) => {
+                self.resolve_head_transition_choice(&prompt, item == "Follow HEAD");
+            }
+            Some((PickerKind::IndexTransition, item, _, Some(TransitionPrompt::Index(prompt)))) => {
+                self.resolve_index_transition_choice(&prompt, item == "Pin new commit");
+            }
+            Some((PickerKind::HeadTransition | PickerKind::IndexTransition, _, _, _)) | None => {}
         }
     }
 }

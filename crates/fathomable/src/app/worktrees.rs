@@ -226,6 +226,8 @@ impl App {
         });
         let label = self.label_of(&root);
         self.close_popup();
+        self.head_transition_prompt = None;
+        self.index_transition_prompt = None;
         self.cancel_tree_scan();
         self.tree_issue = None;
         self.docs.clear();
@@ -562,6 +564,7 @@ mod tests {
         app.local_thread_paths
             .insert(id, PathBuf::from("renamed.md"));
         assert!(app.activate_worktree(&feature));
+        app.settle_background();
 
         assert!(app.local_thread_paths.is_empty());
         assert_eq!(app.current_path(), Path::new("a.md"));
@@ -569,9 +572,8 @@ mod tests {
         Ok(())
     }
 
-    /// A thread on a commit only the feature worktree reaches shows in
-    /// the main worktree's threads pane with the branch on its entry,
-    /// counts in no file circle, and opening it pages there.
+    /// A foreign unlanded origin stays off normal surfaces, while direct
+    /// navigation remains unrestricted and never switches worktrees.
     #[test]
     fn a_thread_from_another_worktree_is_labelled_and_opens_there() -> anyhow::Result<()> {
         let (dir, main, feature) = repo("label")?;
@@ -596,34 +598,31 @@ mod tests {
 
         let mut app = app_on(&dir, &main)?;
         let entries = app.review_entries(false);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].worktree(), Some("feature"));
-        assert_eq!(
-            entries[0].range(),
-            Some(LineRange::new(4, 4)),
-            "placed in the feature worktree's file"
+        assert!(
+            entries.is_empty(),
+            "normal membership excludes a foreign unlanded origin"
         );
         assert!(
             app.file_circles().is_empty(),
             "the circles count the active worktree"
         );
         app.open(Path::new("a.md"));
-        assert_eq!(app.marks().len(), 1);
-        assert!(
-            app.marks()[0].is_detached(),
-            "the active checkout must not claim the feature-only line"
-        );
+        assert!(app.marks().is_empty());
 
         assert_eq!(
             app.land_on_thread(id),
-            Some(crate::app::threads::cursor::ThreadLanding::Source)
+            Some(crate::app::threads::cursor::ThreadLanding::Review)
         );
         assert_eq!(
             app.workspace().root(),
             main,
             "thread navigation never switches worktrees"
         );
-        assert_eq!(app.review_entries(false)[0].worktree(), Some("feature"));
+        assert_eq!(
+            app.review_entries(false).len(),
+            1,
+            "explicit navigation exposes only its selected evidence"
+        );
         Ok(())
     }
 

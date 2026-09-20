@@ -43,12 +43,12 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::context::Context;
-use crate::workspace::CommitId;
+use crate::workspace::{CheckoutIdentity, CommitId};
 use sha2::{Digest, Sha256};
 
 /// The format version written in every event line; [`Store::open`]
 /// refuses a file of another (ADR 0062).
-pub(crate) const FORMAT_VERSION: u32 = 5;
+pub(crate) const FORMAT_VERSION: u32 = 6;
 
 /// Maximum size of a persisted idempotency key, in bytes.
 pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
@@ -462,6 +462,8 @@ pub struct WorkingTreeFacts {
     added: bool,
     deleted: bool,
     content: Option<ContentIdentity>,
+    checkout: CheckoutIdentity,
+    full_content: FullFileDigest,
 }
 
 impl WorkingTreeFacts {
@@ -471,6 +473,8 @@ impl WorkingTreeFacts {
         observed_head: Option<String>,
         state: WorkingTreeState,
         content: Option<ContentIdentity>,
+        checkout: CheckoutIdentity,
+        full_content: FullFileDigest,
     ) -> Self {
         let (dirty, added, deleted) = match state {
             WorkingTreeState::Clean => (false, false, false),
@@ -484,6 +488,8 @@ impl WorkingTreeFacts {
             added,
             deleted,
             content,
+            checkout,
+            full_content,
         }
     }
 
@@ -516,6 +522,18 @@ impl WorkingTreeFacts {
     pub fn content(&self) -> Option<&ContentIdentity> {
         self.content.as_ref()
     }
+
+    /// Checkout and repository that supplied the complete source bytes.
+    #[must_use]
+    pub const fn checkout(&self) -> &CheckoutIdentity {
+        &self.checkout
+    }
+
+    /// Full SHA-256 identity of the complete source bytes.
+    #[must_use]
+    pub const fn full_content(&self) -> &FullFileDigest {
+        &self.full_content
+    }
 }
 
 /// Facts observed for staged index content.
@@ -534,6 +552,8 @@ pub struct IndexFacts {
     observed_head: Option<String>,
     staged: bool,
     content: Option<ContentIdentity>,
+    checkout: CheckoutIdentity,
+    full_content: FullFileDigest,
 }
 
 impl IndexFacts {
@@ -543,11 +563,15 @@ impl IndexFacts {
         observed_head: Option<String>,
         state: IndexState,
         content: Option<ContentIdentity>,
+        checkout: CheckoutIdentity,
+        full_content: FullFileDigest,
     ) -> Self {
         Self {
             observed_head,
             staged: state == IndexState::Staged,
             content,
+            checkout,
+            full_content,
         }
     }
 
@@ -568,6 +592,18 @@ impl IndexFacts {
     pub fn content(&self) -> Option<&ContentIdentity> {
         self.content.as_ref()
     }
+
+    /// Checkout and repository that supplied the complete source bytes.
+    #[must_use]
+    pub const fn checkout(&self) -> &CheckoutIdentity {
+        &self.checkout
+    }
+
+    /// Full SHA-256 identity of the complete source bytes.
+    #[must_use]
+    pub const fn full_content(&self) -> &FullFileDigest {
+        &self.full_content
+    }
 }
 
 /// Facts identifying an explicit review-point source.
@@ -576,6 +612,8 @@ pub struct ReviewPointFacts {
     id: String,
     base: Option<String>,
     content: Option<ContentIdentity>,
+    checkout: CheckoutIdentity,
+    full_content: FullFileDigest,
 }
 
 impl ReviewPointFacts {
@@ -585,11 +623,15 @@ impl ReviewPointFacts {
         id: impl Into<String>,
         base: Option<String>,
         content: Option<ContentIdentity>,
+        checkout: CheckoutIdentity,
+        full_content: FullFileDigest,
     ) -> Self {
         Self {
             id: id.into(),
             base,
             content,
+            checkout,
+            full_content,
         }
     }
 
@@ -609,6 +651,18 @@ impl ReviewPointFacts {
     #[must_use]
     pub fn content(&self) -> Option<&ContentIdentity> {
         self.content.as_ref()
+    }
+
+    /// Owning checkout and repository of the review point.
+    #[must_use]
+    pub const fn checkout(&self) -> &CheckoutIdentity {
+        &self.checkout
+    }
+
+    /// Full SHA-256 identity of the complete accepted point-side bytes.
+    #[must_use]
+    pub const fn full_content(&self) -> &FullFileDigest {
+        &self.full_content
     }
 }
 
@@ -639,6 +693,51 @@ impl ContentIdentity {
     #[must_use]
     pub fn bytes(&self) -> usize {
         self.bytes
+    }
+}
+
+/// Collision-resistant identity of one complete file.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FullFileDigest {
+    sha256: String,
+    bytes: u64,
+}
+
+impl FullFileDigest {
+    /// Hash complete raw file bytes.
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        use fmt::Write as _;
+
+        let digest = Sha256::digest(bytes);
+        let mut sha256 = String::with_capacity(64);
+        for byte in digest {
+            let _ = write!(sha256, "{byte:02x}");
+        }
+        Self {
+            sha256,
+            bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        }
+    }
+
+    /// The complete lowercase SHA-256 digest.
+    #[must_use]
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    /// Number of bytes represented by this digest.
+    #[must_use]
+    pub const fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    fn is_valid(&self) -> bool {
+        self.sha256.len() == 64
+            && self
+                .sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
     }
 }
 
@@ -1048,6 +1147,78 @@ impl fmt::Display for ThreadId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
+}
+
+/// Immutable evidence prepared before an exact landing check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LandingCandidate {
+    thread: ThreadId,
+    path: PathBuf,
+    version: OriginVersion,
+    checkout: CheckoutIdentity,
+    digest: FullFileDigest,
+}
+
+impl LandingCandidate {
+    /// Thread this candidate can land.
+    #[must_use]
+    pub const fn thread(&self) -> &ThreadId {
+        &self.thread
+    }
+
+    /// Current stored path to verify in the candidate commit.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Checkout and repository allowed to establish landing.
+    #[must_use]
+    pub const fn checkout(&self) -> &CheckoutIdentity {
+        &self.checkout
+    }
+
+    /// Full immutable origin-file identity.
+    #[must_use]
+    pub const fn digest(&self) -> &FullFileDigest {
+        &self.digest
+    }
+
+    /// Convert this candidate into an exact commit-file expectation.
+    #[must_use]
+    pub fn exact_file(&self) -> crate::workspace::ExactFile {
+        crate::workspace::ExactFile::new(
+            self.checkout.clone(),
+            self.path.clone(),
+            self.digest.clone(),
+        )
+    }
+
+    fn still_matches(&self, thread: &Thread) -> bool {
+        thread.path == self.path
+            && thread.origin_version() == &self.version
+            && thread.landing_candidate().is_some_and(|current| {
+                current.checkout == self.checkout && current.digest == self.digest
+            })
+    }
+}
+
+/// Result of attempting to durably record an exact landing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LandingOutcome {
+    /// The landing event was appended.
+    Applied,
+    /// The same landing was already durable.
+    AlreadyLanded,
+    /// A prior exact match won; its commit remains authoritative.
+    Conflict {
+        /// First durably recorded commit.
+        landed_commit: String,
+    },
+    /// Deletion won the race and the candidate no longer exists.
+    Deleted,
+    /// Placement or immutable evidence changed after preparation.
+    Stale,
 }
 
 /// Who wrote a reply or resolved a thread.
@@ -1772,6 +1943,9 @@ pub struct Thread {
     /// Current commit context used for contextual placement, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     commit: Option<String>,
+    /// First exact commit observed to contain eligible non-commit origin bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    landed_commit: Option<String>,
     /// When the user last edited the comment (ADR 0058).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     comment_edited: Option<u64>,
@@ -1991,6 +2165,44 @@ impl Thread {
     #[must_use]
     pub fn commit(&self) -> Option<&str> {
         self.commit.as_deref()
+    }
+
+    /// First durably observed commit containing the exact origin file bytes.
+    #[must_use]
+    pub fn landed_commit(&self) -> Option<&str> {
+        self.landed_commit.as_deref()
+    }
+
+    /// Prepare immutable evidence for exact landing reconciliation.
+    #[must_use]
+    pub fn landing_candidate(&self) -> Option<LandingCandidate> {
+        if self.landed_commit.is_some() {
+            return None;
+        }
+        let (checkout, digest) = match self.origin_version() {
+            OriginVersion::WorkingTree { .. } => self
+                .provenance()
+                .working_tree()
+                .map(|facts| (facts.checkout(), facts.full_content()))?,
+            OriginVersion::Index { .. } => self
+                .provenance()
+                .index()
+                .map(|facts| (facts.checkout(), facts.full_content()))?,
+            OriginVersion::ReviewPoint { .. } => self
+                .provenance()
+                .review_point()
+                .map(|facts| (facts.checkout(), facts.full_content()))?,
+            OriginVersion::Commit { .. } | OriginVersion::EmptyTree | OriginVersion::Unknown => {
+                return None;
+            }
+        };
+        Some(LandingCandidate {
+            thread: self.id.clone(),
+            path: self.path.clone(),
+            version: self.origin_version().clone(),
+            checkout: checkout.clone(),
+            digest: digest.clone(),
+        })
     }
 
     /// When the user last edited the comment, in Unix seconds (ADR 0058).
@@ -2720,6 +2932,12 @@ enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         checkout: Option<String>,
     },
+    /// Record the first exact commit containing eligible origin bytes.
+    Land {
+        v: u32,
+        thread: ThreadId,
+        commit: String,
+    },
     /// The user deleted the thread (ADR 0034). A tombstone: the thread
     /// is dropped on load and later events on it are ignored.
     Delete {
@@ -2755,6 +2973,7 @@ impl Event {
             | Self::Resolve { thread, .. }
             | Self::Reopen { thread, .. }
             | Self::Relocate { thread, .. }
+            | Self::Land { thread, .. }
             | Self::Delete { thread, .. }
             | Self::SetAutoResolve { thread, .. }
             | Self::Restore { thread, .. } => Some(thread),
@@ -2770,6 +2989,7 @@ impl Event {
             | Self::Resolve { .. }
             | Self::Reopen { .. }
             | Self::Relocate { .. }
+            | Self::Land { .. }
             | Self::Delete { .. }
             | Self::SetAutoResolve { .. }
             | Self::ArchiveMany { .. }
@@ -2786,6 +3006,7 @@ impl Event {
             Self::Resolve { .. }
             | Self::Reopen { .. }
             | Self::Relocate { .. }
+            | Self::Land { .. }
             | Self::Delete { .. }
             | Self::SetAutoResolve { .. }
             | Self::ArchiveMany { .. }
@@ -3112,6 +3333,7 @@ impl Store {
         submission: UserSubmit,
     ) -> Result<ThreadId, StoreError> {
         validate_start_source(&draft)?;
+        validate_provenance(&draft.provenance)?;
         let (anchor, context, snippet) = capture_annotation(&draft, text)?;
         let mut file = self.lock_for_write()?;
         let id = ThreadId(format!(
@@ -4154,6 +4376,57 @@ impl Store {
         result
     }
 
+    /// Persist the first exact commit verified for an eligible origin.
+    ///
+    /// Exact Git reads must happen before this call. The store lock is used
+    /// only to reload and verify immutable evidence, then append the landing
+    /// event. Same-commit retries are idempotent; a different durable commit
+    /// remains authoritative. Archived threads may land, while deletion wins.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the store cannot be read or appended.
+    pub fn land(
+        &mut self,
+        candidate: &LandingCandidate,
+        commit: &CommitId,
+    ) -> Result<LandingOutcome, StoreError> {
+        let mut file = self.lock_for_write()?;
+        let outcome = if self.deleted.contains(candidate.thread()) {
+            Ok(LandingOutcome::Deleted)
+        } else {
+            let Some(thread) = self.thread(candidate.thread()) else {
+                let _ = file.unlock();
+                return Err(StoreError {
+                    kind: ErrorKind::UnknownThread(candidate.thread.clone()),
+                });
+            };
+            if let Some(existing) = thread.landed_commit() {
+                if existing == commit.as_str() {
+                    Ok(LandingOutcome::AlreadyLanded)
+                } else {
+                    Ok(LandingOutcome::Conflict {
+                        landed_commit: existing.to_owned(),
+                    })
+                }
+            } else if !candidate.still_matches(thread) {
+                Ok(LandingOutcome::Stale)
+            } else {
+                self.append_locked(
+                    &mut file,
+                    Event::Land {
+                        v: FORMAT_VERSION,
+                        thread: candidate.thread.clone(),
+                        commit: commit.as_str().to_owned(),
+                    },
+                )
+                .map(|()| LandingOutcome::Applied)
+            }
+        };
+        let _ = file.unlock();
+        outcome
+    }
+
     /// Move the thread `id` onto `range` of `text`, the lines that replaced
     /// the ones it was written on (ADR 0019).
     ///
@@ -4323,7 +4596,10 @@ impl Store {
             self.cursor = cursor;
             return Ok(());
         }
-        let touched = event.thread_id().cloned();
+        let touched = match &event {
+            Event::Land { .. } => None,
+            _ => event.thread_id().cloned(),
+        };
         match event {
             Event::Annotate {
                 id,
@@ -4342,6 +4618,7 @@ impl Store {
                 ..
             } => {
                 let origin = *origin;
+                validate_provenance(origin.provenance())?;
                 if range.is_some() != anchor.is_some() || range.is_some() != context.is_some() {
                     return Err(StoreError {
                         kind: ErrorKind::AnnotationShape,
@@ -4389,6 +4666,7 @@ impl Store {
                     auto_resolve,
                     reanchored_at: None,
                     commit,
+                    landed_commit: None,
                     comment_edited: None,
                     reopened: None,
                     context,
@@ -4635,6 +4913,24 @@ impl Store {
                 thread.placement.version = version;
                 thread.placement.checkout = checkout;
                 thread.placement.observed_at = Some(created);
+            }
+            Event::Land { thread, commit, .. } => {
+                CommitId::parse(&commit).map_err(|error| StoreError::message(error.to_string()))?;
+                let eligible = {
+                    let current = self.thread(&thread).ok_or_else(|| StoreError {
+                        kind: ErrorKind::UnknownThread(thread.clone()),
+                    })?;
+                    current.landed_commit.is_some() || current.landing_candidate().is_some()
+                };
+                if !eligible {
+                    return Err(StoreError::message(format!(
+                        "{thread} has no eligible non-commit origin"
+                    )));
+                }
+                let thread = self.thread_mut(&thread)?;
+                if thread.landed_commit.is_none() {
+                    thread.landed_commit = Some(commit);
+                }
             }
             Event::Delete { thread, .. } => {
                 self.thread_mut(&thread)?;
@@ -5002,16 +5298,43 @@ fn order_threads_by_creation(threads: &mut [Thread]) {
 
 fn origin_provenance(draft: &Draft, snippet: &str) -> Provenance {
     let mut provenance = draft.provenance.clone();
-    if matches!(provenance.version, OriginVersion::Unknown) {
-        provenance.version = draft.commit.as_deref().map_or_else(
-            || OriginVersion::working_tree(draft.commit.clone()),
-            OriginVersion::commit,
-        );
-    }
     if provenance.content.is_none() {
         provenance.content = Some(ContentIdentity::from_text(snippet));
     }
     provenance
+}
+
+fn validate_provenance(provenance: &Provenance) -> Result<(), StoreError> {
+    let valid_identity_and_digest = |checkout: &CheckoutIdentity, digest: &FullFileDigest| {
+        checkout.is_valid() && digest.is_valid()
+    };
+    let valid = match &provenance.version {
+        OriginVersion::WorkingTree { observed_head } => {
+            provenance.working_tree.as_ref().is_some_and(|facts| {
+                facts.observed_head.as_ref() == observed_head.as_ref()
+                    && valid_identity_and_digest(&facts.checkout, &facts.full_content)
+            })
+        }
+        OriginVersion::Index { observed_head } => provenance.index.as_ref().is_some_and(|facts| {
+            facts.observed_head.as_ref() == observed_head.as_ref()
+                && valid_identity_and_digest(&facts.checkout, &facts.full_content)
+        }),
+        OriginVersion::ReviewPoint { id, base } => {
+            provenance.review_point.as_ref().is_some_and(|facts| {
+                &facts.id == id
+                    && facts.base.as_ref() == base.as_ref()
+                    && valid_identity_and_digest(&facts.checkout, &facts.full_content)
+            })
+        }
+        OriginVersion::Commit { .. } | OriginVersion::EmptyTree | OriginVersion::Unknown => true,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(StoreError::message(
+            "mutable or review-point origin requires matching checkout identity and full SHA-256 content provenance",
+        ))
+    }
 }
 
 fn capture_annotation(

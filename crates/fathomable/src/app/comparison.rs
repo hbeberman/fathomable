@@ -15,7 +15,8 @@ use fathomable_core::diff::{Compare, Comparison, PathChangeKind, PathState};
 use fathomable_core::review_points::{ReviewPoint, ReviewPointStore};
 use fathomable_core::status::{Changes, Entry, State as GitState, Status};
 use fathomable_core::workspace::{
-    Commit, CommitId, ComparisonEndpoint, RevisionChoiceKind, Workspace,
+    CheckoutIdentity, Commit, CommitId, ComparisonEndpoint, HeadObservation, HeadState,
+    HeadTransition, IndexManifest, IndexManifestCapture, RevisionChoiceKind, Workspace,
 };
 use serde::{Deserialize, Serialize};
 
@@ -34,12 +35,15 @@ struct Request {
     review_points: Option<PathBuf>,
     limits: fathomable_core::config::LimitsConfig,
     compare: Compare,
+    head: HeadObservation,
 }
 
 #[derive(Debug)]
 struct Computed {
     comparison: Comparison,
     counts: HashMap<PathBuf, (usize, usize)>,
+    head: HeadObservation,
+    index: Option<IndexManifest>,
 }
 
 #[derive(Debug)]
@@ -47,20 +51,63 @@ struct TargetRequest {
     root: PathBuf,
     endpoint: ComparisonEndpoint,
     limits: fathomable_core::config::LimitsConfig,
+    head: HeadObservation,
+}
+
+#[derive(Debug)]
+struct TargetComputed {
+    endpoint: ComparisonEndpoint,
+    paths: Vec<PathBuf>,
+    head: HeadObservation,
+    index: Option<IndexManifest>,
 }
 
 fn target_paths(
     request: TargetRequest,
     cancellation: fathomable_core::workspace::Cancellation,
-) -> Result<Vec<PathBuf>, String> {
+) -> Result<TargetComputed, String> {
     let mut workspace = Workspace::discover(request.root).map_err(|error| error.to_string())?;
     workspace.set_limits(request.limits);
     workspace.set_cancellation(cancellation);
-    workspace
-        .endpoint_paths(&request.endpoint)
-        .map_err(|error| error.to_string())
+    if workspace.observe_head(request.head.generation()) != request.head {
+        return Err("HEAD changed during Target discovery; retrying".to_owned());
+    }
+    let index = if request.endpoint == ComparisonEndpoint::Index {
+        match workspace
+            .index_manifest()
+            .map_err(|error| error.to_string())?
+        {
+            IndexManifestCapture::Available(manifest) => Some(manifest),
+            IndexManifestCapture::Unavailable(reason) => {
+                return Err(format!(
+                    "Index snapshot is incomplete and cannot be displayed: {reason:?}"
+                ));
+            }
+        }
+    } else {
+        None
+    };
+    let paths = if let Some(manifest) = &index {
+        workspace
+            .index_manifest_paths(manifest)
+            .map_err(|error| error.to_string())?
+    } else {
+        workspace
+            .endpoint_paths(&request.endpoint)
+            .map_err(|error| error.to_string())?
+    };
+    Ok(TargetComputed {
+        endpoint: request.endpoint,
+        paths,
+        head: request.head,
+        index,
+    })
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the worker keeps one linear capture-and-validation transaction"
+)]
 fn compute(
     request: Request,
     cancellation: fathomable_core::workspace::Cancellation,
@@ -68,11 +115,31 @@ fn compute(
     let mut workspace = Workspace::discover(&request.root).map_err(|error| error.to_string())?;
     workspace.set_limits(request.limits);
     workspace.set_cancellation(cancellation);
+    if workspace.observe_head(request.head.generation()) != request.head {
+        return Err("HEAD changed before comparison capture; retrying".to_owned());
+    }
     let store = request
         .review_points
         .map(ReviewPointStore::open)
         .transpose()
         .map_err(|error| error.to_string())?;
+    let index = if request.base == ComparisonEndpoint::Index
+        || request.target == ComparisonEndpoint::Index
+    {
+        match workspace
+            .index_manifest()
+            .map_err(|error| error.to_string())?
+        {
+            IndexManifestCapture::Available(manifest) => Some(manifest),
+            IndexManifestCapture::Unavailable(reason) => {
+                return Err(format!(
+                    "Index snapshot is incomplete and cannot be compared: {reason:?}"
+                ));
+            }
+        }
+    } else {
+        None
+    };
     let comparison = match (&request.base, &request.target) {
         (ComparisonEndpoint::ReviewPoint(id), ComparisonEndpoint::WorkingTree) => {
             let store = store
@@ -88,9 +155,14 @@ fn compute(
         (ComparisonEndpoint::ReviewPoint(_), _) | (_, ComparisonEndpoint::ReviewPoint(_)) => {
             return Err("review points compare only against the working tree".to_owned());
         }
-        _ => workspace
-            .compare(request.base.clone(), request.target.clone())
-            .map_err(|error| error.to_string())?,
+        _ => match &index {
+            Some(manifest) => workspace
+                .compare_with_index_manifest(request.base.clone(), request.target.clone(), manifest)
+                .map_err(|error| error.to_string())?,
+            None => workspace
+                .compare(request.base.clone(), request.target.clone())
+                .map_err(|error| error.to_string())?,
+        },
     };
     let mut counts = HashMap::new();
     for change in comparison.changes() {
@@ -121,6 +193,18 @@ fn compute(
                     .load_bytes(point, &workspace, change.path())
                     .map_err(|error| error.to_string())?
                     .map_or(Ok(None), |bytes| Ok(String::from_utf8(bytes).ok()))
+            } else if endpoint == &ComparisonEndpoint::Index {
+                let manifest = index
+                    .as_ref()
+                    .ok_or_else(|| "accepted Index manifest is unavailable".to_owned())?;
+                workspace
+                    .index_manifest_bytes(
+                        manifest,
+                        change.path(),
+                        workspace.limits().comparison_bytes,
+                    )
+                    .map_err(|error| error.to_string())
+                    .map(|bytes| bytes.and_then(|bytes| String::from_utf8(bytes).ok()))
             } else {
                 workspace
                     .endpoint_bytes(endpoint, change.path())
@@ -141,7 +225,15 @@ fn compute(
         };
         counts.insert(change.path().to_path_buf(), count);
     }
-    Ok(Computed { comparison, counts })
+    if workspace.observe_head(request.head.generation()) != request.head {
+        return Err("HEAD changed during comparison capture; retrying".to_owned());
+    }
+    Ok(Computed {
+        comparison,
+        counts,
+        head: request.head,
+        index,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,10 +244,68 @@ pub(crate) enum EndpointAlias {
     Tag(String),
 }
 
+/// Persistent Source selection intent, independent of its resolved endpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SourceIntent {
+    FollowHead,
+    Pinned(ComparisonEndpoint),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HeadPrompt {
+    generation: u64,
+    checkout: CheckoutIdentity,
+    reference: String,
+    commit: CommitId,
+    expected_intent: SourceIntent,
+    expected_base: ComparisonEndpoint,
+    expected_target: ComparisonEndpoint,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct IndexPrompt {
+    generation: u64,
+    checkout: CheckoutIdentity,
+    commit: CommitId,
+    manifest_generation: u64,
+    manifest: IndexManifest,
+    expected_base: ComparisonEndpoint,
+    expected_target: ComparisonEndpoint,
+}
+
+#[derive(Debug)]
+struct IndexProof {
+    root: PathBuf,
+    limits: fathomable_core::config::LimitsConfig,
+    prompt: IndexPrompt,
+}
+
+fn prove_index_prompt(
+    proof: IndexProof,
+    cancellation: fathomable_core::workspace::Cancellation,
+) -> Result<Option<IndexPrompt>, String> {
+    let mut workspace = Workspace::discover(&proof.root).map_err(|error| error.to_string())?;
+    if workspace.identity() != proof.prompt.checkout {
+        return Err("checkout identity changed during Index transition proof".to_owned());
+    }
+    workspace.set_limits(proof.limits);
+    workspace.set_cancellation(cancellation);
+    workspace
+        .index_manifest_matches_commit(&proof.prompt.manifest, &proof.prompt.commit)
+        .map_err(|error| error.to_string())
+        .map(|matches| matches.then_some(proof.prompt))
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EndpointRoles {
     pub(crate) base: bool,
     pub(crate) target: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InstalledPresentation {
+    Active,
+    TargetOnly,
 }
 
 /// One app-owned comparison selection and its last successful result.
@@ -164,33 +314,49 @@ pub(crate) struct State {
     dirs: fathomable_core::XdgDirs,
     base: ComparisonEndpoint,
     target: ComparisonEndpoint,
+    source_intent: SourceIntent,
     base_alias: Option<EndpointAlias>,
     target_alias: Option<EndpointAlias>,
     compare: Compare,
     preference: PathBuf,
     persisted: bool,
+    preference_error: Option<String>,
     #[cfg(test)]
     refresh_count: u64,
-    observed_head: Option<String>,
+    head: HeadObservation,
+    transition_generation: u64,
     current: Option<Comparison>,
+    installed_head: Option<HeadObservation>,
+    installed_target: Option<ComparisonEndpoint>,
+    installed_presentation: Option<InstalledPresentation>,
+    installed_index: Option<(u64, IndexManifest)>,
     error: Option<String>,
     worker: Worker<Request, Result<Computed, String>>,
+    index_proof: Worker<IndexProof, Result<Option<IndexPrompt>, String>>,
     counts: HashMap<PathBuf, (usize, usize)>,
     annotation_frozen: bool,
     refresh_deferred: bool,
     pub(super) restore_mode: Option<DiffMode>,
-    target_worker: Worker<TargetRequest, Result<Vec<PathBuf>, String>>,
+    target_worker: Worker<TargetRequest, Result<TargetComputed, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Preference {
-    base: String,
+    source: PreferenceSource,
     target: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    base_alias: Option<EndpointAlias>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_alias: Option<EndpointAlias>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     target_alias: Option<EndpointAlias>,
     whitespace: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", tag = "intent", content = "endpoint")]
+enum PreferenceSource {
+    FollowHead,
+    Pinned(String),
 }
 
 impl State {
@@ -203,21 +369,34 @@ impl State {
         let preference_dir = dirs.comparison_dir(workspace.root());
         let preference = preference_dir.join(PREFERENCE_FILE);
         let (default_base, default_alias) = head_endpoint(workspace);
+        let default_intent = if workspace.is_git() {
+            SourceIntent::FollowHead
+        } else {
+            SourceIntent::Pinned(default_base.clone())
+        };
         let mut state = Self {
             dirs: dirs.clone(),
             base: default_base,
             target: ComparisonEndpoint::WorkingTree,
+            source_intent: default_intent,
             base_alias: default_alias,
             target_alias: None,
             compare,
             preference,
             persisted: false,
+            preference_error: None,
             #[cfg(test)]
             refresh_count: 0,
-            observed_head: workspace.head_commit(),
+            head: workspace.observe_head(0),
+            transition_generation: 0,
             current: None,
+            installed_head: None,
+            installed_target: None,
+            installed_presentation: None,
+            installed_index: None,
             error: None,
             worker: Worker::new(compute),
+            index_proof: Worker::new(prove_index_prompt),
             counts: HashMap::new(),
             annotation_frozen: false,
             refresh_deferred: false,
@@ -238,23 +417,44 @@ impl State {
                 None
             }
         };
-        if let Some(bytes) = bytes
-            && let Ok(saved) = serde_json::from_slice::<Preference>(&bytes)
-        {
-            state.persisted = true;
-            if let Some(base) = parse_endpoint(&saved.base) {
-                state.base = base;
+        if let Some(bytes) = bytes {
+            match serde_json::from_slice::<Preference>(&bytes) {
+                Ok(saved) => {
+                    let source = match saved.source {
+                        PreferenceSource::FollowHead => {
+                            let (base, _) = head_endpoint(workspace);
+                            Some((base, SourceIntent::FollowHead))
+                        }
+                        PreferenceSource::Pinned(endpoint) => parse_endpoint(&endpoint)
+                            .map(|base| (base.clone(), SourceIntent::Pinned(base))),
+                    };
+                    let target = parse_endpoint(&saved.target);
+                    if let (Some((base, intent)), Some(target)) = (source, target) {
+                        state.persisted = true;
+                        state.base = base;
+                        state.source_intent = intent;
+                        state.target = target;
+                        state.base_alias = saved.source_alias;
+                        state.target_alias = saved.target_alias;
+                        state.compare.whitespace = if saved.whitespace {
+                            fathomable_core::diff::Whitespace::Ignore
+                        } else {
+                            fathomable_core::diff::Whitespace::Exact
+                        };
+                    } else {
+                        state.preference_error = Some(format!(
+                            "comparison preference format is unsupported; stop affected processes and delete {} before restarting the new build",
+                            state.preference.display()
+                        ));
+                    }
+                }
+                Err(error) => {
+                    state.preference_error = Some(format!(
+                        "comparison preference format is unsupported ({error}); stop affected processes and delete {} before restarting the new build",
+                        state.preference.display()
+                    ));
+                }
             }
-            if let Some(target) = parse_endpoint(&saved.target) {
-                state.target = target;
-            }
-            state.base_alias = saved.base_alias;
-            state.target_alias = saved.target_alias;
-            state.compare.whitespace = if saved.whitespace {
-                fathomable_core::diff::Whitespace::Ignore
-            } else {
-                fathomable_core::diff::Whitespace::Exact
-            };
         }
         if state.validate_aliases(workspace) {
             state.persisted = false;
@@ -289,7 +489,39 @@ impl State {
     }
 
     pub(crate) fn observed_head(&self) -> Option<&str> {
-        self.observed_head.as_deref()
+        self.head.state().commit().map(CommitId::as_str)
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn source_intent(&self) -> &SourceIntent {
+        &self.source_intent
+    }
+
+    pub(crate) fn accepted_head(&self) -> Option<&HeadObservation> {
+        self.installed_head.as_ref()
+    }
+
+    pub(crate) fn accepted_index(&self) -> Option<(u64, &IndexManifest)> {
+        self.installed_index
+            .as_ref()
+            .map(|(generation, manifest)| (*generation, manifest))
+    }
+
+    pub(crate) fn accepted_endpoints(
+        &self,
+        mode: DiffMode,
+    ) -> (Option<&ComparisonEndpoint>, Option<&ComparisonEndpoint>) {
+        if self.installed_head.is_none() {
+            return (None, None);
+        }
+        if mode == DiffMode::Off
+            || self.installed_presentation != Some(InstalledPresentation::Active)
+        {
+            return (None, self.installed_target.as_ref());
+        }
+        self.current.as_ref().map_or((None, None), |comparison| {
+            (Some(comparison.base()), Some(comparison.target()))
+        })
     }
 
     /// The current line-diff settings.
@@ -306,12 +538,12 @@ impl State {
 
     /// A visible error from the newest refresh, if any.
     pub(crate) fn error(&self) -> Option<&str> {
-        self.error.as_deref()
+        self.preference_error.as_deref().or(self.error.as_deref())
     }
 
     /// Whether the displayed comparison is from an older successful refresh.
     pub(crate) fn stale(&self) -> bool {
-        self.error.is_some() && self.current.is_some()
+        (self.preference_error.is_some() || self.error.is_some()) && self.current.is_some()
     }
 
     /// Record a refresh failure while retaining the last successful result.
@@ -365,29 +597,36 @@ impl State {
             review_points: review_points.map(|store| store.dir().to_path_buf()),
             limits: workspace.limits().clone(),
             compare: self.compare,
+            head: self.head.clone(),
         }) {
             self.error = Some(format!("cannot start comparison: {error}"));
         }
         if aliases_changed || !self.persisted {
             self.persist();
         }
-        self.observed_head = workspace.head_commit();
     }
 
     pub(super) fn pending(&self) -> bool {
         self.worker.pending() || self.target_worker.pending()
     }
 
+    pub(super) fn index_prompt_pending(&self) -> bool {
+        self.index_proof.pending()
+    }
+
     pub(super) fn cancel(&mut self) {
         self.worker.cancel();
         self.target_worker.cancel();
+        self.index_proof.cancel();
         self.restore_mode = None;
     }
 
     pub(super) fn freeze_for_annotation(&mut self) {
         self.refresh_deferred |= self.pending();
         self.annotation_frozen = true;
-        self.cancel();
+        self.worker.cancel();
+        self.target_worker.cancel();
+        self.restore_mode = None;
     }
 
     pub(super) fn unfreeze_after_annotation(&mut self) -> bool {
@@ -408,11 +647,14 @@ impl State {
             return;
         }
         self.cancel();
+        self.installed_target = None;
+        self.installed_presentation = None;
         self.error = Some("Target paths scanning; coverage is incomplete".to_owned());
         if let Err(error) = self.target_worker.submit(TargetRequest {
             root: workspace.root().to_path_buf(),
             endpoint: self.target.clone(),
             limits: workspace.limits().clone(),
+            head: self.head.clone(),
         }) {
             self.error = Some(format!("cannot start Target discovery: {error}"));
         }
@@ -422,7 +664,14 @@ impl State {
         match self.target_worker.poll() {
             Ok(Some(result)) => {
                 self.error = result.as_ref().err().cloned();
-                Some(result)
+                Some(result.map(|result| {
+                    let generation = result.head.generation();
+                    self.installed_head = Some(result.head);
+                    self.installed_target = Some(result.endpoint);
+                    self.installed_presentation = Some(InstalledPresentation::TargetOnly);
+                    self.installed_index = result.index.map(|manifest| (generation, manifest));
+                    result.paths
+                }))
             }
             Ok(None) => None,
             Err(error) => {
@@ -438,12 +687,18 @@ impl State {
         let mut next = Self::load(dirs, workspace, self.compare);
         std::mem::swap(&mut next.worker, &mut self.worker);
         std::mem::swap(&mut next.target_worker, &mut self.target_worker);
+        std::mem::swap(&mut next.index_proof, &mut self.index_proof);
         *self = next;
     }
 
     pub(super) fn poll(&mut self) -> bool {
         match self.worker.poll() {
             Ok(Some(Ok(result))) => {
+                let generation = result.head.generation();
+                self.installed_head = Some(result.head);
+                self.installed_target = Some(result.comparison.target().clone());
+                self.installed_presentation = Some(InstalledPresentation::Active);
+                self.installed_index = result.index.map(|manifest| (generation, manifest));
                 self.current = Some(result.comparison);
                 self.counts = result.counts;
                 self.error = None;
@@ -472,6 +727,11 @@ impl State {
         workspace: &mut Workspace,
         review_points: Option<&ReviewPointStore>,
     ) {
+        self.source_intent = if alias == Some(EndpointAlias::Head) {
+            SourceIntent::FollowHead
+        } else {
+            SourceIntent::Pinned(base.clone())
+        };
         self.base = base;
         self.base_alias = alias;
         self.refresh(workspace, review_points);
@@ -501,6 +761,11 @@ impl State {
         workspace: &mut Workspace,
         review_points: Option<&ReviewPointStore>,
     ) -> bool {
+        self.source_intent = if base_alias == Some(EndpointAlias::Head) {
+            SourceIntent::FollowHead
+        } else {
+            SourceIntent::Pinned(base.clone())
+        };
         self.base = base;
         self.base_alias = base_alias;
         self.target = target;
@@ -539,10 +804,18 @@ impl State {
     /// Persist this viewer's preference and report whether it reached disk.
     fn persist_result(&mut self) -> bool {
         self.persisted = false;
+        if self.preference_error.is_some() {
+            return false;
+        }
         let preference = Preference {
-            base: endpoint_string(&self.base),
+            source: match &self.source_intent {
+                SourceIntent::FollowHead => PreferenceSource::FollowHead,
+                SourceIntent::Pinned(endpoint) => {
+                    PreferenceSource::Pinned(endpoint_string(endpoint))
+                }
+            },
             target: endpoint_string(&self.target),
-            base_alias: self.base_alias.clone(),
+            source_alias: self.base_alias.clone(),
             target_alias: self.target_alias.clone(),
             whitespace: matches!(
                 self.compare.whitespace,
@@ -578,15 +851,198 @@ impl State {
     pub(crate) fn replace_missing_review_point_base(&mut self, workspace: &Workspace) {
         let (base, alias) = head_endpoint(workspace);
         self.base = base;
+        self.source_intent = SourceIntent::FollowHead;
         self.base_alias = alias;
         self.error = None;
         self.persist();
     }
 
-    /// Whether the observed branch/HEAD changed since the last refresh.
-    pub(crate) fn head_changed(&self, workspace: &Workspace) -> bool {
-        self.target == ComparisonEndpoint::WorkingTree
-            && self.observed_head.as_deref() != workspace.head_commit().as_deref()
+    /// Capture the next active-checkout observation before any refresh.
+    pub(crate) fn observe_head(&mut self, workspace: &Workspace) -> Option<HeadTransition> {
+        let current = workspace.observe_head(self.head.generation().wrapping_add(1));
+        let transition = HeadTransition::between(&self.head, &current);
+        if transition.is_some() {
+            self.transition_generation = current.generation();
+        }
+        self.head = current;
+        transition
+    }
+
+    /// Whether a transition qualifies for HEAD-to-working-tree policy.
+    pub(crate) fn follows_transition(&self, transition: &HeadTransition) -> bool {
+        if self.target != ComparisonEndpoint::WorkingTree
+            || self.source_intent != SourceIntent::FollowHead
+            || transition.checkout() != self.head.checkout()
+        {
+            return false;
+        }
+        matches!(
+            (transition.previous(), transition.current()),
+            (
+                HeadState::Symbolic {
+                    reference: previous,
+                    ..
+                },
+                HeadState::Symbolic {
+                    reference: current,
+                    ..
+                }
+            ) if previous == current
+        )
+    }
+
+    /// Advance a qualifying Source immediately and retain or pin its intent.
+    pub(crate) fn advance_head_transition(
+        &mut self,
+        transition: &HeadTransition,
+        follow: bool,
+    ) -> bool {
+        if !self.follows_transition(transition) {
+            return false;
+        }
+        let Some(commit) = transition.current().commit().cloned() else {
+            return false;
+        };
+        self.base = ComparisonEndpoint::Commit(commit.clone());
+        self.base_alias = follow.then_some(EndpointAlias::Head);
+        self.source_intent = if follow {
+            SourceIntent::FollowHead
+        } else {
+            SourceIntent::Pinned(ComparisonEndpoint::Commit(commit))
+        };
+        self.persist();
+        true
+    }
+
+    pub(crate) fn head_prompt(&self, transition: &HeadTransition) -> Option<HeadPrompt> {
+        let HeadState::Symbolic { reference, commit } = transition.current() else {
+            return None;
+        };
+        Some(HeadPrompt {
+            generation: transition.generation(),
+            checkout: transition.checkout().clone(),
+            reference: reference.clone(),
+            commit: commit.clone(),
+            expected_intent: self.source_intent.clone(),
+            expected_base: self.base.clone(),
+            expected_target: self.target.clone(),
+        })
+    }
+
+    pub(crate) fn resolve_head_prompt(&mut self, prompt: &HeadPrompt, follow: bool) -> bool {
+        let valid_head = self.transition_generation == prompt.generation
+            && self.head.checkout() == &prompt.checkout
+            && matches!(
+                self.head.state(),
+                HeadState::Symbolic { reference, commit }
+                    if reference == &prompt.reference && commit == &prompt.commit
+            );
+        if !valid_head
+            || self.source_intent != prompt.expected_intent
+            || self.base != prompt.expected_base
+            || self.target != prompt.expected_target
+        {
+            return false;
+        }
+        self.base_alias = follow.then_some(EndpointAlias::Head);
+        self.source_intent = if follow {
+            SourceIntent::FollowHead
+        } else {
+            SourceIntent::Pinned(self.base.clone())
+        };
+        self.persist();
+        true
+    }
+
+    pub(crate) fn start_index_prompt(
+        &mut self,
+        transition: &HeadTransition,
+        workspace: &Workspace,
+    ) -> Result<(), String> {
+        self.index_proof.cancel();
+        if self.base != ComparisonEndpoint::Index || self.target != ComparisonEndpoint::WorkingTree
+        {
+            return Ok(());
+        }
+        let Some((manifest_generation, manifest)) = self.accepted_index() else {
+            return Ok(());
+        };
+        let Some(commit) = transition.current().commit() else {
+            return Ok(());
+        };
+        if self
+            .installed_head
+            .as_ref()
+            .is_none_or(|head| head.state() != transition.previous())
+        {
+            return Ok(());
+        }
+        let prompt = IndexPrompt {
+            generation: transition.generation(),
+            checkout: transition.checkout().clone(),
+            commit: commit.clone(),
+            manifest_generation,
+            manifest: manifest.clone(),
+            expected_base: self.base.clone(),
+            expected_target: self.target.clone(),
+        };
+        self.index_proof
+            .submit(IndexProof {
+                root: workspace.root().to_path_buf(),
+                limits: workspace.limits().clone(),
+                prompt,
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn poll_index_prompt(&mut self) -> Option<Result<Option<IndexPrompt>, String>> {
+        match self.index_proof.poll() {
+            Ok(Some(Ok(Some(prompt)))) => {
+                let current = self.transition_generation == prompt.generation
+                    && self.head.checkout() == &prompt.checkout
+                    && self.head.state().commit() == Some(&prompt.commit)
+                    && self.base == prompt.expected_base
+                    && self.target == prompt.expected_target;
+                Some(Ok(current.then_some(prompt)))
+            }
+            Ok(Some(result)) => Some(result),
+            Ok(None) => None,
+            Err(error) => Some(Err(error.to_string())),
+        }
+    }
+
+    pub(crate) fn resolve_index_prompt(&mut self, prompt: &IndexPrompt, pin: bool) -> bool {
+        let valid = self.transition_generation == prompt.generation
+            && self.head.checkout() == &prompt.checkout
+            && self.head.state().commit() == Some(&prompt.commit)
+            && self.base == prompt.expected_base
+            && self.target == prompt.expected_target
+            && prompt.manifest.checkout() == &prompt.checkout
+            && prompt.manifest_generation < prompt.generation;
+        if !valid {
+            return false;
+        }
+        if pin {
+            self.base = ComparisonEndpoint::Commit(prompt.commit.clone());
+            self.base_alias = None;
+            self.source_intent = SourceIntent::Pinned(self.base.clone());
+            self.persist();
+        }
+        true
+    }
+
+    pub(crate) fn accept_off_working_tree(&mut self) {
+        self.installed_head = Some(self.head.clone());
+        self.installed_target = Some(ComparisonEndpoint::WorkingTree);
+        self.installed_presentation = Some(InstalledPresentation::TargetOnly);
+        self.installed_index = None;
+    }
+
+    pub(crate) fn invalidate_off_presentation(&mut self) {
+        self.installed_head = None;
+        self.installed_target = None;
+        self.installed_presentation = None;
+        self.installed_index = None;
     }
 
     fn validate_aliases(&mut self, workspace: &Workspace) -> bool {
@@ -858,6 +1314,9 @@ impl App {
         } else if self.comparison.error().is_some() {
             badge.push_str(" · error");
         }
+        if self.head_transition_pending() {
+            badge.push_str(" · transition decision");
+        }
         if self.tree_issue.is_some()
             || self
                 .tree
@@ -1110,6 +1569,8 @@ impl App {
         if self.annotation_draft_blocks("changing Source") {
             return;
         }
+        self.head_transition_prompt = None;
+        self.index_transition_prompt = None;
         let restore = (self.diff_mode == DiffMode::Off).then_some(self.last_active_diff_mode);
         self.comparison.restore_mode = restore;
         self.comparison.set_base_aliased(
@@ -1141,6 +1602,8 @@ impl App {
         if self.annotation_draft_blocks("changing Target") {
             return;
         }
+        self.head_transition_prompt = None;
+        self.index_transition_prompt = None;
         if self.diff_mode == DiffMode::Off {
             self.comparison.select_target_aliased(endpoint, alias);
             self.refresh_comparison();
@@ -1166,6 +1629,8 @@ impl App {
         target: ComparisonEndpoint,
         target_alias: Option<EndpointAlias>,
     ) -> (bool, bool) {
+        self.head_transition_prompt = None;
+        self.index_transition_prompt = None;
         let restore = (self.diff_mode == DiffMode::Off).then_some(self.last_active_diff_mode);
         self.comparison.restore_mode = restore;
         let persisted = self.comparison.set_endpoints_aliased(
@@ -1189,12 +1654,99 @@ impl App {
 
     /// Pin Base to the current `HEAD` and select the working tree as Target.
     pub(crate) fn select_head_working_tree(&mut self) {
+        if self.head_transition_prompt.is_some() {
+            self.open_picker(super::PickerKind::HeadTransition);
+            return;
+        }
+        if self.index_transition_prompt.is_some() {
+            self.open_picker(super::PickerKind::IndexTransition);
+            return;
+        }
         if self.annotation_draft_blocks("changing comparison") {
             return;
         }
         let (base, alias) = head_endpoint(&self.workspace);
         let _ =
             self.select_comparison_endpoints(base, alias, ComparisonEndpoint::WorkingTree, None);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resolve_head_transition_prompt(&mut self, follow: bool) {
+        let Some(prompt) = self.head_transition_prompt.clone() else {
+            return;
+        };
+        self.resolve_head_transition_choice(&prompt, follow);
+    }
+
+    pub(super) fn resolve_head_transition_choice(&mut self, prompt: &HeadPrompt, follow: bool) {
+        if self.annotation_draft_blocks("answering the HEAD transition") {
+            return;
+        }
+        self.refresh_comparison();
+        if self.head_transition_prompt.as_ref() != Some(prompt) {
+            self.notice("HEAD transition prompt expired");
+            return;
+        }
+        if !self.comparison.resolve_head_prompt(prompt, follow) {
+            self.notice("HEAD transition prompt expired");
+            return;
+        }
+        self.head_transition_prompt = None;
+        self.refresh_all_marks();
+        self.refresh_review_paths();
+        self.notice(if follow {
+            "Source will follow HEAD"
+        } else {
+            "Source pinned at the current commit"
+        });
+    }
+
+    pub(crate) const fn head_transition_pending(&self) -> bool {
+        self.head_transition_prompt.is_some() || self.index_transition_prompt.is_some()
+    }
+
+    pub(crate) const fn transition_prompt_text(&self) -> Option<&'static str> {
+        if self.head_transition_prompt.is_some() {
+            Some(" HEAD moved — choose Follow HEAD or Pin here (Space d d) ")
+        } else if self.index_transition_prompt.is_some() {
+            Some(" Index matches new HEAD — choose Pin new commit or Keep Index (Space d d) ")
+        } else {
+            None
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resolve_index_transition_prompt(&mut self, pin: bool) {
+        let Some(prompt) = self.index_transition_prompt.clone() else {
+            return;
+        };
+        self.resolve_index_transition_choice(&prompt, pin);
+    }
+
+    pub(super) fn resolve_index_transition_choice(&mut self, prompt: &IndexPrompt, pin: bool) {
+        if self.annotation_draft_blocks("answering the Index transition") {
+            return;
+        }
+        self.refresh_comparison();
+        if self.index_transition_prompt.as_ref() != Some(prompt) {
+            self.notice("Index transition prompt expired");
+            return;
+        }
+        if !self.comparison.resolve_index_prompt(prompt, pin) {
+            self.notice("Index transition prompt expired");
+            return;
+        }
+        self.index_transition_prompt = None;
+        if pin {
+            self.refresh_comparison();
+        }
+        self.refresh_all_marks();
+        self.refresh_review_paths();
+        self.notice(if pin {
+            "Source pinned to the new commit"
+        } else {
+            "Source remains Index"
+        });
     }
 
     /// Compare one immutable commit with its first parent.
@@ -1489,10 +2041,16 @@ impl App {
         self.docs[index].comparison_notice = metadata_notice;
         let index_text = (comparison.target() == &ComparisonEndpoint::WorkingTree)
             .then(|| {
-                self.workspace
-                    .endpoint_text(&ComparisonEndpoint::Index, &path)
-                    .ok()
-                    .flatten()
+                if comparison.base() == &ComparisonEndpoint::Index {
+                    self.comparison_endpoint_text(&ComparisonEndpoint::Index, &path)
+                        .ok()
+                        .flatten()
+                } else {
+                    self.workspace
+                        .endpoint_text(&ComparisonEndpoint::Index, &path)
+                        .ok()
+                        .flatten()
+                }
             })
             .flatten();
         self.docs[index].view.set_compare(self.comparison.compare());

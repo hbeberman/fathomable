@@ -24,7 +24,7 @@ impl App {
         self.store
             .iter()
             .flat_map(Store::threads)
-            .filter(|thread| self.reach.includes(thread) && Thread::proposes_resolution(thread))
+            .filter(|thread| self.normal_thread(thread) && Thread::proposes_resolution(thread))
             .count()
     }
 }

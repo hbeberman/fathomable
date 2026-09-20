@@ -294,6 +294,7 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     );
 
     draw_toasts(frame, app, theme, text_area);
+    draw_transition_prompt(frame, app, theme, text_area);
     match app.popup() {
         Some(Popup::Help(_)) => {
             draw_help(frame, app, theme);
@@ -1447,10 +1448,14 @@ fn draw_toasts(frame: &mut Frame<'_>, app: &App, theme: &Theme, pane: Rect) {
         .max()
         .unwrap_or(0)
         .min(usize::from(pane.width));
-    let height = u16_of(shown.len()).min(pane.height);
+    let reserved = u16::from(app.transition_prompt_text().is_some());
+    let height = u16_of(shown.len()).min(pane.height.saturating_sub(reserved));
+    if height == 0 {
+        return;
+    }
     let area = Rect {
         x: pane.x + pane.width - u16_of(width),
-        y: pane.y + pane.height - height,
+        y: pane.y + pane.height - height - reserved,
         width: u16_of(width),
         height,
     };
@@ -1463,6 +1468,32 @@ fn draw_toasts(frame: &mut Frame<'_>, app: &App, theme: &Theme, pane: Rect) {
         .collect();
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(text).style(theme.popup), area);
+}
+
+/// Persistent HEAD/Index decision, independent of transient toast settings.
+pub(crate) fn transition_prompt_area(app: &App, pane: Rect) -> Option<Rect> {
+    let text = app.transition_prompt_text()?;
+    let width = u16_of(display_width(text)).min(pane.width);
+    (pane.height > 0).then_some(Rect {
+        x: pane.x + pane.width - width,
+        y: pane.y + pane.height - 1,
+        width,
+        height: 1,
+    })
+}
+
+fn draw_transition_prompt(frame: &mut Frame<'_>, app: &App, theme: &Theme, pane: Rect) {
+    let Some(text) = app.transition_prompt_text() else {
+        return;
+    };
+    let Some(area) = transition_prompt_area(app, pane) else {
+        return;
+    };
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(fit_ellipsis(text, usize::from(area.width))).style(theme.popup),
+        area,
+    );
 }
 
 fn toast_line(toast: &Toast, theme: &Theme) -> Line<'static> {
@@ -3207,6 +3238,8 @@ fn picker_title(picker: &PickerState) -> String {
         super::PickerKind::ReviewPointName => "save review point (name optional)".to_owned(),
         super::PickerKind::ReviewPointManage => "manage review points".to_owned(),
         super::PickerKind::Worktree => "worktree".to_owned(),
+        super::PickerKind::HeadTransition => "HEAD moved: source intent".to_owned(),
+        super::PickerKind::IndexTransition => "Index matches new HEAD".to_owned(),
     }
 }
 
@@ -3218,7 +3251,9 @@ fn picker_count(picker: &PickerState) -> Option<String> {
         super::PickerKind::ComparisonBase
         | super::PickerKind::ComparisonTarget
         | super::PickerKind::ComparisonCommit
-        | super::PickerKind::ComparisonAdvanced(_) => ("choice", "choices"),
+        | super::PickerKind::ComparisonAdvanced(_)
+        | super::PickerKind::HeadTransition
+        | super::PickerKind::IndexTransition => ("choice", "choices"),
         super::PickerKind::ComparisonTags(_) => ("tag", "tags"),
         super::PickerKind::ComparisonBranches(_) => ("branch", "branches"),
         super::PickerKind::ComparisonBranchCommits(_) => ("commit", "commits"),

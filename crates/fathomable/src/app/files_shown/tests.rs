@@ -3,11 +3,13 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use fathomable_core::annotations::{Author, Draft, LineRange, ResolutionOutcome, Store};
+use fathomable_core::annotations::{
+    Author, Draft, LineRange, OriginSide, OriginVersion, ResolutionOutcome, Store,
+};
 use fathomable_core::config::DiffMode;
 use fathomable_core::theme::Theme as CoreTheme;
 use fathomable_core::tree::Rule;
-use fathomable_core::workspace::Workspace;
+use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Workspace};
 use fathomable_testing::{TempDir, git};
 
 use crate::app::draw::Theme;
@@ -312,17 +314,15 @@ fn assert_user_message_write_imports_current_head_review(
             LineRange::new(3, 3),
             "existing finding",
         )
-        .at_commit(Some(ancestor)),
+        .at_source(OriginVersion::commit(ancestor.clone()), OriginSide::Base),
         testing::README,
         1,
     )?;
     fs::write(root.join("b.md"), "# B\n")?;
     git::commit_and_stage(&root, &[("b.md", "# B\n")])?;
-    let head = Workspace::discover(&root)?
-        .head_commit()
-        .context("current HEAD")?;
-
     let mut app = testing::source_app(&dir)?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&ancestor)?));
+    app.settle_background();
     app.show_tree();
     press(&mut app, " Fo");
     assert_eq!(names(&app), ["README.md"]);
@@ -332,8 +332,7 @@ fn assert_user_message_write_imports_current_head_review(
             Path::new("b.md"),
             LineRange::new(1, 1),
             "new at HEAD",
-        )
-        .at_commit(Some(head)),
+        ),
         "# B\n",
         2,
     )?;
@@ -349,7 +348,7 @@ fn assert_user_message_write_imports_current_head_review(
     app.compose_submit();
 
     let rows = names(&app);
-    assert_eq!(rows.len(), 2, "write must refresh all review-bearing rows");
+    assert_eq!(rows.len(), 2, "write must refresh admitted review rows");
     assert!(
         rows.iter().any(|path| path == "b.md"),
         "the imported current-HEAD review must appear: {rows:?}"
@@ -480,10 +479,9 @@ fn only_reviews_restores_an_active_archived_thread_after_restart() -> anyhow::Re
         "archived commits are absent from startup reach"
     );
     app.restore_thread(&id);
-    assert_eq!(
-        names(&app),
-        ["README.md"],
-        "restoration refreshes reach before review paths"
+    assert!(
+        names(&app).is_empty(),
+        "restoration does not override exact comparison membership"
     );
     Ok(())
 }
@@ -567,6 +565,9 @@ fn live_deletion_restoration_keeps_pinned_comparison_entries() -> anyhow::Result
     let dir = fixture("deleted")?;
     let root = testing::root(&dir);
     let mut app = AppBuilder::new(&dir).build()?;
+    let pinned = app.workspace().head_commit().context("pinned HEAD")?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&pinned)?));
+    app.settle_background();
     app.show_tree();
     let file = Path::new("src/lib.rs");
     app.with_tree_result(|tree, workspace| tree.reveal(workspace, file).map(|_| None));

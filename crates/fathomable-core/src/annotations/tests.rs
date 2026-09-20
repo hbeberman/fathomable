@@ -7,12 +7,14 @@ use fathomable_testing::TempDir;
 use crate::reach::Reach;
 
 use super::{
-    AgentReplyCommand, Anchor, ArchiveContext, Author, AutoResolve, ComparisonFacts, Draft, Event,
-    FORMAT_VERSION, Lifecycle, LineHashes, LineRange, MAX_IDEMPOTENCY_KEY_BYTES, MAX_MESSAGE_BYTES,
-    MessageTarget, OriginSide, OriginVersion, Placement, PlacementContext, PlacementEvidence,
-    Provenance, Reply, ResolutionOutcome, Status, Store, StoreError, Thread, ThreadId, UserSubmit,
-    UserWriteOutcome, WorkingTreeFacts, WorkingTreeState, line_hash, start_intent,
+    ActivityCursor, AgentReplyCommand, Anchor, ArchiveContext, Author, AutoResolve,
+    ComparisonFacts, Draft, Event, FORMAT_VERSION, FullFileDigest, LandingOutcome, Lifecycle,
+    LineHashes, LineRange, MAX_IDEMPOTENCY_KEY_BYTES, MAX_MESSAGE_BYTES, MessageTarget, OriginSide,
+    OriginVersion, Placement, PlacementContext, PlacementEvidence, Provenance, Reply,
+    ResolutionOutcome, Status, Store, StoreError, Thread, ThreadId, UserSubmit, UserWriteOutcome,
+    WorkingTreeFacts, WorkingTreeState, line_hash, start_intent,
 };
+use crate::workspace::CheckoutIdentity;
 
 const TEXT: &str = "# Title\n\nalpha\nbeta\ngamma\n\ndelta\n";
 
@@ -150,11 +152,11 @@ fn a_store_of_another_format_version_is_refused() -> Result<(), StoreError> {
         1,
     )?;
     let current = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
-    let stale = current.replace(&format!(r#""v":{FORMAT_VERSION}"#), r#""v":4"#);
+    let stale = current.replace(&format!(r#""v":{FORMAT_VERSION}"#), r#""v":5"#);
     fs::write(&file.0, stale).map_err(|e| StoreError::io(&file.0, e))?;
     let store_error = Store::open(&file.0).err();
     let mismatch = store_error.as_ref().and_then(StoreError::format_mismatch);
-    assert_eq!(mismatch.as_ref().map(super::FormatMismatch::found), Some(4));
+    assert_eq!(mismatch.as_ref().map(super::FormatMismatch::found), Some(5));
     assert_eq!(
         mismatch.as_ref().map(super::FormatMismatch::expected),
         Some(FORMAT_VERSION)
@@ -163,12 +165,189 @@ fn a_store_of_another_format_version_is_refused() -> Result<(), StoreError> {
     assert_eq!(
         error,
         Some(format!(
-            "threads.jsonl line 1: format version 4, this build writes {FORMAT_VERSION}; delete {} to start over",
+            "threads.jsonl line 1: format version 5, this build writes {FORMAT_VERSION}; delete {} to start over",
             file.0.display()
         ))
     );
     fs::write(&file.0, current).map_err(|e| StoreError::io(&file.0, e))?;
     assert_eq!(Store::open(&file.0)?.threads().len(), 1);
+    Ok(())
+}
+
+fn working_tree_draft(store_path: &Path, text: &str) -> Draft {
+    let checkout = store_path.parent().unwrap_or(Path::new("/")).to_path_buf();
+    let repository = checkout.join(".git");
+    Draft::new(
+        Author::User,
+        Path::new("a.md"),
+        LineRange::new(1, 1),
+        "mutable source",
+    )
+    .with_provenance(
+        Provenance::new(
+            OriginVersion::working_tree(Some("base".to_owned())),
+            OriginSide::Target,
+        )
+        .with_working_tree(WorkingTreeFacts::new(
+            Some("base".to_owned()),
+            WorkingTreeState::Modified,
+            Some(super::ContentIdentity::from_text(text)),
+            CheckoutIdentity::from_canonical_paths(checkout, repository),
+            FullFileDigest::from_bytes(text.as_bytes()),
+        )),
+    )
+}
+
+#[test]
+fn mutable_origins_require_valid_full_provenance_on_create_and_load()
+-> Result<(), Box<dyn std::error::Error>> {
+    let file = TempFile::new("required-provenance")?;
+    let mut store = Store::open(&file.0)?;
+    for version in [
+        OriginVersion::working_tree(Some("base".to_owned())),
+        OriginVersion::index(Some("base".to_owned())),
+        OriginVersion::review_point("point", Some("base".to_owned())),
+    ] {
+        let missing = Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "missing",
+        )
+        .with_provenance(Provenance::new(version, OriginSide::Target));
+        assert!(
+            store
+                .annotate(missing, TEXT, 1)
+                .is_err_and(|error| error.to_string().contains("full SHA-256"))
+        );
+    }
+
+    store.annotate(working_tree_draft(&file.0, TEXT), TEXT, 2)?;
+    let original = fs::read_to_string(&file.0)?;
+    for field in ["checkout", "full_content"] {
+        let mut event: serde_json::Value = serde_json::from_str(original.trim_end())?;
+        event["origin"]["provenance"]["working_tree"]
+            .as_object_mut()
+            .ok_or("missing working-tree facts")?
+            .remove(field);
+        fs::write(&file.0, format!("{event}\n"))?;
+        assert!(
+            Store::open(&file.0).is_err(),
+            "missing {field} was accepted"
+        );
+    }
+    let mut malformed: serde_json::Value = serde_json::from_str(original.trim_end())?;
+    malformed["origin"]["provenance"]["working_tree"]["full_content"]["sha256"] =
+        serde_json::Value::String("ABC".to_owned());
+    fs::write(&file.0, format!("{malformed}\n"))?;
+    Store::open(&file.0)
+        .err()
+        .ok_or("malformed full digest was accepted")?;
+    Ok(())
+}
+
+#[test]
+fn full_file_digest_covers_every_byte_and_length() {
+    let base = FullFileDigest::from_bytes(b"same prefix, ending A");
+    let changed = FullFileDigest::from_bytes(b"same prefix, ending B");
+    let longer = FullFileDigest::from_bytes(b"same prefix, ending A!");
+
+    assert_eq!(base.sha256().len(), 64);
+    assert!(base.sha256().bytes().all(|byte| byte.is_ascii_hexdigit()));
+    assert_eq!(base.bytes(), 21);
+    assert_ne!(base, changed);
+    assert_ne!(base, longer);
+}
+
+#[test]
+fn landing_is_durable_first_writer_wins_without_touching_thread_metadata()
+-> Result<(), Box<dyn std::error::Error>> {
+    let file = TempFile::new("landing")?;
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate(working_tree_draft(&file.0, TEXT), TEXT, 10)?;
+    store.archive(&id, 11)?;
+    let before = store.thread(&id).ok_or("missing archived thread")?.clone();
+    let candidate = before.landing_candidate().ok_or("missing candidate")?;
+    let activity_before = store
+        .agent_activity_since(ActivityCursor::default())
+        .count();
+    let first = crate::workspace::CommitId::parse("1111111111111111111111111111111111111111")?;
+    let other = crate::workspace::CommitId::parse("2222222222222222222222222222222222222222")?;
+
+    assert_eq!(store.land(&candidate, &first)?, LandingOutcome::Applied);
+    let landed = store.thread(&id).ok_or("missing landed thread")?;
+    assert_eq!(landed.landed_commit(), Some(first.as_str()));
+    assert_eq!(landed.modified(), before.modified());
+    assert_eq!(landed.lifecycle(), before.lifecycle());
+    assert_eq!(landed.auto_resolve(), before.auto_resolve());
+    assert_eq!(landed.revision(), before.revision());
+    assert_eq!(landed.commit(), before.commit());
+    assert!(landed.is_archived());
+    assert_eq!(
+        store
+            .agent_activity_since(ActivityCursor::default())
+            .count(),
+        activity_before
+    );
+    let lines = fs::read_to_string(&file.0)?.lines().count();
+
+    drop(store);
+    let mut retry = Store::open(&file.0)?;
+    assert_eq!(
+        retry.land(&candidate, &first)?,
+        LandingOutcome::AlreadyLanded
+    );
+    assert_eq!(
+        retry.land(&candidate, &other)?,
+        LandingOutcome::Conflict {
+            landed_commit: first.as_str().to_owned()
+        }
+    );
+    assert_eq!(fs::read_to_string(&file.0)?.lines().count(), lines);
+    assert_eq!(
+        Store::open(&file.0)?
+            .thread(&id)
+            .and_then(Thread::landed_commit),
+        Some(first.as_str())
+    );
+    Ok(())
+}
+
+#[test]
+fn landing_rechecks_concurrent_deletion_and_first_writer_under_lock()
+-> Result<(), Box<dyn std::error::Error>> {
+    let file = TempFile::new("landing-race")?;
+    let mut initial = Store::open(&file.0)?;
+    let deleted_id = initial.annotate(working_tree_draft(&file.0, TEXT), TEXT, 1)?;
+    let deleted_candidate = initial
+        .thread(&deleted_id)
+        .and_then(Thread::landing_candidate)
+        .ok_or("missing deletion candidate")?;
+    let winner_id = initial.annotate(working_tree_draft(&file.0, TEXT), TEXT, 2)?;
+    let winner_candidate = initial
+        .thread(&winner_id)
+        .and_then(Thread::landing_candidate)
+        .ok_or("missing winner candidate")?;
+    let mut stale = Store::open(&file.0)?;
+    initial.delete(&deleted_id, 3)?;
+    let first = crate::workspace::CommitId::parse("3333333333333333333333333333333333333333")?;
+    let second = crate::workspace::CommitId::parse("4444444444444444444444444444444444444444")?;
+    assert_eq!(
+        stale.land(&deleted_candidate, &first)?,
+        LandingOutcome::Deleted
+    );
+
+    let mut competing = Store::open(&file.0)?;
+    assert_eq!(
+        stale.land(&winner_candidate, &first)?,
+        LandingOutcome::Applied
+    );
+    assert_eq!(
+        competing.land(&winner_candidate, &second)?,
+        LandingOutcome::Conflict {
+            landed_commit: first.as_str().to_owned()
+        }
+    );
     Ok(())
 }
 
@@ -1016,7 +1195,7 @@ fn keyed_start_replays_after_restart_without_loading_the_source() -> Result<(), 
 }
 
 #[test]
-fn selected_commit_intent_is_tagged_without_a_format_bump() -> Result<(), StoreError> {
+fn selected_commit_intent_remains_tagged_in_current_format() -> Result<(), StoreError> {
     let commit = crate::workspace::CommitId::parse("0123456789abcdef0123456789abcdef01234567")
         .map_err(|error| StoreError::message(error.to_string()))?;
     let legacy = Draft::on_file(keyed_author("copilot:one"), Path::new("a.md"), "comment");
@@ -1030,7 +1209,7 @@ fn selected_commit_intent_is_tagged_without_a_format_bump() -> Result<(), StoreE
         start_intent(&selected)?,
         r#"{"operation":"start","path":"a.md","range":null,"body":"comment","source":{"kind":"commit","id":"0123456789abcdef0123456789abcdef01234567"}}"#
     );
-    assert_eq!(FORMAT_VERSION, 5);
+    assert_eq!(FORMAT_VERSION, 6);
     Ok(())
 }
 
@@ -2106,6 +2285,11 @@ fn origin_survives_relocation_move_resolution_and_reopen() -> Result<(), StoreEr
             Some("base".to_owned()),
             WorkingTreeState::Modified,
             None,
+            CheckoutIdentity::from_canonical_paths(
+                file.0.clone(),
+                file.0.parent().unwrap_or(Path::new("/")).to_path_buf(),
+            ),
+            FullFileDigest::from_bytes(TEXT.as_bytes()),
         ));
     let id = store.annotate(
         Draft::new(

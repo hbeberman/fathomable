@@ -13,9 +13,9 @@
 //! the document; showing that document again restores it.
 
 use fathomable_core::annotations::{
-    Author, ComparisonFacts, ContentIdentity, Draft, IndexFacts, IndexState, LineRange,
-    MessageTarget, OriginSide, OriginVersion, Provenance, ReviewPointFacts, ThreadId, UserSubmit,
-    UserWriteOutcome, WorkingTreeFacts, WorkingTreeState,
+    Author, ComparisonFacts, ContentIdentity, Draft, FullFileDigest, IndexFacts, IndexState,
+    LineRange, MessageTarget, OriginSide, OriginVersion, Provenance, ReviewPointFacts, ThreadId,
+    UserSubmit, UserWriteOutcome, WorkingTreeFacts, WorkingTreeState,
 };
 use fathomable_core::clock::now;
 use fathomable_core::content::Content;
@@ -517,6 +517,8 @@ impl App {
         if !self.has_new_annotation_draft() && self.comparison.unfreeze_after_annotation() {
             self.refresh_comparison();
         }
+        self.refresh_all_marks();
+        self.reconcile_normal_thread_cursor();
     }
 
     /// The draft's text changed: its rows are laid out again and the
@@ -634,6 +636,7 @@ impl App {
         self.refresh_after_thread_store_change();
         match result {
             Ok(id) => {
+                self.trigger_landing(None);
                 tracing::info!(%id, path = %path.display(), %where_at, "thread started");
                 self.view_mut().clear_selection();
                 self.notice(format!("commented on {where_at}"));
@@ -783,6 +786,8 @@ impl App {
                     self.workspace.head_commit(),
                     state,
                     Some(ContentIdentity::from_text(text)),
+                    self.workspace.identity(),
+                    FullFileDigest::from_bytes(text.as_bytes()),
                 ));
             }
             fathomable_core::workspace::ComparisonEndpoint::Index => {
@@ -795,6 +800,8 @@ impl App {
                     self.workspace.head_commit(),
                     state,
                     Some(ContentIdentity::from_text(text)),
+                    self.workspace.identity(),
+                    FullFileDigest::from_bytes(text.as_bytes()),
                 ));
             }
             fathomable_core::workspace::ComparisonEndpoint::ReviewPoint(id) => {
@@ -807,6 +814,8 @@ impl App {
                             point.id(),
                             point.head().map(ToString::to_string),
                             Some(ContentIdentity::from_text(text)),
+                            point.checkout_identity(),
+                            FullFileDigest::from_bytes(text.as_bytes()),
                         )
                     });
                 if let Some(facts) = facts {

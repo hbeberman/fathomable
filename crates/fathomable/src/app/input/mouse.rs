@@ -313,6 +313,10 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
         Some(Popup::Picker(picker)) => {
             let layout = draw::picker_layout(app, picker);
             let entry = layout.entry_at(column, row, picker.matched());
+            let transition = matches!(
+                picker.kind,
+                crate::app::PickerKind::HeadTransition | crate::app::PickerKind::IndexTransition
+            );
             match kind {
                 MouseEventKind::ScrollDown if layout.contains(column, row) => {
                     app.picker_move(WHEEL_LINES);
@@ -321,7 +325,11 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
                     app.picker_move(-WHEEL_LINES);
                 }
                 MouseEventKind::Down(MouseButton::Left) if !layout.contains(column, row) => {
-                    app.close_popup();
+                    if transition {
+                        app.picker_escape();
+                    } else {
+                        app.close_popup();
+                    }
                 }
                 MouseEventKind::Down(MouseButton::Left) if layout.rename_at(column, row) => {
                     app.rename_selected_review_point();
@@ -544,6 +552,22 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     }
     let left = event.kind == MouseEventKind::Down(MouseButton::Left);
     let right = event.kind == MouseEventKind::Down(MouseButton::Right);
+    let prompt_pane = ratatui::layout::Rect::new(
+        u16::try_from(app.sidebar_width()).unwrap_or(u16::MAX),
+        u16::try_from(app.pane_top()).unwrap_or(u16::MAX),
+        u16::try_from(app.size().0.saturating_sub(app.sidebar_width())).unwrap_or(u16::MAX),
+        u16::try_from(app.pane_rows()).unwrap_or(u16::MAX),
+    );
+    if left
+        && draw::transition_prompt_area(app, prompt_pane).is_some_and(|area| {
+            event.column >= area.x
+                && event.column < area.x.saturating_add(area.width)
+                && event.row == area.y
+        })
+    {
+        app.select_head_working_tree();
+        return Effect::None;
+    }
     if left {
         if let Some(effect) = which_key_click(app, column, row) {
             return effect;

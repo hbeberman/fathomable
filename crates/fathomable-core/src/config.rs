@@ -85,6 +85,31 @@ impl fmt::Display for DiffMode {
     }
 }
 
+/// What a symbolic `HEAD -> WorkingTree` comparison does after `HEAD` moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum HeadTransitionPolicy {
+    /// Follow immediately and offer to pin the new commit.
+    #[default]
+    AskPin,
+    /// Pin immediately and offer to resume following `HEAD`.
+    AskFollow,
+    /// Pin the newly observed commit without prompting.
+    Pin,
+    /// Continue following `HEAD` without prompting.
+    Follow,
+}
+
+impl fmt::Display for HeadTransitionPolicy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::AskPin => "ask-pin",
+            Self::AskFollow => "ask-follow",
+            Self::Pin => "pin",
+            Self::Follow => "follow",
+        })
+    }
+}
+
 /// The `diff { ... }` block: startup diff presentation and comparison rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffConfig {
@@ -94,6 +119,8 @@ pub struct DiffConfig {
     pub context: usize,
     /// Whether the session starts with whitespace ignored (`Space d w`).
     pub ignore_whitespace: bool,
+    /// Policy for a symbolic `HEAD -> WorkingTree` comparison after a commit.
+    pub head_transition: HeadTransitionPolicy,
 }
 
 impl Default for DiffConfig {
@@ -102,6 +129,7 @@ impl Default for DiffConfig {
             mode: DiffMode::default(),
             context: crate::diff::DEFAULT_CONTEXT,
             ignore_whitespace: false,
+            head_transition: HeadTransitionPolicy::default(),
         }
     }
 }
@@ -244,6 +272,16 @@ impl Default for LimitsConfig {
 }
 
 impl LimitsConfig {
+    /// Maximum candidate paths accepted by one comparison operation.
+    #[must_use]
+    pub const fn comparison_path_limit(&self) -> usize {
+        if self.comparison_paths < self.retained_paths {
+            self.comparison_paths
+        } else {
+            self.retained_paths
+        }
+    }
+
     fn validate(&self) -> Result<(), ConfigError> {
         for (name, value) in [
             ("discovery-entries", self.discovery_entries),
@@ -562,6 +600,23 @@ impl Config {
                             "ignore-whitespace" => {
                                 config.diff.ignore_whitespace = one_bool(child, line)?;
                             }
+                            "head-transition" => {
+                                config.diff.head_transition = match one_string(child, line)? {
+                                    "ask-pin" => HeadTransitionPolicy::AskPin,
+                                    "ask-follow" => HeadTransitionPolicy::AskFollow,
+                                    "pin" => HeadTransitionPolicy::Pin,
+                                    "follow" => HeadTransitionPolicy::Follow,
+                                    value => {
+                                        return Err(ConfigError {
+                                            path: None,
+                                            line,
+                                            message: format!(
+                                                "unknown HEAD transition policy `{value}`; expected `ask-pin`, `ask-follow`, `pin`, or `follow`"
+                                            ),
+                                        });
+                                    }
+                                };
+                            }
                             other => {
                                 return Err(ConfigError {
                                     path: None,
@@ -835,6 +890,7 @@ diff {{
     mode {mode} // Startup presentation: \"normal\", \"unified\", or \"off\".
     context {context} // Unchanged lines shown around each diff hunk.
     ignore-whitespace #{ignore_whitespace} // Default only; saved comparisons keep their whitespace rule.
+    head-transition {head_transition} // After HEAD moves: \"ask-pin\", \"ask-follow\", \"pin\", or \"follow\".
 }}
 
 user {{
@@ -865,6 +921,7 @@ user {{
             mode = quoted(&self.diff.mode.to_string()),
             context = self.diff.context,
             ignore_whitespace = self.diff.ignore_whitespace,
+            head_transition = quoted(&self.diff.head_transition.to_string()),
             name = quoted(&self.user.name),
         )
     }
@@ -1058,6 +1115,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn comparison_path_limit_uses_both_positive_ceilings() {
+        let limits = LimitsConfig {
+            retained_paths: 1,
+            comparison_paths: 2,
+            ..LimitsConfig::default()
+        };
+        assert_eq!(limits.comparison_path_limit(), 1);
+
+        for setting in ["retained-paths", "comparison-paths"] {
+            let text = format!("limits {{ {setting} 0 }}");
+            assert!(
+                Config::parse(&text)
+                    .is_err_and(|error| error.to_string().contains("positive integer"))
+            );
+        }
+    }
+
+    #[test]
     fn watch_and_viewer_blocks_parse_every_key() -> Result<(), ConfigError> {
         let config = Config::parse(
             r#"
@@ -1200,11 +1275,13 @@ threads {
     /// anything else is a typo.
     #[test]
     fn diff_block_sets_mode_context_and_whitespace() -> Result<(), ConfigError> {
-        let config =
-            Config::parse("diff { mode \"unified\"; context 5; ignore-whitespace #true }")?;
+        let config = Config::parse(
+            "diff { mode \"unified\"; context 5; ignore-whitespace #true; head-transition \"follow\" }",
+        )?;
         assert_eq!(config.diff().mode, DiffMode::Unified);
         assert_eq!(config.diff().context, 5);
         assert!(config.diff().ignore_whitespace);
+        assert_eq!(config.diff().head_transition, HeadTransitionPolicy::Follow);
         assert_eq!(
             config.diff().compare(),
             crate::diff::Compare {
@@ -1217,6 +1294,10 @@ threads {
             crate::diff::Compare::default()
         );
         assert_eq!(Config::default().diff().mode, DiffMode::Normal);
+        assert_eq!(
+            Config::default().diff().head_transition,
+            HeadTransitionPolicy::AskPin
+        );
         for (value, mode) in [
             ("normal", DiffMode::Normal),
             ("unified", DiffMode::Unified),
@@ -1224,6 +1305,15 @@ threads {
         ] {
             let config = Config::parse(&format!("diff {{ mode \"{value}\" }}"))?;
             assert_eq!(config.diff().mode, mode);
+        }
+        for (value, policy) in [
+            ("ask-pin", HeadTransitionPolicy::AskPin),
+            ("ask-follow", HeadTransitionPolicy::AskFollow),
+            ("pin", HeadTransitionPolicy::Pin),
+            ("follow", HeadTransitionPolicy::Follow),
+        ] {
+            let config = Config::parse(&format!("diff {{ head-transition \"{value}\" }}"))?;
+            assert_eq!(config.diff().head_transition, policy);
         }
         for (text, needle) in [
             ("diff { width 5 }", "unknown diff setting `width`"),
@@ -1233,6 +1323,10 @@ threads {
             ("diff { mode \"Normal\" }", "unknown diff mode"),
             ("diff { mode #true }", "exactly one string"),
             ("diff { mode \"off\" \"unified\" }", "exactly one string"),
+            (
+                "diff { head-transition \"prompt\" }",
+                "unknown HEAD transition policy",
+            ),
             ("diff 1", "block"),
         ] {
             let error = Config::parse(text)

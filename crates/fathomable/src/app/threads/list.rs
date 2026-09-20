@@ -219,11 +219,6 @@ fn origin_label(thread: &Thread) -> Option<String> {
 impl Entry {
     /// The branch on the entry when another worktree shows the thread
     /// (ADR 0070).
-    #[cfg(test)]
-    pub(crate) fn worktree(&self) -> Option<&str> {
-        self.worktree.as_deref()
-    }
-
     /// The commit on the entry when the thread is resolved at an
     /// earlier commit of this branch (ADR 0072).
     #[cfg(test)]
@@ -539,22 +534,35 @@ impl App {
     /// their commit (ADR 0072), narrowed to the current file when
     /// `file_only`; files in the files pane's order, threads by line.
     pub(crate) fn review_entries(&self, file_only: bool) -> Vec<Entry> {
-        self.review_entries_showing(file_only, self.review.resolved)
+        self.review_entries_for(self.review.view, file_only, self.review.resolved, true)
     }
 
-    /// [`App::review_entries`] with the resolved flag given, so a count
-    /// can say what is hidden.
-    fn review_entries_showing(&self, file_only: bool, resolved: bool) -> Vec<Entry> {
+    /// Normal-board entries for sidebar and file-list surfaces, independent
+    /// of whichever explicit history view occupies the main pane.
+    pub(crate) fn normal_review_entries(&self, file_only: bool) -> Vec<Entry> {
+        self.review_entries_for(ReviewView::Board, file_only, self.review.resolved, false)
+    }
+
+    fn review_entries_for(
+        &self,
+        view: ReviewView,
+        file_only: bool,
+        resolved: bool,
+        allow_evidence: bool,
+    ) -> Vec<Entry> {
         let Some(store) = self.store.as_ref() else {
             return Vec::new();
         };
         let current = self.current_path();
-        let view = self.review.view;
         let candidates: Vec<&Thread> = match view {
             ReviewView::Board => store
                 .threads()
                 .iter()
-                .filter(|thread| self.reach.includes(thread))
+                .filter(|thread| {
+                    self.normal_thread(thread)
+                        || (allow_evidence
+                            && self.review_list.evidence.as_ref() == Some(thread.id()))
+                })
                 .collect(),
             ReviewView::RecentlyResolved => store.recently_resolved(),
             ReviewView::Archived => store.archived_threads().iter().collect(),
@@ -570,16 +578,18 @@ impl App {
                 !file_only || path == current
             })
             .filter_map(|thread| {
-                let (placement, words) = self.placement_of(thread);
+                let exact = self.thread_matches_presentation(thread) == Some(true);
+                let (placement, words) = self.placement_of(thread, exact);
                 let range = placement.range();
                 if view == ReviewView::Board && !resolved && !is_open(words.state()) {
                     return None;
                 }
-                let worktree = self.worktree_of(thread.id());
-                let commit =
-                    (view == ReviewView::Board && worktree.is_none() && !self.reach.here(thread))
-                        .then(|| thread.commit().map(short_commit))
-                        .flatten();
+                let worktree = (!exact).then(|| self.worktree_of(thread.id())).flatten();
+                let commit = (view == ReviewView::Board
+                    && worktree.is_none()
+                    && !self.normal_thread(thread))
+                .then(|| thread.commit().map(short_commit))
+                .flatten();
                 let origin_context = (view == ReviewView::Archived)
                     .then(|| origin_label(thread))
                     .flatten();
@@ -632,16 +642,19 @@ impl App {
         entries
     }
 
-    fn review_threads_for_counts(&self, file_only: bool) -> Vec<Entry> {
-        self.review_entries_showing(file_only, true)
-    }
-
     /// The threads of the review's scope by circle (ADR 0066, ADR
     /// 0075), the resolved ones counted whether or not they are listed.
     pub(crate) fn review_counts(&self, file_only: bool) -> Counts {
         let mut counts = Counts::default();
-        for entry in self.review_threads_for_counts(file_only) {
-            match entry.kind() {
+        let current = self.current_path();
+        for thread in self
+            .store
+            .iter()
+            .flat_map(Store::threads)
+            .filter(|thread| self.normal_thread(thread))
+            .filter(|thread| !file_only || self.thread_path(thread) == current)
+        {
+            match ThreadState::of(thread) {
                 ThreadState::Active => counts.active += 1,
                 ThreadState::Proposed => counts.proposed += 1,
                 ThreadState::Resolved => counts.resolved += 1,
@@ -657,9 +670,15 @@ impl App {
             .store
             .iter()
             .flat_map(Store::threads)
-            .filter(|thread| self.reach.here(thread))
+            .filter(|thread| {
+                self.thread_matches_presentation(thread)
+                    .unwrap_or_else(|| self.reach.here(thread))
+            })
             .filter(|thread| self.thread_path(thread).starts_with(directory))
-            .filter(|thread| self.worktree_of(thread.id()).is_none())
+            .filter(|thread| {
+                self.thread_matches_presentation(thread).unwrap_or(false)
+                    || self.worktree_of(thread.id()).is_none()
+            })
         {
             match ThreadState::of(thread) {
                 ThreadState::Active => counts.active += 1,
@@ -675,12 +694,17 @@ impl App {
     pub(crate) fn file_circles(&self) -> Vec<(PathBuf, Words)> {
         let mut out: Vec<(PathBuf, Words)> = Vec::new();
         // The circles count what the active worktree reaches (ADR 0070).
-        for entry in self.review_entries(false).into_iter().filter(|entry| {
-            entry.worktree.is_none()
-                && self
-                    .thread(entry.id())
-                    .is_some_and(|thread| self.reach.here(thread))
-        }) {
+        for entry in self
+            .normal_review_entries(false)
+            .into_iter()
+            .filter(|entry| {
+                entry.worktree.is_none()
+                    && self.thread(entry.id()).is_some_and(|thread| {
+                        self.thread_matches_presentation(thread)
+                            .unwrap_or_else(|| self.reach.here(thread))
+                    })
+            })
+        {
             match out.iter_mut().find(|(path, _)| path == entry.path()) {
                 Some((_, words)) => {
                     if entry.words().urgency() > words.urgency() {
@@ -699,10 +723,12 @@ impl App {
             return;
         }
         self.review_list.open = false;
+        self.review_list.evidence = None;
         self.review.view = ReviewView::Board;
         if self.focus == Focus::Review {
             self.focus = Focus::View;
         }
+        self.reconcile_normal_thread_cursor();
         self.relayout();
     }
 
@@ -797,6 +823,7 @@ impl App {
     pub(super) fn placement_of(
         &self,
         thread: &Thread,
+        exact: bool,
     ) -> (fathomable_core::annotations::Placement, Words) {
         if thread.is_archived() {
             let placement = thread
@@ -805,39 +832,49 @@ impl App {
                 .map_or(Placement::File, Placement::Detached);
             return (placement, Words::of(Some(placement), thread));
         }
-        // A thread another worktree shows is placed in that worktree's
-        // file (ADR 0070).
-        if let Some(placement) = self.elsewhere_placement(thread.id()) {
+        // Exact membership belongs to the installed document. Only a
+        // reach-retained origin can borrow another worktree's placement.
+        if !exact && let Some(placement) = self.elsewhere_placement(thread.id()) {
             return (placement, Words::of(Some(placement), thread));
         }
-        self.docs
+        let loaded = self
+            .docs
             .iter()
             .find(|doc| doc.relative == self.thread_path(thread))
-            .and_then(|doc| doc.marks.iter().find(|mark| mark.id() == thread.id()))
-            .map_or_else(
-                || {
-                    let detached = || {
-                        thread.range().map_or(
-                            fathomable_core::annotations::Placement::File,
-                            fathomable_core::annotations::Placement::Detached,
-                        )
-                    };
-                    let absolute = self.workspace().root().join(self.thread_path(thread));
-                    let placement = if absolute.is_file() {
-                        std::fs::read_to_string(absolute).map_or_else(
-                            |_| detached(),
-                            |text| {
-                                let hashes = fathomable_core::annotations::LineHashes::of(&text);
-                                App::project_placement(thread, &text, &hashes)
-                            },
-                        )
-                    } else {
-                        detached()
-                    };
-                    (placement, Words::of(Some(placement), thread))
-                },
-                |mark| (mark.placement(), mark.words()),
+            .and_then(|doc| doc.marks.iter().find(|mark| mark.id() == thread.id()));
+        if let Some(mark) = loaded {
+            return (mark.placement(), mark.words());
+        }
+        let detached = || {
+            thread.range().map_or(
+                fathomable_core::annotations::Placement::File,
+                fathomable_core::annotations::Placement::Detached,
             )
+        };
+        if exact {
+            let placement = self
+                .installed_display_text(self.thread_path(thread))
+                .ok()
+                .flatten()
+                .map_or_else(detached, |text| {
+                    let hashes = fathomable_core::annotations::LineHashes::of(&text);
+                    App::project_placement(thread, &text, &hashes)
+                });
+            return (placement, Words::of(Some(placement), thread));
+        }
+        let absolute = self.workspace().root().join(self.thread_path(thread));
+        let placement = if absolute.is_file() {
+            std::fs::read_to_string(absolute).map_or_else(
+                |_| detached(),
+                |text| {
+                    let hashes = fathomable_core::annotations::LineHashes::of(&text);
+                    App::project_placement(thread, &text, &hashes)
+                },
+            )
+        } else {
+            detached()
+        };
+        (placement, Words::of(Some(placement), thread))
     }
 
     fn push_entry(

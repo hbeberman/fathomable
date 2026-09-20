@@ -323,6 +323,42 @@ impl App {
 
     /// Kept for callers that need the active pair after a refresh.
     pub(crate) fn refresh_comparison(&mut self) {
+        let transition = self.comparison.observe_head(&self.workspace);
+        if transition.is_some() {
+            self.head_transition_prompt = None;
+            self.index_transition_prompt = None;
+        }
+        if let Some(transition) = transition.as_ref()
+            && let Err(error) = self
+                .comparison
+                .start_index_prompt(transition, &self.workspace)
+        {
+            tracing::warn!(%error, "cannot evaluate Index transition");
+            self.notice(format!("Index transition proof unavailable: {error}"));
+        }
+        let branch_changed = transition
+            .as_ref()
+            .is_some_and(|transition| self.comparison.follows_transition(transition));
+        if let Some(transition) = transition.as_ref().filter(|_| branch_changed) {
+            let follow = matches!(
+                self.head_transition_policy,
+                fathomable_core::config::HeadTransitionPolicy::AskPin
+                    | fathomable_core::config::HeadTransitionPolicy::Follow
+            );
+            self.comparison.advance_head_transition(transition, follow);
+            if matches!(
+                self.head_transition_policy,
+                fathomable_core::config::HeadTransitionPolicy::AskPin
+                    | fathomable_core::config::HeadTransitionPolicy::AskFollow
+            ) {
+                self.head_transition_prompt = self.comparison.head_prompt(transition);
+            }
+        }
+        self.trigger_landing(
+            transition
+                .as_ref()
+                .and_then(|transition| transition.current().commit().cloned()),
+        );
         if self.comparison.defer_refresh_for_annotation() {
             return;
         }
@@ -350,7 +386,6 @@ impl App {
             }
             return;
         }
-        let branch_changed = self.comparison.head_changed(&self.workspace);
         self.comparison
             .refresh(&mut self.workspace, self.review_points.as_ref());
         if recovered.is_some() {
@@ -386,6 +421,7 @@ impl App {
             self.apply_comparison_projection(index);
         }
         self.refresh_all_marks();
+        self.reconcile_normal_thread_cursor();
         self.sift_tree();
         if branch_changed
             && self.comparison.target()
@@ -427,11 +463,14 @@ impl App {
                     Some("Target paths scanning; coverage is incomplete".to_owned()),
                 );
             }
+            self.refresh_all_marks();
+            self.reconcile_normal_thread_cursor();
             self.sift_tree();
             self.relayout();
             return;
         }
         self.comparison.cancel();
+        self.comparison.accept_off_working_tree();
         self.off_target_paths = None;
         self.finish_off_target();
     }
@@ -445,7 +484,11 @@ impl App {
                 first_error = Some(error);
             }
         }
+        if first_error.is_some() {
+            self.comparison.invalidate_off_presentation();
+        }
         self.refresh_all_marks();
+        self.reconcile_normal_thread_cursor();
         self.sift_tree();
         if let Some(error) = first_error {
             self.notice(error);
@@ -515,11 +558,20 @@ impl App {
                 }
             }
         }
-        let Some(info) = self
-            .workspace
-            .endpoint_path_info(&target, relative)
-            .map_err(|error| error.to_string())?
-        else {
+        let info = if target == ComparisonEndpoint::Index {
+            let (_, manifest) = self
+                .comparison
+                .accepted_index()
+                .ok_or_else(|| "accepted Index manifest is unavailable".to_owned())?;
+            self.workspace
+                .index_manifest_path_info(manifest, relative)
+                .map_err(|error| error.to_string())?
+        } else {
+            self.workspace
+                .endpoint_path_info(&target, relative)
+                .map_err(|error| error.to_string())?
+        };
+        let Some(info) = info else {
             return Ok((Document::missing(absolute, policy), true));
         };
         let size = info.size().ok_or_else(|| {
@@ -530,6 +582,15 @@ impl App {
         })?;
         let bytes = if size > policy.max_bytes {
             Vec::new()
+        } else if target == ComparisonEndpoint::Index {
+            let (_, manifest) = self
+                .comparison
+                .accepted_index()
+                .ok_or_else(|| "accepted Index manifest is unavailable".to_owned())?;
+            self.workspace
+                .index_manifest_bytes(manifest, relative, policy.max_bytes)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| format!("{} disappeared from {target:?}", relative.display()))?
         } else {
             self.workspace
                 .endpoint_bytes(&target, relative)
@@ -562,6 +623,22 @@ impl App {
                 .map(|bytes| String::from_utf8(bytes).map_err(|error| error.to_string()))
                 .transpose();
         }
+        if endpoint == &fathomable_core::workspace::ComparisonEndpoint::Index {
+            let (_, manifest) = self
+                .comparison
+                .accepted_index()
+                .ok_or_else(|| "accepted Index manifest is unavailable".to_owned())?;
+            let Some(bytes) = self
+                .workspace
+                .index_manifest_bytes(manifest, path, self.workspace.limits().comparison_bytes)
+                .map_err(|error| error.to_string())?
+            else {
+                return Ok(None);
+            };
+            return String::from_utf8(bytes)
+                .map(Some)
+                .map_err(|error| format!("Index content is not UTF-8 text: {error}"));
+        }
         self.workspace
             .endpoint_text(endpoint, path)
             .map_err(|error| error.to_string())
@@ -577,5 +654,23 @@ impl App {
             return Ok(target);
         }
         self.comparison_endpoint_text(comparison.base(), path)
+    }
+
+    /// Text installed by the accepted presentation, never a retained request.
+    pub(crate) fn installed_display_text(&self, path: &Path) -> Result<Option<String>, String> {
+        let (source, target) = self.comparison.accepted_endpoints(self.diff_mode);
+        let Some(target) = target else {
+            return Ok(None);
+        };
+        let target = target.clone();
+        let source = source.cloned();
+        let text = self.comparison_endpoint_text(&target, path)?;
+        if text.is_some() || self.diff_mode == fathomable_core::config::DiffMode::Off {
+            return Ok(text);
+        }
+        match source {
+            Some(source) => self.comparison_endpoint_text(&source, path),
+            None => Ok(None),
+        }
     }
 }

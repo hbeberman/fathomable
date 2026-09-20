@@ -277,7 +277,7 @@ fn clicking_an_unfocused_scrolled_pane_uses_its_displayed_rows() -> anyhow::Resu
 }
 
 #[test]
-fn archived_review_cursor_restores_from_the_sidebar() -> anyhow::Result<()> {
+fn archived_history_never_populates_the_normal_sidebar() -> anyhow::Result<()> {
     let dir = fixture("archived-restore")?;
     let mut app = source_app(&dir)?;
     annotate(&mut app, 3, "resolved");
@@ -289,22 +289,11 @@ fn archived_review_cursor_restores_from_the_sidebar() -> anyhow::Result<()> {
 
     press(&mut app, "T");
     assert_eq!(app.focus(), Focus::ThreadsPane);
-    assert_eq!(app.thread_cursor().thread(), Some(&id));
+    assert_eq!(app.thread_cursor().thread(), None);
     let column = sidebar_column(&app)?;
     let bar = &column[app.pane_rows() - 1];
-    assert!(bar.contains("restore u"), "{bar:?}");
-    assert!(
-        !bar.contains("reopen")
-            && !bar.contains("resolve r")
-            && !bar.contains("reply")
-            && !bar.contains("archive"),
-        "archived cards expose only valid lifecycle actions: {bar:?}"
-    );
-
-    press(&mut app, "u");
-    assert!(!app.thread(&id).is_some_and(Thread::is_archived));
-    assert_eq!(app.threads_pane_selected(), None);
-    assert_eq!(app.thread_cursor().thread(), None);
+    assert!(!bar.contains("restore u"), "{bar:?}");
+    assert!(app.threads_pane_entries().is_empty());
     Ok(())
 }
 

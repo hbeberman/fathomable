@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use fathomable_core::annotations::{
-    AgentReplyCommand, Draft, LineRange, MessageTarget, Status, Store, Thread,
+    AgentReplyCommand, ContentIdentity, Draft, FullFileDigest, LineRange, MessageTarget,
+    OriginSide, OriginVersion, Status, Store, Thread, WorkingTreeFacts, WorkingTreeState,
 };
 
 use fathomable_core::annotations::Author;
@@ -19,6 +20,7 @@ use fathomable_testing::TempDir;
 use crate::app::testing::{self, app, press};
 
 use fathomable_core::editor::{Cursor, Edit, Motion};
+use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Workspace};
 
 use super::{ComposeTarget, ThreadState};
 use crate::app::draw::message::MESSAGE_INDENT;
@@ -119,7 +121,7 @@ fn three_resolved_threads(
 }
 
 #[test]
-fn archive_and_restore_reseat_middle_sidebar_entry_before_open_reviews() -> anyhow::Result<()> {
+fn normal_sidebar_stays_independent_while_history_changes() -> anyhow::Result<()> {
     let restore_dir = testing::workspace("sidebar-reseat-restore", testing::README)?;
     let restore_ids = three_resolved_threads(&restore_dir, true)?;
     let mut restore_app = testing::source_app(&restore_dir)?;
@@ -128,18 +130,17 @@ fn archive_and_restore_reseat_middle_sidebar_entry_before_open_reviews() -> anyh
     restore_app.window_threads();
     restore_app.set_thread_cursor(restore_ids[1].clone());
     assert_eq!(restore_app.review_selected_index(), Some(1));
-    assert_eq!(restore_app.threads_pane_selected(), Some(1));
+    assert_eq!(restore_app.threads_pane_selected(), None);
 
     restore_app.restore_thread(&restore_ids[1]);
     assert!(restore_app.review_list().is_open());
     assert_eq!(restore_app.focus(), Focus::ThreadsPane);
-    assert_eq!(
+    assert_ne!(
         restore_app.thread_cursor().thread(),
-        Some(&restore_ids[2]),
-        "restoring the middle archived entry reseats to its next neighbor"
+        Some(&restore_ids[1]),
+        "the restored entry is removed from archived history"
     );
-    assert_eq!(restore_app.review_selected_index(), Some(1));
-    assert_eq!(restore_app.threads_pane_selected(), Some(1));
+    assert_eq!(restore_app.threads_pane_selected(), None);
 
     let archive_dir = testing::workspace("sidebar-reseat-archive", testing::README)?;
     let archive_ids = three_resolved_threads(&archive_dir, false)?;
@@ -162,6 +163,105 @@ fn archive_and_restore_reseat_middle_sidebar_entry_before_open_reviews() -> anyh
     );
     assert_eq!(archive_app.review_selected_index(), Some(1));
     assert_eq!(archive_app.threads_pane_selected(), Some(1));
+    Ok(())
+}
+
+#[test]
+fn archived_exact_threads_cannot_keep_a_normal_action_cursor() -> anyhow::Result<()> {
+    let dir = testing::workspace("archived-exact-normal-cursor", testing::README)?;
+    let root = dir.0.join("ws");
+    fathomable_testing::git::init(&root)?;
+    fathomable_testing::git::commit_and_stage(&root, &[("README.md", testing::README)])?;
+    let workspace = Workspace::discover(&root)?;
+    let head = workspace
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("HEAD"))?;
+    let commit = CommitId::parse(&head)?;
+    let mut store = Store::open(testing::store_path(&dir))?;
+    let exact = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(1, 1),
+            "exact commit",
+        )
+        .at_source(OriginVersion::commit(&head), OriginSide::Target),
+        testing::README,
+        1,
+    )?;
+    let landed = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(2, 2),
+            "landed mutable",
+        )
+        .with_working_tree_facts(WorkingTreeFacts::new(
+            Some(head.clone()),
+            WorkingTreeState::Modified,
+            Some(ContentIdentity::from_text(testing::README)),
+            workspace.identity(),
+            FullFileDigest::from_bytes(testing::README.as_bytes()),
+        )),
+        testing::README,
+        2,
+    )?;
+    let candidate = store
+        .threads()
+        .iter()
+        .find(|thread| thread.id() == &landed)
+        .and_then(Thread::landing_candidate)
+        .ok_or_else(|| anyhow::anyhow!("landing candidate"))?;
+    store.land(&candidate, &commit)?;
+    for (offset, id) in [&exact, &landed].into_iter().enumerate() {
+        let now = u64::try_from(offset + 10)?;
+        store.resolve(id, Some(&head), now)?;
+    }
+
+    let mut app = testing::AppBuilder::at(&root)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.set_comparison_base(ComparisonEndpoint::EmptyTree);
+    app.set_comparison_target(ComparisonEndpoint::Commit(commit));
+    app.settle_background();
+    app.open_review_view(ReviewView::Board);
+    app.set_thread_cursor(exact.clone());
+    app.thread_reply();
+    assert!(matches!(app.popup(), Some(Popup::Compose(_))));
+    app.store.as_mut().context("store")?.archive(&exact, 20)?;
+    assert!(!app.normal_thread(app.thread(&exact).context("archived exact thread")?));
+    app.compose_cancel();
+    app.refresh_after_thread_store_change();
+    assert!(app.thread_cursor().thread().is_none());
+    app.thread_toggle_resolved();
+    assert_eq!(
+        app.thread(&exact).map(Thread::status),
+        Some(Status::Resolved)
+    );
+    assert!(app.thread(&exact).is_some_and(Thread::is_archived));
+
+    app.store.as_mut().context("store")?.archive(&landed, 21)?;
+    assert!(!app.normal_thread(app.thread(&landed).context("archived landed thread")?));
+    app.set_thread_cursor(landed.clone());
+    app.refresh_after_thread_store_change();
+    assert!(app.thread_cursor().thread().is_none());
+    app.thread_toggle_resolved();
+    assert_eq!(
+        app.thread(&landed).map(Thread::status),
+        Some(Status::Resolved)
+    );
+    assert!(app.thread(&landed).is_some_and(Thread::is_archived));
+
+    app.open_review_view(ReviewView::Archived);
+    app.set_thread_cursor(exact.clone());
+    app.reconcile_normal_thread_cursor();
+    assert_eq!(app.thread_cursor().thread(), Some(&exact));
+    app.restore_thread(&exact);
+    assert!(!app.thread(&exact).is_some_and(Thread::is_archived));
     Ok(())
 }
 
@@ -492,6 +592,7 @@ fn changing_a_tombstones_git_source_relocates_its_threads() -> anyhow::Result<()
     options.store = Some(Store::open(testing::store_path(&dir))?);
     let mut tombstone = App::new(workspace, 100, 30, options);
     tombstone.settle_status();
+    tombstone.settle_background();
     assert_eq!(
         tombstone.diff_mode(),
         fathomable_core::config::DiffMode::Normal
@@ -499,17 +600,20 @@ fn changing_a_tombstones_git_source_relocates_its_threads() -> anyhow::Result<()
     tombstone.open(Path::new("README.md"));
     assert_eq!(
         tombstone.banner(),
-        Some("deleted from worktree · showing INDEX")
+        Some("deleted in comparison · showing diff source")
     );
-    assert_eq!(tombstone.view().text(), index_text);
-    assert_eq!(tombstone.marks()[0].range(), Some(LineRange::new(4, 6)));
+    assert_eq!(tombstone.view().text(), testing::README);
+    assert_eq!(tombstone.marks()[0].range(), Some(LineRange::new(3, 5)));
 
     fathomable_testing::git::stage(&root, &[])?;
     tombstone.on_events(vec![crate::app::watch::Event::Change(
         root.join(".git/index"),
     )]);
     tombstone.settle_status();
-    assert_eq!(tombstone.banner(), Some("staged deletion · showing HEAD"));
+    assert_eq!(
+        tombstone.banner(),
+        Some("deleted in comparison · showing diff source")
+    );
     assert_eq!(tombstone.view().text(), testing::README);
     assert_eq!(tombstone.marks()[0].range(), Some(LineRange::new(3, 5)));
     Ok(())

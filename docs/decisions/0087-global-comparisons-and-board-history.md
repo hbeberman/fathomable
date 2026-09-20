@@ -21,6 +21,13 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Normal viewer membership and transition behavior amended 2026-09-20 by
+[0093](0093-version-scoped-viewer-membership.md): normal surfaces now follow
+the last accepted version presentation, while explicit history remains
+repository-wide. Symbolic HEAD intent, exact mutable-origin landing,
+review-point identity, persistent HEAD/Index choices, and the clean format-6
+boundary are defined there.
+
 MCP origin selection amended 2026-09-19 by
 [0092](0092-per-call-commit-sources.md): an agent start may explicitly capture
 from one immutable local commit tree without inheriting or changing a viewer

@@ -214,7 +214,7 @@ impl App {
     /// the review shows them: this file's by line, or the workspace's by
     /// file and line (ADR 0066).
     fn threads_pane_ids(&self) -> Vec<ThreadId> {
-        self.review_entries(self.sidebar.scope == PaneScope::File)
+        self.normal_review_entries(self.sidebar.scope == PaneScope::File)
             .into_iter()
             .map(|entry| entry.id().clone())
             .collect()
@@ -225,7 +225,7 @@ impl App {
     fn threads_pane_stops(&self) -> Vec<ThreadId> {
         let mut last_path: Option<PathBuf> = None;
         let mut out = Vec::new();
-        for entry in self.review_entries(self.sidebar.scope == PaneScope::File) {
+        for entry in self.normal_review_entries(self.sidebar.scope == PaneScope::File) {
             let folded = self.sidebar.scope == PaneScope::Workspace
                 && self.sidebar.folded.contains(entry.path());
             let first_of_file = last_path.as_deref() != Some(entry.path());
@@ -243,7 +243,7 @@ impl App {
     pub(crate) fn threads_pane_rows(&self) -> Vec<PaneRow> {
         let grouped = self.sidebar.scope == PaneScope::Workspace;
         let cursor = self.thread_cursor().thread().cloned();
-        let entries = self.review_entries(!grouped);
+        let entries = self.normal_review_entries(!grouped);
         let mut out = Vec::new();
         let mut index = 0;
         while index < entries.len() {
@@ -350,7 +350,7 @@ impl App {
         let cursor = self.thread_cursor();
         let id = cursor.thread()?;
         let file_only = self.sidebar.scope == PaneScope::File;
-        self.review_entries(file_only)
+        self.normal_review_entries(file_only)
             .iter()
             .any(|entry| entry.id() == id)
             .then(|| self.thread(id))
@@ -447,6 +447,14 @@ impl App {
     pub(crate) fn focus_threads_pane(&mut self) {
         self.show_threads_pane();
         if self.panes_fit() {
+            let hidden = self
+                .thread_cursor()
+                .thread()
+                .and_then(|id| self.thread(id))
+                .is_some_and(|thread| !self.normal_thread(thread));
+            if hidden {
+                self.clear_thread_cursor();
+            }
             self.focus = Focus::ThreadsPane;
             self.reveal_threads_pane_selection();
         }
@@ -509,7 +517,7 @@ impl App {
             return;
         }
         let listed: HashSet<PathBuf> = self
-            .review_entries(false)
+            .normal_review_entries(false)
             .into_iter()
             .map(|entry| entry.path().to_path_buf())
             .collect();
@@ -558,7 +566,7 @@ impl App {
         let point = match self.threads_pane_at(row)? {
             PaneRow::File { path, .. } => {
                 let first = self
-                    .review_entries(false)
+                    .normal_review_entries(false)
                     .into_iter()
                     .find(|entry| entry.path() == path)
                     .map(|entry| entry.id().clone())?;

@@ -131,6 +131,24 @@ pub fn commit_symlink_and_stage(root: &Path, path: &str, target: &str) -> Result
     )
 }
 
+/// Replace one existing Index entry with a gitlink naming `object`.
+///
+/// The object need not exist in the superproject database.
+///
+/// # Errors
+///
+/// Returns [`GitError`] when the repository, path, object ID, or Index cannot
+/// be read or written.
+pub fn stage_gitlink(root: &Path, path: &str, object: &str) -> Result<(), GitError> {
+    let repo = git(gix::open_opts(root, open_options()))?;
+    let mut index = git(repo.open_index())?;
+    let at = git(index.entry_index_by_path(path.as_bytes().into()))?;
+    let entry = &mut index.entries_mut()[at];
+    entry.mode = gix::index::entry::Mode::COMMIT;
+    entry.id = git(gix::ObjectId::from_hex(object.as_bytes()))?;
+    git(index.write(gix::index::write::Options::default()))
+}
+
 fn commit_single_entry(
     root: &Path,
     path: &str,

@@ -4,7 +4,8 @@ use std::path::Path;
 use anyhow::Context as _;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fathomable_core::annotations::{
-    AutoResolve, Lifecycle, LineRange, MessageTarget, OriginSide, OriginVersion, Store, Thread,
+    Author, AutoResolve, Draft, Lifecycle, LineRange, MessageTarget, OriginSide, OriginVersion,
+    Store, Thread,
 };
 use fathomable_core::editor::{Edit, Motion};
 use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Workspace};
@@ -265,6 +266,52 @@ fn active_and_parked_drafts_freeze_pending_projection_evidence() -> anyhow::Resu
 }
 
 #[test]
+fn draft_freeze_still_lands_each_observed_head_in_order() -> anyhow::Result<()> {
+    let dir = TempDir::new("draft-landing-head-order")?;
+    git::init(&dir.0)?;
+    git::commit_and_stage(&dir.0, &[("a.txt", "initial\n")])?;
+    fs::write(dir.0.join("a.txt"), "land me\n")?;
+    let store = Store::open(dir.0.join("threads.jsonl"))?;
+    let mut app = testing::AppBuilder::at(&dir.0)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.settle_background();
+    app.open(Path::new("a.txt"));
+    app.start_file_comment();
+    press(&mut app, "candidate");
+    app.compose_submit();
+    let id = app
+        .store
+        .as_ref()
+        .and_then(|store| store.threads().first())
+        .map(Thread::id)
+        .cloned()
+        .context("candidate thread")?;
+
+    app.start_file_comment();
+    press(&mut app, "keep comparison frozen");
+    git::commit_and_stage(&dir.0, &[("a.txt", "land me\n")])?;
+    let commit_b = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("commit B")?;
+    app.refresh_comparison();
+    git::commit_and_stage(&dir.0, &[("a.txt", "later\n")])?;
+    app.refresh_comparison();
+    app.settle_background();
+
+    assert_eq!(
+        app.thread(&id).and_then(Thread::landed_commit),
+        Some(commit_b.as_str())
+    );
+    assert!(!app.comparison.pending());
+    Ok(())
+}
+
+#[test]
 fn pending_off_to_active_restore_blocks_new_annotations() -> anyhow::Result<()> {
     let dir = TempDir::new("draft-pending-mode-restore")?;
     git::init(&dir.0)?;
@@ -435,6 +482,101 @@ fn off_branch_historical_target_projects_inline_without_rescoping() -> anyhow::R
     assert_eq!(thread.origin_version(), &OriginVersion::commit(target));
     assert_eq!(app.marks().len(), 1);
     assert_eq!(app.marks()[0].range(), Some(LineRange::new(1, 1)));
+    Ok(())
+}
+
+#[test]
+fn exact_off_branch_thread_uses_installed_projection_not_other_worktree() -> anyhow::Result<()> {
+    let dir = TempDir::new("off-branch-exact-placement")?;
+    let main = dir.0.join("main");
+    fs::create_dir(&main)?;
+    git::init(&main)?;
+    git::commit_and_stage(&main, &[("a.txt", "main\n")])?;
+    let base = Workspace::discover(&main)?
+        .head_commit()
+        .context("main commit")?;
+    let feature = dir.0.join("feature");
+    git::worktree_add(&main, &feature, "feature")?;
+    git::commit_and_stage(&feature, &[("a.txt", "one\ntarget\n")])?;
+    let target = Workspace::discover(&feature)?
+        .head_commit()
+        .context("feature commit")?;
+    let store = Store::open(dir.0.join("threads.jsonl"))?;
+    let mut app = testing::AppBuilder::at(&main)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(base)?));
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&target)?));
+    app.settle_background();
+    app.open(Path::new("a.txt"));
+    app.view_mut().goto_row(1);
+    app.start_new_comment();
+    press(&mut app, "exact feature line");
+    app.compose_submit();
+
+    fs::write(feature.join("a.txt"), "shifted\none\ntarget\n")?;
+    app.refresh_reach();
+    let thread = app
+        .store
+        .as_ref()
+        .and_then(|store| store.threads().first())
+        .context("feature thread")?;
+    assert!(app.elsewhere_placement(thread.id()).is_some());
+    let entries = app.normal_review_entries(false);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].range(), Some(LineRange::new(2, 2)));
+    Ok(())
+}
+
+#[test]
+fn unopened_exact_thread_in_off_mode_uses_the_installed_target() -> anyhow::Result<()> {
+    let dir = TempDir::new("off-installed-target-placement")?;
+    git::init(&dir.0)?;
+    let a_text = "target\npad\n";
+    let b_text = "pad\ntarget\n";
+    git::commit_and_stage(&dir.0, &[("a.txt", a_text)])?;
+    let a = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("A commit")?;
+    git::commit_and_stage(&dir.0, &[("a.txt", b_text)])?;
+    let b = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("B commit")?;
+    let mut store = Store::open(dir.0.join("threads.jsonl"))?;
+    store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.txt"),
+            LineRange::new(2, 2),
+            "B placement",
+        )
+        .at_source(OriginVersion::commit(&b), OriginSide::Target),
+        b_text,
+        1,
+    )?;
+    let mut app = testing::AppBuilder::at(&dir.0)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.set_comparison_base(ComparisonEndpoint::EmptyTree);
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&a)?));
+    app.settle_background();
+    app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+    app.settle_background();
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&b)?));
+    app.settle_background();
+
+    assert!(app.docs.is_empty());
+    let entries = app.normal_review_entries(false);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].range(), Some(LineRange::new(2, 2)));
     Ok(())
 }
 

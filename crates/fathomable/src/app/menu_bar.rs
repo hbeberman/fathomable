@@ -684,7 +684,11 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             Row::Item(Item::action(
                 app,
                 Action::ComparisonHeadWorkingTree,
-                "HEAD to Working tree",
+                if app.head_transition_pending() {
+                    "Resolve HEAD transition…"
+                } else {
+                    "HEAD to Working tree"
+                },
             )),
             Row::Item(Item::action(
                 app,

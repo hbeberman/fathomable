@@ -10,7 +10,7 @@ use fathomable_core::annotations::Store;
 use fathomable_core::config::{DiffMode, MarkdownConfig, SidebarConfig, ViewerConfig, WatchConfig};
 use fathomable_core::highlight::Highlighter;
 use fathomable_core::tree::Tree;
-use fathomable_core::workspace::Workspace;
+use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Workspace};
 
 use super::input::bindings::Action;
 use super::{App, Focus, NoticeTone, Options, PickerKind, PickerState, Popup, picker_list_rows};
@@ -987,7 +987,7 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
     // Written on lines this checkout does not have, as a thread from
     // another branch is; one whose lines are here would follow HEAD
     // (ADR 0035).
-    let other = store.annotate(
+    let _other = store.annotate(
         Draft::new(
             Author::User,
             Path::new("README.md"),
@@ -1016,9 +1016,10 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
             ..Options::for_test(dir.0.clone())
         },
     )?;
+    app.settle_background();
     app.open(Path::new("README.md"));
     let ids: Vec<_> = app.marks().iter().map(|m| m.id().clone()).collect();
-    assert_eq!(ids, [here.clone(), other.clone(), unscoped.clone()]);
+    assert_eq!(ids, [here.clone(), unscoped.clone()]);
 
     // Another writer appends while this viewer runs.
     let late = store.annotate(
@@ -1033,7 +1034,7 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
     )?;
     app.on_changes(vec![store_path.clone()]);
     let ids: Vec<_> = app.marks().iter().map(|m| m.id().clone()).collect();
-    assert_eq!(ids, [here, other, unscoped, late]);
+    assert_eq!(ids, [here, unscoped, late]);
     Ok(())
 }
 
@@ -1042,7 +1043,9 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
 /// open discussions even when this checkout cannot project them.
 #[test]
 fn open_threads_keep_origin_across_an_amend() -> anyhow::Result<()> {
-    use fathomable_core::annotations::{Author, Draft, LineRange, Store, Thread};
+    use fathomable_core::annotations::{
+        Author, Draft, LineRange, OriginSide, OriginVersion, Store, Thread,
+    };
 
     let dir = fixture("origin-amend")?;
     git::init(&dir.0)?;
@@ -1062,7 +1065,7 @@ fn open_threads_keep_origin_across_an_amend() -> anyhow::Result<()> {
             LineRange::new(line, line),
             comment,
         )
-        .at_commit(Some(first.clone()))
+        .at_source(OriginVersion::commit(first.clone()), OriginSide::Base)
     };
     let kept = store.annotate(at(1, "kept"), text, 1)?;
     let gone = store.annotate(at(3, "lines gone"), text, 2)?;
@@ -1076,6 +1079,8 @@ fn open_threads_keep_origin_across_an_amend() -> anyhow::Result<()> {
             ..Options::for_test(dir.0.clone())
         },
     )?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.settle_background();
     app.open(Path::new("README.md"));
     assert_eq!(app.marks().len(), 3);
 
@@ -1119,7 +1124,9 @@ fn open_threads_keep_origin_across_an_amend() -> anyhow::Result<()> {
 /// equality a board or placement-membership rule.
 #[test]
 fn a_resolved_thread_remains_projectable_after_the_next_commit() -> anyhow::Result<()> {
-    use fathomable_core::annotations::{Author, Draft, LineRange, Store, Thread};
+    use fathomable_core::annotations::{
+        Author, Draft, LineRange, OriginSide, OriginVersion, Store, Thread,
+    };
 
     let dir = fixture("past")?;
     git::init(&dir.0)?;
@@ -1138,7 +1145,7 @@ fn a_resolved_thread_remains_projectable_after_the_next_commit() -> anyhow::Resu
             LineRange::new(3, 3),
             "older",
         )
-        .at_commit(Some(first.clone())),
+        .at_source(OriginVersion::commit(first.clone()), OriginSide::Base),
         text,
         1,
     )?;
@@ -1159,6 +1166,8 @@ fn a_resolved_thread_remains_projectable_after_the_next_commit() -> anyhow::Resu
             ..Options::for_test(dir.0.clone())
         },
     )?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.settle_background();
     app.open(Path::new("README.md"));
     assert_eq!(app.marks().len(), 1);
 
@@ -1186,7 +1195,7 @@ fn a_resolved_thread_remains_projectable_after_the_next_commit() -> anyhow::Resu
     app.review_toggle_resolved();
     let entries = app.review_entries(false);
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].commit(), Some(&second[..7]));
+    assert_eq!(entries[0].commit(), None);
     assert_eq!(entries[0].range(), Some(LineRange::new(3, 3)));
     assert_eq!(app.review_counts(false).resolved, 1);
 
@@ -1385,8 +1394,8 @@ fn hunks_cross_uncommitted_files_in_path_order() -> anyhow::Result<()> {
         Some((State::Modified, true))
     );
 
-    // Committing everything empties current Git status, but the pinned
-    // comparison intentionally remains anchored to its original HEAD.
+    // Committing everything empties current Git status. The default Source
+    // follows HEAD immediately while retaining a pending pin decision.
     git::commit_and_stage(
         &dir.0,
         &[
@@ -1398,7 +1407,8 @@ fn hunks_cross_uncommitted_files_in_path_order() -> anyhow::Result<()> {
     )?;
     app.on_changes(vec![dir.0.join(".git/HEAD")]);
     assert!(app.status().is_empty());
-    assert_eq!(app.view().diff_counts(), Some((4, 0)));
+    assert_eq!(app.view().diff_counts(), Some((0, 0)));
+    assert!(app.head_transition_prompt.is_some());
     Ok(())
 }
 
@@ -1917,7 +1927,7 @@ fn unavailable_thread_store_points_to_doctor() -> anyhow::Result<()> {
     assert_eq!(
         app.message(),
         Some(
-            "threads unavailable: incompatible storage versions (3 on disk, 5 expected); run :doctor"
+            "threads unavailable: incompatible storage versions (3 on disk, 6 expected); run :doctor"
         )
     );
     assert_eq!(app.message_tone(), NoticeTone::Error);

@@ -27,6 +27,7 @@ pub(crate) mod pane;
 pub(crate) mod proposed;
 pub(crate) mod stubs;
 pub(crate) mod summary;
+pub(crate) mod visibility;
 pub(crate) mod words;
 
 pub(crate) use draft::{Compose, ComposeTarget};
@@ -37,9 +38,9 @@ use std::{fs, io};
 
 use cap_std::{ambient_authority, fs::Dir};
 use fathomable_core::annotations::{
-    Author, ContentIdentity, Draft, Lifecycle, LineHashes, LineRange, MessageTarget, OriginVersion,
-    Placement, PlacementContext, ResolutionContext, Status, Store, Thread, ThreadId,
-    WorkingTreeFacts, WorkingTreeState,
+    Author, ContentIdentity, Draft, FullFileDigest, Lifecycle, LineHashes, LineRange,
+    MessageTarget, OriginVersion, Placement, PlacementContext, ResolutionContext, Status, Store,
+    Thread, ThreadId, WorkingTreeFacts, WorkingTreeState,
 };
 use fathomable_core::clock::now;
 use fathomable_core::context::map_context;
@@ -197,6 +198,8 @@ pub(crate) fn agent_start_draft(
             observed_head,
             state,
             Some(ContentIdentity::from_text(&text)),
+            workspace.identity(),
+            FullFileDigest::from_bytes(text.as_bytes()),
         );
         let draft = match range {
             Some(range) => Draft::new(author, path, range, body),
@@ -259,7 +262,7 @@ impl App {
         self.store
             .iter()
             .flat_map(Store::threads)
-            .any(|thread| thread.status() == Status::Open)
+            .any(|thread| thread.status() == Status::Open && self.normal_thread(thread))
     }
 
     /// The store, or a status-line notice explaining why there is none.
@@ -400,6 +403,12 @@ impl App {
         };
         let local_paths = &self.local_thread_paths;
         let use_local_paths = self.displayed_target_is_working_tree();
+        let visible: HashSet<ThreadId> = store
+            .threads()
+            .iter()
+            .filter(|thread| self.normal_thread(thread))
+            .map(|thread| thread.id().clone())
+            .collect();
         let Some(doc) = self.docs.get_mut(index) else {
             return;
         };
@@ -408,6 +417,7 @@ impl App {
         doc.marks = store
             .threads()
             .iter()
+            .filter(|thread| visible.contains(thread.id()))
             .filter(|thread| {
                 let path = if use_local_paths {
                     local_paths
@@ -497,6 +507,7 @@ impl App {
     pub(super) fn refresh_after_thread_store_change(&mut self) {
         self.recompute_reach();
         self.refresh_all_marks();
+        self.reconcile_normal_thread_cursor();
     }
 
     /// The document's threads in line order: by first line, then the
@@ -516,6 +527,7 @@ impl App {
             .iter()
             .flat_map(Store::threads)
             .filter(|thread| thread.status() == Status::Open)
+            .filter(|thread| self.normal_thread_without_draft(thread))
             .map(|thread| thread.id().clone())
             .collect();
         order.sort_by(|left, right| {

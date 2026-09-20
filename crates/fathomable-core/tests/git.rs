@@ -9,10 +9,17 @@ use std::fs;
 use std::os::unix::ffi::OsStringExt;
 use std::path::Path;
 
-use fathomable_core::diff::FileMode;
-use fathomable_core::workspace::{CommitId, Workspace};
+use fathomable_core::annotations::FullFileDigest;
+use fathomable_core::config::LimitsConfig;
+use fathomable_core::diff::{FileMode, PathState};
+use fathomable_core::workspace::{
+    CommitId, ComparisonEndpoint, ExactFile, ExactFileMatch, HeadState, HeadTransition,
+    IndexManifestCapture, IndexManifestUnavailable, Workspace,
+};
 use fathomable_testing::TempDir;
-use fathomable_testing::git::{init, open_options, stage, write_tree};
+use fathomable_testing::git::{
+    commit_and_stage as fixture_commit_and_stage, init, open_options, stage, write_tree,
+};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -38,6 +45,463 @@ fn commit(root: &Path, files: &[(&str, &str)]) -> Result<(), Box<dyn Error>> {
     };
     let parent = repo.head_id().ok().map(gix::Id::detach);
     repo.commit_as(signature, signature, "HEAD", "commit", tree, parent)?;
+    Ok(())
+}
+
+#[test]
+fn typed_head_observation_distinguishes_all_states_and_transitions() -> TestResult {
+    let plain = TempDir::new("typed-head-plain")?;
+    let plain_workspace = Workspace::discover(&plain.0)?;
+    assert!(matches!(
+        plain_workspace.observe_head(1).state(),
+        HeadState::Unavailable { .. }
+    ));
+
+    let dir = TempDir::new("typed-head")?;
+    init(&dir.0)?;
+    let workspace = Workspace::discover(&dir.0)?;
+    let unborn = workspace.observe_head(2);
+    assert_eq!(unborn.generation(), 2);
+    assert!(matches!(unborn.state(), HeadState::Unborn));
+    assert_eq!(unborn.checkout(), &workspace.identity());
+
+    fixture_commit_and_stage(&dir.0, &[("a.md", "one\n")])?;
+    let workspace = Workspace::discover(&dir.0)?;
+    let symbolic = workspace.observe_head(3);
+    let commit = symbolic
+        .state()
+        .commit()
+        .ok_or("symbolic HEAD lacks commit")?
+        .clone();
+    assert!(matches!(
+        symbolic.state(),
+        HeadState::Symbolic { reference, .. } if reference.starts_with("refs/heads/")
+    ));
+
+    fs::write(dir.0.join(".git/HEAD"), format!("{commit}\n"))?;
+    let workspace = Workspace::discover(&dir.0)?;
+    let detached = workspace.observe_head(4);
+    assert!(matches!(
+        detached.state(),
+        HeadState::Detached { commit: actual } if actual == &commit
+    ));
+    let transition = HeadTransition::between(&symbolic, &detached).ok_or("transition missing")?;
+    assert_eq!(transition.generation(), 4);
+    assert_eq!(transition.previous(), symbolic.state());
+    assert_eq!(transition.current(), detached.state());
+
+    fs::write(dir.0.join(".git/HEAD"), "not a valid HEAD\n")?;
+    assert!(matches!(
+        workspace.observe_head(5).state(),
+        HeadState::Unavailable { .. }
+    ));
+    Ok(())
+}
+
+#[test]
+fn exact_file_matching_is_bounded_and_reports_each_path() -> TestResult {
+    let dir = TempDir::new("exact-file-matches")?;
+    init(&dir.0)?;
+    fixture_commit_and_stage(&dir.0, &[("a.md", "one\n"), ("b.md", "two\n")])?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let commit = workspace.exact_head_commit()?.id();
+    let checkout = workspace.identity();
+    let exact = ExactFile::new(
+        checkout.clone(),
+        "a.md",
+        FullFileDigest::from_bytes(b"one\n"),
+    );
+    let candidates = [
+        exact,
+        ExactFile::new(
+            checkout.clone(),
+            "a.md",
+            FullFileDigest::from_bytes(b"not one\n"),
+        ),
+        ExactFile::new(
+            checkout.clone(),
+            "b.md",
+            FullFileDigest::from_bytes(b"different\n"),
+        ),
+        ExactFile::new(
+            checkout.clone(),
+            "missing.md",
+            FullFileDigest::from_bytes(b""),
+        ),
+    ];
+    let results = workspace.match_commit_files(&commit, &candidates)?;
+    assert!(matches!(
+        results.results()[0].result(),
+        ExactFileMatch::Match
+    ));
+    assert!(matches!(
+        results.results()[1].result(),
+        ExactFileMatch::Mismatch
+    ));
+    assert!(matches!(
+        results.results()[2].result(),
+        ExactFileMatch::Mismatch
+    ));
+    assert!(matches!(
+        results.results()[3].result(),
+        ExactFileMatch::Missing
+    ));
+
+    let foreign = TempDir::new("exact-file-foreign")?;
+    let foreign_identity = Workspace::discover(&foreign.0)?.identity();
+    assert!(
+        workspace
+            .match_commit_files(
+                &commit,
+                &[ExactFile::new(
+                    foreign_identity,
+                    "a.md",
+                    FullFileDigest::from_bytes(b"one\n"),
+                )],
+            )
+            .is_err_and(|error| error.to_string().contains("another checkout"))
+    );
+
+    workspace.set_limits(LimitsConfig {
+        comparison_paths: 1,
+        ..LimitsConfig::default()
+    });
+    assert!(
+        workspace
+            .match_commit_files(&commit, &candidates[..2])
+            .is_err_and(|error| error.to_string().contains("path"))
+    );
+
+    workspace.set_limits(LimitsConfig {
+        comparison_paths: 10,
+        comparison_bytes: 5,
+        ..LimitsConfig::default()
+    });
+    let results = workspace.match_commit_files(
+        &commit,
+        &[
+            ExactFile::new(
+                checkout.clone(),
+                "a.md",
+                FullFileDigest::from_bytes(b"one\n"),
+            ),
+            ExactFile::new(
+                checkout.clone(),
+                "b.md",
+                FullFileDigest::from_bytes(b"second\n"),
+            ),
+        ],
+    )?;
+    assert!(matches!(
+        results.results()[0].result(),
+        ExactFileMatch::Match
+    ));
+    assert_eq!(
+        results.progress(),
+        fathomable_core::workspace::ExactFileProgress::ContinueAt { next: 1 }
+    );
+
+    Ok(())
+}
+
+#[test]
+fn oversized_exact_file_does_not_block_a_later_candidate() -> TestResult {
+    let dir = TempDir::new("exact-file-oversized")?;
+    init(&dir.0)?;
+    fixture_commit_and_stage(&dir.0, &[("big.md", "123456"), ("small.md", "one\n")])?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let commit = workspace.exact_head_commit()?.id();
+    let checkout = workspace.identity();
+    workspace.set_limits(LimitsConfig {
+        comparison_paths: 10,
+        comparison_bytes: 5,
+        ..LimitsConfig::default()
+    });
+    let results = workspace.match_commit_files(
+        &commit,
+        &[
+            ExactFile::new(
+                checkout.clone(),
+                "big.md",
+                FullFileDigest::from_bytes(b"123456"),
+            ),
+            ExactFile::new(checkout, "small.md", FullFileDigest::from_bytes(b"one\n")),
+        ],
+    )?;
+    assert_eq!(
+        results.progress(),
+        fathomable_core::workspace::ExactFileProgress::Complete
+    );
+    assert!(matches!(
+        results.results()[0].result(),
+        ExactFileMatch::Unavailable(message) if message.contains("limit")
+    ));
+    assert!(matches!(
+        results.results()[1].result(),
+        ExactFileMatch::Match
+    ));
+    Ok(())
+}
+
+#[test]
+fn index_manifest_is_immutable_and_compares_exact_tree_identity() -> TestResult {
+    let dir = TempDir::new("index-manifest")?;
+    init(&dir.0)?;
+    fixture_commit_and_stage(&dir.0, &[("a.md", "one\n"), ("nested/b.bin", "\0binary\n")])?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let head = workspace.exact_head_commit()?.id();
+    let IndexManifestCapture::Available(manifest) = workspace.index_manifest()? else {
+        return Err("complete index unexpectedly unavailable".into());
+    };
+    assert_eq!(manifest.entries().len(), 2);
+    assert_eq!(manifest.identity().len(), 64);
+    assert!(workspace.index_manifest_matches_commit(&manifest, &head)?);
+    assert_eq!(
+        workspace.index_manifest_bytes(&manifest, Path::new("a.md"), 4)?,
+        Some(b"one\n".to_vec())
+    );
+
+    stage(
+        &dir.0,
+        &[("a.md", "changed\n"), ("nested/b.bin", "\0binary\n")],
+    )?;
+    assert_eq!(
+        workspace.index_manifest_bytes(&manifest, Path::new("a.md"), 4)?,
+        Some(b"one\n".to_vec()),
+        "captured object IDs must survive live-index mutation"
+    );
+    let captured = workspace.compare_with_index_manifest(
+        ComparisonEndpoint::Index,
+        ComparisonEndpoint::Commit(head.clone()),
+        &manifest,
+    )?;
+    assert!(
+        captured.changes().is_empty(),
+        "comparison must enumerate and read the captured manifest, not the live index"
+    );
+    let IndexManifestCapture::Available(changed) = workspace.index_manifest()? else {
+        return Err("changed index unexpectedly unavailable".into());
+    };
+    assert_ne!(manifest.identity(), changed.identity());
+    assert!(!workspace.index_manifest_matches_commit(&changed, &head)?);
+
+    let mut bounded = Workspace::discover(&dir.0)?;
+    bounded.set_limits(LimitsConfig {
+        comparison_paths: 1,
+        ..LimitsConfig::default()
+    });
+    bounded
+        .index_manifest()
+        .err()
+        .ok_or("index path limit was not enforced")?;
+    bounded.set_limits(LimitsConfig {
+        comparison_paths: 10,
+        comparison_bytes: 1,
+        ..LimitsConfig::default()
+    });
+    bounded
+        .index_manifest()
+        .err()
+        .ok_or("index byte limit was not enforced")?;
+    Ok(())
+}
+
+#[test]
+fn index_manifest_rejects_intent_to_add_and_conflict_stages() -> TestResult {
+    let dir = TempDir::new("index-manifest-unavailable")?;
+    init(&dir.0)?;
+    fixture_commit_and_stage(&dir.0, &[("a.md", "one\n")])?;
+    let repo = gix::open_opts(&dir.0, open_options())?;
+
+    let mut index = repo.open_index()?;
+    index.entries_mut()[0].flags.insert(
+        gix::index::entry::Flags::INTENT_TO_ADD
+            | gix::index::entry::Flags::from_bits_retain(1 << 14),
+    );
+    index.write(gix::index::write::Options::default())?;
+    let workspace = Workspace::discover(&dir.0)?;
+    assert!(matches!(
+        workspace.index_manifest()?,
+        IndexManifestCapture::Unavailable(IndexManifestUnavailable::IntentToAdd { .. })
+    ));
+
+    stage(&dir.0, &[("a.md", "one\n")])?;
+    let mut index = repo.open_index()?;
+    index.entries_mut()[0].flags |= gix::index::entry::Flags::from_bits_retain(1 << 12);
+    index.write(gix::index::write::Options::default())?;
+    let workspace = Workspace::discover(&dir.0)?;
+    assert!(matches!(
+        workspace.index_manifest()?,
+        IndexManifestCapture::Unavailable(IndexManifestUnavailable::Conflict { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn index_manifest_keeps_missing_gitlinks_as_metadata() -> TestResult {
+    let dir = TempDir::new("index-manifest-missing-gitlink")?;
+    init(&dir.0)?;
+    fixture_commit_and_stage(&dir.0, &[("module", "placeholder\n")])?;
+    let repo = gix::open_opts(&dir.0, open_options())?;
+    let mut index = repo.open_index()?;
+    let entry = &mut index.entries_mut()[0];
+    entry.mode = gix::index::entry::Mode::COMMIT;
+    entry.id = gix::ObjectId::from_hex(b"1111111111111111111111111111111111111111")?;
+    index.write(gix::index::write::Options::default())?;
+
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let IndexManifestCapture::Available(manifest) = workspace.index_manifest()? else {
+        return Err("gitlink manifest unexpectedly unavailable".into());
+    };
+    let comparison = workspace.compare_with_index_manifest(
+        ComparisonEndpoint::EmptyTree,
+        ComparisonEndpoint::Index,
+        &manifest,
+    )?;
+    let change = comparison
+        .changes()
+        .first()
+        .ok_or("missing gitlink comparison change")?;
+    assert_eq!(change.path(), Path::new("module"));
+    let PathState::Present(target) = change.target() else {
+        return Err("gitlink target is not present".into());
+    };
+    assert_eq!(target.mode(), FileMode::Submodule);
+    assert!(!target.is_supported());
+    assert_eq!(target.size(), None);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn index_manifest_preserves_tree_modes_and_index_only_flags() -> TestResult {
+    let dir = TempDir::new("index-manifest-modes")?;
+    init(&dir.0)?;
+    commit_and_stage(
+        &dir.0,
+        &[
+            (
+                "executable",
+                "#!/bin/sh\n",
+                gix::objs::tree::EntryKind::BlobExecutable,
+            ),
+            ("link", "target", gix::objs::tree::EntryKind::Link),
+            ("module", "opaque", gix::objs::tree::EntryKind::Commit),
+            ("regular", "text\n", gix::objs::tree::EntryKind::Blob),
+        ],
+    )?;
+    let repo = gix::open_opts(&dir.0, open_options())?;
+    let mut index = repo.open_index()?;
+    let at = index
+        .entry_index_by_path("regular".into())
+        .ok()
+        .ok_or("regular index entry missing")?;
+    index.entries_mut()[at].flags.insert(
+        gix::index::entry::Flags::ASSUME_VALID
+            | gix::index::entry::Flags::SKIP_WORKTREE
+            | gix::index::entry::Flags::from_bits_retain(1 << 14),
+    );
+    index.write(gix::index::write::Options::default())?;
+
+    let workspace = Workspace::discover(&dir.0)?;
+    let head = workspace.exact_head_commit()?.id();
+    let IndexManifestCapture::Available(manifest) = workspace.index_manifest()? else {
+        return Err("mode manifest unexpectedly unavailable".into());
+    };
+    let modes: Vec<_> = manifest
+        .entries()
+        .iter()
+        .map(|entry| (entry.path_bytes(), entry.mode()))
+        .collect();
+    assert_eq!(
+        modes,
+        vec![
+            (b"executable".as_slice(), FileMode::Executable),
+            (b"link".as_slice(), FileMode::Symlink),
+            (b"module".as_slice(), FileMode::Submodule),
+            (b"regular".as_slice(), FileMode::Regular),
+        ]
+    );
+    let regular = manifest.entry(b"regular").ok_or("regular missing")?;
+    assert!(regular.assume_unchanged());
+    assert!(regular.skip_worktree());
+    assert!(workspace.index_manifest_matches_commit(&manifest, &head)?);
+
+    index.entries_mut()[at].mode = gix::index::entry::Mode::FILE_EXECUTABLE;
+    index.write(gix::index::write::Options::default())?;
+    let workspace = Workspace::discover(&dir.0)?;
+    let IndexManifestCapture::Available(mode_changed) = workspace.index_manifest()? else {
+        return Err("mode-changed manifest unexpectedly unavailable".into());
+    };
+    assert!(!workspace.index_manifest_matches_commit(&mode_changed, &head)?);
+    Ok(())
+}
+
+#[test]
+fn commit_manifest_bounds_shared_empty_tree_traversal() -> TestResult {
+    let dir = TempDir::new("commit-manifest-shared-trees")?;
+    init(&dir.0)?;
+    fixture_commit_and_stage(&dir.0, &[("tracked", "base\n")])?;
+    let repo = gix::open_opts(&dir.0, open_options())?;
+    let parent = repo.head_id()?.detach();
+    let mut tree = repo
+        .write_object(gix::objs::Tree {
+            entries: Vec::new(),
+        })?
+        .detach();
+    for _ in 0..8 {
+        tree = repo
+            .write_object(gix::objs::Tree {
+                entries: vec![
+                    gix::objs::tree::Entry {
+                        mode: gix::objs::tree::EntryKind::Tree.into(),
+                        filename: "left".into(),
+                        oid: tree,
+                    },
+                    gix::objs::tree::Entry {
+                        mode: gix::objs::tree::EntryKind::Tree.into(),
+                        filename: "right".into(),
+                        oid: tree,
+                    },
+                ],
+            })?
+            .detach();
+    }
+    let signature = gix::actor::SignatureRef {
+        name: "test".into(),
+        email: "test@example.com".into(),
+        time: "1 +0000",
+    };
+    let commit = repo
+        .commit_as(
+            signature,
+            signature,
+            "HEAD",
+            "shared tree",
+            tree,
+            Some(parent),
+        )?
+        .detach();
+    let commit = CommitId::parse(commit.to_hex().to_string())?;
+
+    let mut workspace = Workspace::discover(&dir.0)?;
+    workspace.set_limits(LimitsConfig {
+        retained_paths: 32,
+        comparison_paths: 32,
+        ..LimitsConfig::default()
+    });
+    let IndexManifestCapture::Available(manifest) = workspace.index_manifest()? else {
+        return Err("index manifest unexpectedly unavailable".into());
+    };
+    let error = workspace
+        .index_manifest_matches_commit(&manifest, &commit)
+        .err()
+        .ok_or("shared tree traversal unexpectedly completed")?;
+    assert!(
+        error
+            .to_string()
+            .contains("traversal limited by item budget")
+    );
     Ok(())
 }
 

@@ -172,8 +172,8 @@ mod tests {
     use anyhow::Context as _;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use fathomable_core::annotations::{
-        Author, ContentIdentity, Draft, LineRange, OriginSide, OriginVersion, ReviewPointFacts,
-        Store,
+        Author, ContentIdentity, Draft, FullFileDigest, LineRange, OriginSide, OriginVersion,
+        ReviewPointFacts, Store,
     };
     use fathomable_core::clock::now;
     use fathomable_core::config::DiffMode;
@@ -261,6 +261,8 @@ mod tests {
                     point.id(),
                     point.head().map(ToString::to_string),
                     Some(ContentIdentity::from_text("point\n")),
+                    point.checkout_identity(),
+                    FullFileDigest::from_bytes(b"point\n"),
                 ),
                 OriginSide::Base,
             ),

@@ -4,7 +4,11 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use fathomable_core::XdgDirs;
-use fathomable_core::config::DiffMode;
+use fathomable_core::annotations::{
+    Author, ContentIdentity, Draft, FullFileDigest, LineRange, OriginSide, OriginVersion,
+    ReviewPointFacts, Store,
+};
+use fathomable_core::config::{DiffMode, HeadTransitionPolicy};
 use fathomable_core::content::Content;
 use fathomable_core::tree::Rule;
 use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Filter, Workspace};
@@ -13,7 +17,7 @@ use fathomable_testing::{TempDir, git};
 use crate::app::input::bindings::Action;
 use crate::app::testing::{AppBuilder, press, press_key};
 use crate::app::{PickerKind, Popup};
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 #[test]
 fn persistent_outputs_are_private_under_permissive_umasks() -> anyhow::Result<()> {
@@ -888,6 +892,72 @@ fn review_point_picker_accepts_an_optional_name() -> anyhow::Result<()> {
 }
 
 #[test]
+fn accepted_index_target_keeps_captured_bytes_after_live_index_changes() -> anyhow::Result<()> {
+    let dir = repository("comparison-index-captured-document")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "committed\n")])?;
+    git::stage(&root, &[("a.md", "captured\n")])?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+    app.set_comparison_base(ComparisonEndpoint::EmptyTree);
+    app.set_comparison_target(ComparisonEndpoint::Index);
+    app.settle_background();
+
+    git::stage(&root, &[("a.md", "later\n")])?;
+    app.open(Path::new("a.md"));
+    assert_eq!(app.view().text(), "captured\n");
+    let current = app
+        .current
+        .ok_or_else(|| anyhow::anyhow!("current document"))?;
+    fs::write(root.join("a.md"), "newer working tree\n")?;
+    let _ = app.reload_doc(current);
+    app.apply_comparison_projection(current);
+    assert_eq!(app.view().text(), "captured\n");
+    assert_eq!(
+        app.comparison_endpoint_text(&ComparisonEndpoint::Index, Path::new("a.md"))
+            .map_err(anyhow::Error::msg)?,
+        Some("captured\n".to_owned())
+    );
+    Ok(())
+}
+
+#[test]
+fn off_mode_index_target_uses_its_accepted_manifest() -> anyhow::Result<()> {
+    let dir = repository("comparison-off-index-captured-document")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "committed\n")])?;
+    git::stage(&root, &[("a.md", "captured\n")])?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+    app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
+    app.set_comparison_target(ComparisonEndpoint::Index);
+    app.settle_background();
+
+    git::stage(&root, &[("a.md", "later\n")])?;
+    app.open(Path::new("a.md"));
+    assert_eq!(app.view().text(), "captured\n");
+    Ok(())
+}
+
+#[test]
+fn index_comparison_accepts_gitlink_missing_from_superproject_objects() -> anyhow::Result<()> {
+    let dir = repository("comparison-index-missing-gitlink")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("module", "placeholder\n")])?;
+    git::stage_gitlink(&root, "module", "1111111111111111111111111111111111111111")?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+    app.set_comparison_base(ComparisonEndpoint::EmptyTree);
+    app.set_comparison_target(ComparisonEndpoint::Index);
+    app.settle_background();
+
+    assert!(app.comparison.error().is_none());
+    assert_eq!(
+        app.comparison_kind(Path::new("module")),
+        Some(fathomable_core::diff::PathChangeKind::Unsupported)
+    );
+    Ok(())
+}
+
+#[test]
 fn saving_a_point_restores_diff_mode_and_selects_working_tree() -> anyhow::Result<()> {
     let dir = repository("comparison-point-select-off")?;
     let root = dir.0.join("ws");
@@ -983,6 +1053,86 @@ fn review_point_picker_entry_compares_against_working() -> anyhow::Result<()> {
         app.comparison().map(fathomable_core::diff::Comparison::len),
         Some(1)
     );
+    Ok(())
+}
+
+#[test]
+fn review_point_membership_is_exact_then_survives_landing_and_deletion() -> anyhow::Result<()> {
+    let dir = repository("comparison-point-membership")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let store = Store::open(dir.0.join("threads.jsonl"))?;
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .review_points(dir.0.join("points"))
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.save_review_point(Some("P"));
+    app.settle_background();
+    let point = app
+        .review_points
+        .as_ref()
+        .and_then(|points| points.list().first().cloned())
+        .context("point P")?;
+    let id = app.store.as_mut().context("thread store")?.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "point thread",
+        )
+        .at_review_point(
+            ReviewPointFacts::new(
+                point.id(),
+                point.head().map(ToString::to_string),
+                Some(ContentIdentity::from_text("one\n")),
+                point.checkout_identity(),
+                FullFileDigest::from_bytes(b"one\n"),
+            ),
+            OriginSide::Base,
+        ),
+        "one\n",
+        1,
+    )?;
+    app.refresh_after_thread_store_change();
+    app.open(Path::new("a.md"));
+    assert!(app.marks().iter().any(|mark| mark.id() == &id));
+
+    app.save_review_point(Some("Q"));
+    app.settle_background();
+    assert!(
+        app.marks().iter().all(|mark| mark.id() != &id),
+        "a distinct point with the same baseline is not the origin point"
+    );
+    app.set_comparison_base(ComparisonEndpoint::ReviewPoint(point.id().to_owned()));
+    app.settle_background();
+    assert!(app.marks().iter().any(|mark| mark.id() == &id));
+
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    app.refresh_comparison();
+    app.settle_background();
+    let landed = app
+        .thread(&id)
+        .and_then(fathomable_core::annotations::Thread::landed_commit)
+        .map(str::to_owned)
+        .context("landed commit")?;
+    assert!(app.marks().iter().any(|mark| mark.id() == &id));
+
+    app.review_points
+        .as_mut()
+        .context("review points")?
+        .delete(point.id())?;
+    app.refresh_comparison();
+    app.settle_background();
+    assert_eq!(
+        app.thread(&id)
+            .and_then(fathomable_core::annotations::Thread::landed_commit),
+        Some(landed.as_str())
+    );
+    assert!(app.marks().iter().any(|mark| mark.id() == &id));
     Ok(())
 }
 
@@ -1127,7 +1277,7 @@ fn historical_target_confines_the_tree_picker_and_file_view() -> anyhow::Result<
 }
 
 #[test]
-fn untouched_default_base_survives_restart_after_head_moves() -> anyhow::Result<()> {
+fn untouched_default_base_follows_head_after_restart() -> anyhow::Result<()> {
     let dir = repository("comparison-default-persistence")?;
     let root = dir.0.join("ws");
     fs::write(root.join("a.md"), "one\n")?;
@@ -1154,9 +1304,15 @@ fn untouched_default_base_survives_restart_after_head_moves() -> anyhow::Result<
         ("HEAD".to_owned(), "WorkingTree".to_owned())
     );
     drop(app);
+    let preference = fs::read_to_string(dirs.comparison_dir(&root).join("comparison.json"))?;
+    assert!(preference.contains("\"intent\": \"follow-head\""));
+    assert!(!preference.contains("\"base\":"));
 
     fs::write(root.join("a.md"), "two\n")?;
     git::commit_and_stage(&root, &[("a.md", "two\n")])?;
+    let second = Workspace::discover(&root)?
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("second"))?;
     let app = AppBuilder::at(&root)
         .unopened()
         .options(move |mut options| {
@@ -1166,9 +1322,465 @@ fn untouched_default_base_survives_restart_after_head_moves() -> anyhow::Result<
         .build()?;
     assert_eq!(
         app.comparison.base(),
-        &ComparisonEndpoint::Commit(CommitId::parse(&first)?)
+        &ComparisonEndpoint::Commit(CommitId::parse(&second)?)
     );
-    assert_eq!(app.comparison_menu_pair().0, first[..7]);
+    assert_eq!(app.comparison_menu_pair().0, "HEAD");
+    Ok(())
+}
+
+#[test]
+fn ask_pin_advances_then_can_pin_future_head_movement() -> anyhow::Result<()> {
+    let dir = repository("comparison-ask-pin")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+    app.settle_background();
+
+    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
+    let second = Workspace::discover(&root)?
+        .head_commit()
+        .context("second commit")?;
+    app.refresh_comparison();
+    assert_eq!(
+        app.comparison.base(),
+        &ComparisonEndpoint::Commit(CommitId::parse(&second)?)
+    );
+    assert_eq!(
+        app.comparison.source_intent(),
+        &super::SourceIntent::FollowHead
+    );
+    assert!(app.head_transition_prompt.is_some());
+    app.resolve_head_transition_prompt(false);
+    assert_eq!(
+        app.comparison.source_intent(),
+        &super::SourceIntent::Pinned(ComparisonEndpoint::Commit(CommitId::parse(&second)?))
+    );
+    assert_eq!(app.comparison.base_alias(), None);
+
+    git::commit_and_stage(&root, &[("a.md", "three\n")])?;
+    app.refresh_comparison();
+    assert_eq!(
+        app.comparison.base(),
+        &ComparisonEndpoint::Commit(CommitId::parse(&second)?)
+    );
+    assert!(app.head_transition_prompt.is_none());
+    Ok(())
+}
+
+#[test]
+fn ask_follow_advances_pinned_by_default() -> anyhow::Result<()> {
+    let dir = repository("comparison-ask-follow")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .options(|mut options| {
+            options.diff.head_transition = HeadTransitionPolicy::AskFollow;
+            options
+        })
+        .build()?;
+    app.settle_background();
+
+    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
+    let second = Workspace::discover(&root)?
+        .head_commit()
+        .context("second commit")?;
+    app.refresh_comparison();
+    assert_eq!(
+        app.comparison.source_intent(),
+        &super::SourceIntent::Pinned(ComparisonEndpoint::Commit(CommitId::parse(&second)?))
+    );
+    assert!(app.head_transition_prompt.is_some());
+    app.resolve_head_transition_prompt(true);
+    assert_eq!(
+        app.comparison.source_intent(),
+        &super::SourceIntent::FollowHead
+    );
+    assert_eq!(
+        app.comparison.base_alias(),
+        Some(&super::EndpointAlias::Head)
+    );
+    Ok(())
+}
+
+#[test]
+fn transition_picker_cannot_confirm_or_dismiss_a_superseded_prompt() -> anyhow::Result<()> {
+    let dir = repository("comparison-transition-picker-token")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+    app.settle_background();
+
+    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
+    app.refresh_comparison();
+    app.open_picker(PickerKind::HeadTransition);
+    app.picker_move(1);
+    git::commit_and_stage(&root, &[("a.md", "three\n")])?;
+    let third = Workspace::discover(&root)?
+        .head_commit()
+        .context("third commit")?;
+    app.refresh_comparison();
+    app.picker_confirm();
+    assert_eq!(
+        app.comparison.source_intent(),
+        &super::SourceIntent::FollowHead
+    );
+    assert_eq!(
+        app.comparison.base(),
+        &ComparisonEndpoint::Commit(CommitId::parse(&third)?)
+    );
+    assert!(
+        app.head_transition_prompt.is_some(),
+        "confirming the old card must preserve the current prompt"
+    );
+
+    app.open_picker(PickerKind::HeadTransition);
+    git::commit_and_stage(&root, &[("a.md", "four\n")])?;
+    app.refresh_comparison();
+    app.picker_escape();
+    assert!(
+        app.head_transition_prompt.is_some(),
+        "dismissing the old card must preserve the current prompt"
+    );
+    Ok(())
+}
+
+#[test]
+fn transition_choice_reobserves_head_before_watcher_delivery() -> anyhow::Result<()> {
+    let dir = repository("comparison-transition-picker-reobserve")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+    app.settle_background();
+
+    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
+    app.refresh_comparison();
+    app.open_picker(PickerKind::HeadTransition);
+    app.picker_move(1);
+    git::commit_and_stage(&root, &[("a.md", "three\n")])?;
+    let third = Workspace::discover(&root)?
+        .head_commit()
+        .context("third commit")?;
+    app.picker_confirm();
+
+    assert_eq!(
+        app.comparison.source_intent(),
+        &super::SourceIntent::FollowHead
+    );
+    assert_eq!(
+        app.comparison.base(),
+        &ComparisonEndpoint::Commit(CommitId::parse(&third)?)
+    );
+    assert!(
+        app.head_transition_prompt.is_some(),
+        "the newly observed transition remains available"
+    );
+    Ok(())
+}
+
+#[test]
+fn persistent_transition_prompt_works_without_toasts_and_dismisses() -> anyhow::Result<()> {
+    let dir = repository("comparison-persistent-prompt")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .options(|mut options| {
+            options.watch.toast = std::time::Duration::ZERO;
+            options
+        })
+        .build()?;
+    app.settle_background();
+    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
+    app.refresh_comparison();
+    assert!(app.toasts().is_empty());
+    assert!(
+        app.transition_prompt_text()
+            .is_some_and(|text| text.contains("HEAD moved"))
+    );
+
+    let pane = ratatui::layout::Rect::new(
+        u16::try_from(app.sidebar_width())?,
+        u16::try_from(app.pane_top())?,
+        u16::try_from(app.size().0.saturating_sub(app.sidebar_width()))?,
+        u16::try_from(app.pane_rows())?,
+    );
+    let area = crate::app::draw::transition_prompt_area(&app, pane).context("prompt area")?;
+    crate::app::input::mouse::handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.x,
+            row: area.y,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::Picker(picker)) if picker.kind() == PickerKind::HeadTransition
+    ));
+    app.picker_escape();
+    assert!(!app.head_transition_pending());
+    Ok(())
+}
+
+#[test]
+fn accepted_index_equal_to_new_head_offers_pin_or_keep() -> anyhow::Result<()> {
+    let dir = repository("comparison-index-transition")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+    app.set_comparison_base(ComparisonEndpoint::Index);
+    app.settle_background();
+
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let new_head = Workspace::discover(&root)?
+        .head_commit()
+        .context("new head")?;
+    app.refresh_comparison();
+    assert!(app.comparison.pending());
+    app.settle_background();
+    assert!(
+        app.index_transition_prompt.is_some(),
+        "accepted post-transition refresh must not discard immutable pre-transition evidence"
+    );
+    app.resolve_index_transition_prompt(true);
+    assert_eq!(
+        app.comparison.base(),
+        &ComparisonEndpoint::Commit(CommitId::parse(new_head)?)
+    );
+    Ok(())
+}
+
+#[test]
+fn automatic_head_policies_do_not_prompt() -> anyhow::Result<()> {
+    for (name, policy, follows) in [
+        (
+            "comparison-follow-policy",
+            HeadTransitionPolicy::Follow,
+            true,
+        ),
+        ("comparison-pin-policy", HeadTransitionPolicy::Pin, false),
+    ] {
+        let dir = repository(name)?;
+        let root = dir.0.join("ws");
+        git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+        let mut app = AppBuilder::at(&root)
+            .unopened()
+            .options(move |mut options| {
+                options.diff.head_transition = policy;
+                options
+            })
+            .build()?;
+        app.settle_background();
+        git::commit_and_stage(&root, &[("a.md", "two\n")])?;
+        app.refresh_comparison();
+        assert!(app.head_transition_prompt.is_none());
+        assert_eq!(
+            app.comparison.source_intent() == &super::SourceIntent::FollowHead,
+            follows
+        );
+        assert_eq!(
+            app.comparison.base_alias() == Some(&super::EndpointAlias::Head),
+            follows,
+            "only a following policy retains the presentation alias"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn endpoint_selection_invalidates_a_pending_head_prompt() -> anyhow::Result<()> {
+    let dir = repository("comparison-stale-transition")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+    app.settle_background();
+    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
+    app.refresh_comparison();
+    let stale = app
+        .head_transition_prompt
+        .clone()
+        .context("pending prompt")?;
+    app.set_comparison_base(ComparisonEndpoint::EmptyTree);
+    assert!(app.head_transition_prompt.is_none());
+    assert!(!app.comparison.resolve_head_prompt(&stale, false));
+    Ok(())
+}
+
+#[test]
+fn normal_membership_uses_exact_source_side_and_target_commit() -> anyhow::Result<()> {
+    let dir = repository("comparison-origin-membership")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let base = Workspace::discover(&root)?.head_commit().context("base")?;
+    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
+    let target = Workspace::discover(&root)?
+        .head_commit()
+        .context("target")?;
+    let path = dir.0.join("threads.jsonl");
+    let mut store = Store::open(&path)?;
+    let draft = |body: &str, version: OriginVersion, side: OriginSide| {
+        Draft::new(
+            Author::agent("reviewer"),
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            body,
+        )
+        .at_source(version, side)
+    };
+    let source = store.annotate(
+        draft("source", OriginVersion::commit(&base), OriginSide::Base),
+        "one\n",
+        1,
+    )?;
+    let target_thread = store.annotate(
+        draft("target", OriginVersion::commit(&target), OriginSide::Target),
+        "two\n",
+        2,
+    )?;
+    store.annotate(
+        draft(
+            "wrong side",
+            OriginVersion::commit(&base),
+            OriginSide::Target,
+        ),
+        "one\n",
+        3,
+    )?;
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&base)?));
+    app.settle_background();
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&target)?));
+    app.settle_background();
+    app.open(Path::new("a.md"));
+    let ids = app
+        .marks()
+        .iter()
+        .map(|mark| mark.id().clone())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, [source, target_thread]);
+    Ok(())
+}
+
+#[test]
+fn commit_membership_uses_only_an_accepted_mutable_presentation() -> anyhow::Result<()> {
+    let dir = repository("comparison-accepted-membership")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let first = Workspace::discover(&root)?.head_commit().context("first")?;
+    let mut store = Store::open(dir.0.join("threads.jsonl"))?;
+    let id = store.annotate(
+        Draft::new(
+            Author::agent("reviewer"),
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "first commit",
+        )
+        .at_source(OriginVersion::commit(&first), OriginSide::Unspecified),
+        "one\n",
+        1,
+    )?;
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.open(Path::new("a.md"));
+    app.settle_background();
+    assert!(app.marks().iter().any(|mark| mark.id() == &id));
+    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
+    app.refresh_comparison();
+    assert!(
+        app.marks().iter().any(|mark| mark.id() == &id),
+        "pending replacement retains the accepted presentation"
+    );
+    app.settle_background();
+    assert!(
+        app.marks().iter().all(|mark| mark.id() != &id),
+        "the accepted WorkingTree context follows its captured HEAD"
+    );
+    Ok(())
+}
+
+#[test]
+fn off_target_context_is_absent_while_immutable_target_scans() -> anyhow::Result<()> {
+    let dir = repository("comparison-off-accepted-target")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let head = Workspace::discover(&root)?.head_commit().context("head")?;
+    let mut store = Store::open(dir.0.join("threads.jsonl"))?;
+    let id = store.annotate(
+        Draft::new(
+            Author::agent("reviewer"),
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "target",
+        )
+        .at_source(OriginVersion::commit(&head), OriginSide::Unspecified),
+        "one\n",
+        1,
+    )?;
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.settle_background();
+    app.open(Path::new("a.md"));
+    app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&head)?));
+    assert!(app.marks().iter().all(|mark| mark.id() != &id));
+    app.settle_background();
+    assert!(app.marks().iter().any(|mark| mark.id() == &id));
+    Ok(())
+}
+
+#[test]
+fn old_comparison_preferences_are_rejected_without_rewrite() -> anyhow::Result<()> {
+    let dir = repository("comparison-old-preference")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let state = dir.0.join("state").into_os_string();
+    let dirs = XdgDirs::resolve(|name| (name == "XDG_STATE_HOME").then(|| state.clone()));
+    let first_dirs = dirs.clone();
+    drop(
+        AppBuilder::at(&root)
+            .unopened()
+            .options(move |mut options| {
+                options.dirs = first_dirs;
+                options
+            })
+            .build()?,
+    );
+    let preference = dirs.comparison_dir(&root).join("comparison.json");
+    let old = br#"{"base":"HEAD","target":"WorkingTree","whitespace":false}"#;
+    fs::write(&preference, old)?;
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .options(move |mut options| {
+            options.dirs = dirs;
+            options
+        })
+        .build()?;
+    app.settle_background();
+    assert!(
+        app.comparison
+            .error()
+            .is_some_and(|error| error.contains("format is unsupported"))
+    );
+    assert_eq!(fs::read(preference)?, old);
     Ok(())
 }
 

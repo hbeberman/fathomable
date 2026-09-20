@@ -11,8 +11,9 @@ use std::time::Duration;
 use anyhow::{Context, Result, ensure};
 use fathomable_core::XdgDirs;
 use fathomable_core::annotations::{
-    Author, AutoResolve, Draft, Lifecycle, LineRange, MessageTarget, OriginSide, OriginVersion,
-    Reply, Status, Store, ThreadId, UserSubmit,
+    Author, AutoResolve, ContentIdentity, Draft, FullFileDigest, IndexFacts, IndexState, Lifecycle,
+    LineRange, MessageTarget, OriginSide, OriginVersion, Reply, ReviewPointFacts, Status, Store,
+    ThreadId, UserSubmit, WorkingTreeFacts, WorkingTreeState,
 };
 use fathomable_core::clock::now;
 use fathomable_core::session::{Id, Record};
@@ -860,6 +861,10 @@ fn commit_source_filter_excludes_lookalikes_and_preserves_lifecycle_filters() ->
     let commit = Workspace::discover(&fixture.root)?
         .exact_head_commit()?
         .id();
+    let checkout = Workspace::discover(&fixture.root)?.identity();
+    let text = "one\ntwo\n";
+    let content = ContentIdentity::from_text(text);
+    let full_content = FullFileDigest::from_bytes(text.as_bytes());
     let mut store = fixture.store()?;
     let mut selected = Vec::new();
     for (body, version, side) in [
@@ -894,12 +899,35 @@ fn commit_source_filter_excludes_lookalikes_and_preserves_lifecycle_filters() ->
             OriginSide::Unspecified,
         ),
     ] {
-        let id = store.annotate(
-            Draft::new(Author::User, Path::new("a.md"), LineRange::new(1, 1), body)
-                .at_source(version, side),
-            "one\ntwo\n",
-            10,
-        )?;
+        let draft = Draft::new(Author::User, Path::new("a.md"), LineRange::new(1, 1), body);
+        let draft = match body {
+            "working" => draft.with_working_tree_facts(WorkingTreeFacts::new(
+                Some(commit.to_string()),
+                WorkingTreeState::Clean,
+                Some(content.clone()),
+                checkout.clone(),
+                full_content.clone(),
+            )),
+            "index" => draft.with_index_facts(IndexFacts::new(
+                Some(commit.to_string()),
+                IndexState::Unchanged,
+                Some(content.clone()),
+                checkout.clone(),
+                full_content.clone(),
+            )),
+            "point" => draft.at_review_point(
+                ReviewPointFacts::new(
+                    "saved",
+                    Some(commit.to_string()),
+                    Some(content.clone()),
+                    checkout.clone(),
+                    full_content.clone(),
+                ),
+                side,
+            ),
+            _ => draft.at_source(version, side),
+        };
+        let id = store.annotate(draft, text, 10)?;
         if matches!(body, "base" | "target") {
             selected.push(id);
         } else {

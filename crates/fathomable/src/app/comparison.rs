@@ -15,8 +15,8 @@ use fathomable_core::diff::{Compare, Comparison, PathChangeKind, PathState};
 use fathomable_core::review_points::{ReviewPoint, ReviewPointStore};
 use fathomable_core::status::{Changes, Entry, State as GitState, Status};
 use fathomable_core::workspace::{
-    CheckoutIdentity, Commit, CommitId, ComparisonEndpoint, HeadObservation, HeadState,
-    HeadTransition, IndexManifest, IndexManifestCapture, RevisionChoiceKind, Workspace,
+    CheckoutIdentity, Commit, CommitId, CommitRange, ComparisonEndpoint, HeadObservation,
+    HeadState, HeadTransition, IndexManifest, IndexManifestCapture, RevisionChoiceKind, Workspace,
 };
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +42,7 @@ struct Request {
 #[derive(Debug)]
 struct Computed {
     comparison: Comparison,
+    commit_range: CommitRange,
     counts: HashMap<PathBuf, (usize, usize)>,
     head: HeadObservation,
     index: Option<IndexManifest>,
@@ -177,6 +178,13 @@ fn compute(
                 .map_err(|error| error.to_string())?,
         },
     };
+    let commit_range = discover_commit_range(
+        &workspace,
+        &request.base,
+        &request.target,
+        &request.head,
+        store.as_ref(),
+    )?;
     let mut counts = HashMap::new();
     for change in comparison.changes() {
         if change.kind() == PathChangeKind::Missing {
@@ -243,10 +251,55 @@ fn compute(
     }
     Ok(Computed {
         comparison,
+        commit_range,
         counts,
         head: request.head,
         index,
     })
+}
+
+fn discover_commit_range(
+    workspace: &Workspace,
+    source: &ComparisonEndpoint,
+    target: &ComparisonEndpoint,
+    head: &HeadObservation,
+    review_points: Option<&ReviewPointStore>,
+) -> Result<CommitRange, String> {
+    let Some(target) = graph_endpoint(workspace, target, head, review_points)? else {
+        return Ok(CommitRange::default());
+    };
+    let source = graph_endpoint(workspace, source, head, review_points)?;
+    workspace
+        .commit_range(source.as_ref(), &target)
+        .map_err(|error| format!("cannot discover comparison commit range: {error}"))
+}
+
+fn graph_endpoint(
+    workspace: &Workspace,
+    endpoint: &ComparisonEndpoint,
+    head: &HeadObservation,
+    review_points: Option<&ReviewPointStore>,
+) -> Result<Option<CommitId>, String> {
+    match endpoint {
+        ComparisonEndpoint::EmptyTree => Ok(None),
+        ComparisonEndpoint::Commit(id) => Ok(Some(id.clone())),
+        ComparisonEndpoint::WorkingTree | ComparisonEndpoint::Index => match head.state() {
+            HeadState::Symbolic { commit, .. } | HeadState::Detached { commit } => {
+                Ok(Some(commit.clone()))
+            }
+            HeadState::Unavailable { error } if workspace.is_git() => Err(format!(
+                "captured HEAD is unavailable as a commit graph endpoint: {error}"
+            )),
+            HeadState::Unborn | HeadState::Unavailable { .. } => Ok(None),
+        },
+        ComparisonEndpoint::ReviewPoint(id) => {
+            let store = review_points.ok_or_else(|| format!("review point {id} is unavailable"))?;
+            let point = store
+                .get(id)
+                .ok_or_else(|| format!("review point {id} is unavailable"))?;
+            Ok(point.head().cloned())
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -321,6 +374,21 @@ enum InstalledPresentation {
     TargetOnly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TargetContent {
+    Missing,
+    Installed,
+}
+
+#[derive(Debug)]
+struct InstalledDiscovery {
+    head: Option<HeadObservation>,
+    target: Option<ComparisonEndpoint>,
+    presentation: Option<InstalledPresentation>,
+    commit_range: CommitRange,
+    index: Option<(u64, IndexManifest)>,
+}
+
 /// One app-owned comparison selection and its last successful result.
 #[derive(Debug)]
 pub(crate) struct State {
@@ -342,7 +410,10 @@ pub(crate) struct State {
     installed_head: Option<HeadObservation>,
     installed_target: Option<ComparisonEndpoint>,
     installed_presentation: Option<InstalledPresentation>,
+    installed_commit_range: CommitRange,
+    target_content: TargetContent,
     installed_index: Option<(u64, IndexManifest)>,
+    replaced_discovery: Option<InstalledDiscovery>,
     error: Option<String>,
     worker: Worker<Request, Result<Computed, String>>,
     index_proof: Worker<IndexProof, Result<Option<IndexPrompt>, String>>,
@@ -375,6 +446,10 @@ enum PreferenceSource {
 
 impl State {
     /// Create the default selection, preferring a persisted checkout choice.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "loading keeps preference validation and initial worker state together"
+    )]
     pub(crate) fn load(
         dirs: &fathomable_core::XdgDirs,
         workspace: &Workspace,
@@ -407,7 +482,10 @@ impl State {
             installed_head: None,
             installed_target: None,
             installed_presentation: None,
+            installed_commit_range: CommitRange::default(),
+            target_content: TargetContent::Missing,
             installed_index: None,
+            replaced_discovery: None,
             error: None,
             worker: Worker::new(compute),
             index_proof: Worker::new(prove_index_prompt),
@@ -542,6 +620,16 @@ impl State {
         self.current.as_ref().map_or((None, None), |comparison| {
             (Some(comparison.base()), Some(comparison.target()))
         })
+    }
+
+    pub(crate) fn accepted_range_contains(&self, mode: DiffMode, commit: &str) -> bool {
+        mode != DiffMode::Off
+            && self.installed_presentation == Some(InstalledPresentation::Active)
+            && self.installed_commit_range.contains(commit)
+    }
+
+    pub(crate) fn target_content_installed(&self, mode: DiffMode) -> bool {
+        mode != DiffMode::Off || self.target_content == TargetContent::Installed
     }
 
     /// The current line-diff settings.
@@ -679,8 +767,7 @@ impl State {
             return;
         }
         self.cancel();
-        self.installed_target = None;
-        self.installed_presentation = None;
+        self.target_content = TargetContent::Missing;
         self.error = Some("Target paths scanning; coverage is incomplete".to_owned());
         if let Err(error) = self.target_worker.submit(TargetRequest {
             root: workspace.root().to_path_buf(),
@@ -698,9 +785,11 @@ impl State {
                 self.error = result.as_ref().err().cloned();
                 Some(result.map(|result| {
                     let generation = result.head.generation();
+                    self.begin_off_projection();
                     self.installed_head = Some(result.head);
                     self.installed_target = Some(result.endpoint);
                     self.installed_presentation = Some(InstalledPresentation::TargetOnly);
+                    self.installed_commit_range = CommitRange::default();
                     self.installed_index = result.index.map(|manifest| (generation, manifest));
                     result.paths
                 }))
@@ -730,6 +819,7 @@ impl State {
                 self.installed_head = Some(result.head);
                 self.installed_target = Some(result.comparison.target().clone());
                 self.installed_presentation = Some(InstalledPresentation::Active);
+                self.installed_commit_range = result.commit_range;
                 self.installed_index = result.index.map(|manifest| (generation, manifest));
                 self.current = Some(result.comparison);
                 self.counts = result.counts;
@@ -1066,17 +1156,48 @@ impl State {
     }
 
     pub(crate) fn accept_off_working_tree(&mut self) {
+        self.begin_off_projection();
         self.installed_head = Some(self.head.clone());
         self.installed_target = Some(ComparisonEndpoint::WorkingTree);
         self.installed_presentation = Some(InstalledPresentation::TargetOnly);
+        self.installed_commit_range = CommitRange::default();
         self.installed_index = None;
     }
 
-    pub(crate) fn invalidate_off_presentation(&mut self) {
-        self.installed_head = None;
-        self.installed_target = None;
-        self.installed_presentation = None;
-        self.installed_index = None;
+    fn begin_off_projection(&mut self) {
+        if self.replaced_discovery.is_some() {
+            self.reject_off_projection();
+        }
+        self.replaced_discovery = Some(InstalledDiscovery {
+            head: self.installed_head.take(),
+            target: self.installed_target.take(),
+            presentation: self.installed_presentation.take(),
+            commit_range: std::mem::take(&mut self.installed_commit_range),
+            index: self.installed_index.take(),
+        });
+        self.target_content = TargetContent::Missing;
+    }
+
+    pub(crate) fn accept_off_projection(&mut self) {
+        self.replaced_discovery = None;
+        self.target_content = TargetContent::Installed;
+    }
+
+    pub(crate) fn reject_off_projection(&mut self) {
+        if let Some(previous) = self.replaced_discovery.take() {
+            self.installed_head = previous.head;
+            self.installed_target = previous.target;
+            self.installed_presentation = previous.presentation;
+            self.installed_commit_range = previous.commit_range;
+            self.installed_index = previous.index;
+        } else {
+            self.installed_head = None;
+            self.installed_target = None;
+            self.installed_presentation = None;
+            self.installed_commit_range = CommitRange::default();
+            self.installed_index = None;
+        }
+        self.target_content = TargetContent::Missing;
     }
 
     fn validate_aliases(&mut self, workspace: &Workspace) -> bool {

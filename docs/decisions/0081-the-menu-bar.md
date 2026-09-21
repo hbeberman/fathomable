@@ -19,6 +19,12 @@ tags:
 
 Status: accepted (2026-09-15)
 
+Amended 2026-09-21 by [0094](0094-diff-range-thread-discovery.md):
+**Review > All threads** and both thread-view title menus expose the same
+checked repository-history override, also available through `A` in thread
+viewers and `Space T A` globally. Its label remains stable while the
+checkmark changes.
+
 Worktree and status UX amendment: **Go > Worktrees...** is the keyboard-
 and mouse-accessible route to the existing picker; bracket worktree cycling
 is removed. Repository identity stays stable across checkouts, and the

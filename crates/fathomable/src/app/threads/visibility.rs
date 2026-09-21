@@ -1,4 +1,4 @@
-// @okf-doc: /decisions/0093-version-scoped-viewer-membership.md
+// @okf-doc: /decisions/0094-diff-range-thread-discovery.md
 //! Version-scoped membership for normal viewer surfaces.
 
 use fathomable_core::annotations::{OriginSide, OriginVersion, Thread, ThreadId};
@@ -40,7 +40,11 @@ impl App {
 
     /// Normal membership without the narrow active/parked draft exception.
     pub(crate) fn normal_thread_without_draft(&self, thread: &Thread) -> bool {
-        !thread.is_archived() && self.thread_matches_presentation(thread)
+        if self.review.all_threads {
+            return !thread.is_archived();
+        }
+        !thread.is_archived()
+            && (self.thread_matches_presentation(thread) || self.thread_is_in_commit_range(thread))
     }
 
     /// Whether immutable provenance belongs to the accepted presentation.
@@ -74,6 +78,7 @@ impl App {
                     self.endpoint_matches_origin(source, thread)
                 }
             }
+
             OriginSide::Target | OriginSide::Unspecified => presentation
                 .target
                 .as_ref()
@@ -83,7 +88,16 @@ impl App {
 
     /// Whether the thread may project into the currently rendered content.
     pub(crate) fn inline_thread(&self, thread: &Thread) -> bool {
-        !thread.is_archived() && self.thread_matches_presentation(thread)
+        !thread.is_archived()
+            && self.comparison.target_content_installed(self.diff_mode)
+            && self.thread_matches_presentation(thread)
+    }
+
+    fn thread_is_in_commit_range(&self, thread: &Thread) -> bool {
+        let OriginVersion::Commit { id } = thread.origin_version() else {
+            return false;
+        };
+        self.comparison.accepted_range_contains(self.diff_mode, id)
     }
 
     fn endpoint_matches_origin(&self, endpoint: &ComparisonEndpoint, thread: &Thread) -> bool {
@@ -192,3 +206,6 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -95,6 +95,24 @@ impl App {
         }
     }
 
+    /// Archive the thread under the shared cursor, if any.
+    pub(crate) fn thread_archive_here(&mut self) {
+        if let Some(id) = self.thread_cursor().thread().cloned() {
+            self.archive_thread(&id);
+        } else {
+            self.notice("no thread here");
+        }
+    }
+
+    /// Restore the thread under the shared cursor, if any.
+    pub(crate) fn thread_restore_here(&mut self) {
+        if let Some(id) = self.thread_cursor().thread().cloned() {
+            self.restore_thread(&id);
+        } else {
+            self.notice("no thread here");
+        }
+    }
+
     /// Archive one selected thread without changing its lifecycle.
     pub(crate) fn archive_thread(&mut self, id: &ThreadId) {
         if self

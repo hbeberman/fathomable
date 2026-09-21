@@ -97,3 +97,4 @@ supersede rather than edit history.
 - [0091 Pane focus navigation](0091-pane-focus-navigation.md)
 - [0092 Per-call commit sources](0092-per-call-commit-sources.md)
 - [0093 Provenance-scoped viewer membership and durable landing](0093-version-scoped-viewer-membership.md)
+- [0094 Diff-range thread discovery](0094-diff-range-thread-discovery.md)

@@ -1062,6 +1062,12 @@ impl App {
             self.sidebar_scope() == PaneScope::File,
         );
         menu.push_toggle(
+            Action::AllThreads,
+            Action::AllThreads,
+            "all threads",
+            self.all_threads(),
+        );
+        menu.push_toggle(
             Action::ReviewResolved,
             Action::ReviewResolved,
             "show resolved",
@@ -1080,6 +1086,13 @@ impl App {
             Action::FileOnly,
             "only current file",
             self.review().file_only,
+        );
+        menu.push_toggle_enabled(
+            Action::AllThreads,
+            Action::AllThreads,
+            "all threads",
+            self.all_threads(),
+            self.review().view == crate::app::threads::list::ReviewView::Board,
         );
         menu.push_toggle(
             Action::ReviewResolved,

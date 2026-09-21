@@ -640,6 +640,7 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
                 active: false,
                 target: Target::ReviewFile,
             }),
+            Row::Item(Item::action(app, Action::AllThreadsGlobal, "All threads")),
             Row::Separator,
             Row::Item(Item::action(app, Action::NewThread, "New thread")),
             Row::Item(Item::action(app, Action::FileComment, "File comment")),
@@ -825,6 +826,11 @@ fn action_available(app: &App, action: Action) -> bool {
             .store
             .as_ref()
             .is_some_and(|store| !store.threads().is_empty()),
+        Action::AllThreadsGlobal => {
+            (app.review_list().is_open()
+                && app.review().view == crate::app::threads::list::ReviewView::Board)
+                || app.threads_pane_shown()
+        }
         Action::SidebarToggle => app.sidebar.shown() || app.sidebar.has_restore(),
         _ => true,
     }
@@ -835,6 +841,7 @@ fn action_checked(app: &App, action: Action) -> bool {
         Action::SidebarToggle => app.sidebar.shown(),
         Action::TreeToggle => app.sidebar.tree,
         Action::ThreadsPaneToggle => app.sidebar.threads,
+        Action::AllThreads | Action::AllThreadsGlobal => app.all_threads(),
         Action::ComparisonWhitespace => {
             app.comparison.compare().whitespace == fathomable_core::diff::Whitespace::Ignore
         }
@@ -1449,7 +1456,9 @@ pub(crate) fn resize(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use fathomable_core::config::{DiffMode, SidebarConfig};
     use fathomable_core::layout::display_width;
     use fathomable_core::theme::Theme as CoreTheme;
@@ -1475,7 +1484,7 @@ mod tests {
         assert_eq!(rows(&app, Root::App).len(), 5);
         assert_eq!(rows(&app, Root::Layout).len(), 6);
         assert_eq!(rows(&app, Root::Go).len(), 15);
-        assert_eq!(rows(&app, Root::Review).len(), 16);
+        assert_eq!(rows(&app, Root::Review).len(), 17);
         let diff_rows = rows(&app, Root::Diff);
         assert_eq!(diff_rows.len(), 14);
         let diff_labels = diff_rows
@@ -1511,6 +1520,12 @@ mod tests {
         assert_eq!(
             review[6].item().map(|item| (&*item.label, item.checked)),
             Some(("Only current file", false))
+        );
+        assert_eq!(
+            review[7]
+                .item()
+                .map(|item| (&*item.label, item.hint.as_str(), item.checked)),
+            Some(("All threads", "Sp T A", false))
         );
         assert_eq!(submenu_rows(&app, super::Submenu::Help).len(), 5);
         let go = rows(&app, Root::Go);
@@ -2076,6 +2091,77 @@ mod tests {
         app.run_title_target(super::Target::Action(super::Action::Review));
         assert!(app.review_list().is_open());
         assert_eq!(app.focus(), crate::app::Focus::Review);
+        Ok(())
+    }
+
+    #[test]
+    fn review_menu_click_toggles_checked_all_threads() -> anyhow::Result<()> {
+        let mut app = shown_app("review-all-threads")?;
+        app.open_review();
+        let label = labels(app.size().0)
+            .into_iter()
+            .find(|label| label.root == Root::Review)
+            .context("Review label")?;
+        testing::click(&mut app, label.x + 1, 0);
+        let review_rows = rows(&app, Root::Review);
+        let index = review_rows
+            .iter()
+            .position(|row| row.item().is_some_and(|item| item.label == "All threads"))
+            .context("All threads item")?;
+        let layout = root_layout(&app, &review_rows).context("Review menu layout")?;
+        mouse::handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: u16::try_from(layout.x + 2)?,
+                row: u16::try_from(layout.y + 1 + index)?,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+        assert!(app.all_threads());
+        assert!(!app.title_menu_open());
+
+        app.open_title_menu(Root::Review);
+        let item = rows(&app, Root::Review)
+            .into_iter()
+            .find_map(|row| {
+                row.item()
+                    .cloned()
+                    .filter(|item| item.label == "All threads")
+            })
+            .context("checked All threads item")?;
+        assert!(item.checked);
+        Ok(())
+    }
+
+    #[test]
+    fn review_menu_disables_all_threads_for_a_lone_history_view() -> anyhow::Result<()> {
+        let mut app = shown_app("history-all-threads")?;
+        if app.threads_pane_shown() {
+            app.toggle_threads_pane_shown();
+        }
+        app.open_review_view(crate::app::threads::list::ReviewView::Archived);
+        let item = rows(&app, Root::Review)
+            .into_iter()
+            .find_map(|row| {
+                row.item()
+                    .cloned()
+                    .filter(|item| item.label == "All threads")
+            })
+            .context("All threads item")?;
+        assert!(!item.enabled);
+        assert!(!item.checked);
+
+        app.show_threads_pane();
+        let item = rows(&app, Root::Review)
+            .into_iter()
+            .find_map(|row| {
+                row.item()
+                    .cloned()
+                    .filter(|item| item.label == "All threads")
+            })
+            .context("sidebar All threads item")?;
+        assert!(item.enabled);
         Ok(())
     }
 

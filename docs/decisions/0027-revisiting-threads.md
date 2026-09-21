@@ -12,6 +12,12 @@ tags:
 
 # 0027 Revisiting threads
 
+Discovery amended 2026-09-21 by
+[0094](0094-diff-range-thread-discovery.md): Thread list and main Threads share
+diff-range discovery and an **All threads** override, with `A` / `Space T A`,
+checked mouse-menu settings, and an **all history** header indicator.
+Inline eligibility remains separate from list membership.
+
 Status: accepted (2026-08-28); amended 2026-09-03 by
 [0046](0046-one-thread-cursor.md): the `Tab` scope and its remembered
 selections are gone, `h`/`l` step within the file and `H`/`L` across the

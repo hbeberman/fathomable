@@ -486,7 +486,9 @@ impl App {
             }
         }
         if first_error.is_some() {
-            self.comparison.invalidate_off_presentation();
+            self.comparison.reject_off_projection();
+        } else {
+            self.comparison.accept_off_projection();
         }
         self.refresh_all_marks();
         self.reconcile_normal_thread_cursor();

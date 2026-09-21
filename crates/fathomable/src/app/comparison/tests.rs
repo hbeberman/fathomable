@@ -2467,6 +2467,197 @@ fn off_target_context_is_absent_while_immutable_target_scans() -> anyhow::Result
 }
 
 #[test]
+fn off_target_refresh_retains_discovery_but_not_inline_authority() -> anyhow::Result<()> {
+    let dir = repository("comparison-off-stable-membership")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let accepted = Workspace::discover(&root)?
+        .head_commit()
+        .context("accepted")?;
+    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
+    let replacement = Workspace::discover(&root)?
+        .head_commit()
+        .context("replacement")?;
+    let missing = "1111111111111111111111111111111111111111";
+    let mut store = Store::open(dir.0.join("threads.jsonl"))?;
+    let accepted_thread = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "accepted",
+        )
+        .at_source(OriginVersion::commit(&accepted), OriginSide::Target),
+        "one\n",
+        1,
+    )?;
+    let replacement_thread = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "replacement",
+        )
+        .at_source(OriginVersion::commit(&replacement), OriginSide::Target),
+        "two\n",
+        2,
+    )?;
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&accepted)?));
+    app.settle_background();
+    app.open(Path::new("a.md"));
+    assert!(app.normal_thread(app.thread(&accepted_thread).context("accepted thread")?));
+    assert!(app.marks().iter().any(|mark| mark.id() == &accepted_thread));
+
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(missing)?));
+    assert!(app.normal_thread(app.thread(&accepted_thread).context("pending accepted")?));
+    assert!(
+        !app.normal_thread(
+            app.thread(&replacement_thread)
+                .context("pending replacement")?
+        )
+    );
+    assert_eq!(app.view().text(), "");
+    assert!(
+        app.marks().is_empty(),
+        "cleared content has no inline authority"
+    );
+    app.settle_background();
+    assert!(app.comparison.error().is_some());
+    assert!(app.normal_thread(app.thread(&accepted_thread).context("failed accepted")?));
+    assert_eq!(app.view().text(), "");
+    assert!(app.marks().is_empty());
+
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&replacement)?));
+    assert!(
+        app.normal_thread(
+            app.thread(&accepted_thread)
+                .context("next pending accepted")?
+        )
+    );
+    assert!(app.marks().is_empty());
+    app.settle_background();
+    assert!(!app.normal_thread(app.thread(&accepted_thread).context("replaced accepted")?));
+    assert!(
+        app.normal_thread(
+            app.thread(&replacement_thread)
+                .context("accepted replacement")?
+        )
+    );
+    assert_eq!(app.view().text(), "two\n");
+    assert!(app.marks().iter().all(|mark| mark.id() != &accepted_thread));
+    assert!(
+        app.marks()
+            .iter()
+            .any(|mark| mark.id() == &replacement_thread)
+    );
+    Ok(())
+}
+
+#[test]
+fn off_projection_failure_restores_prior_discovery() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = repository("comparison-off-projection-rollback")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "accepted\n")])?;
+    let accepted = Workspace::discover(&root)?
+        .head_commit()
+        .context("accepted")?;
+    fs::write(root.join("a.md"), "working\n")?;
+    let checkout = Workspace::discover(&root)?.identity();
+    let mut store = Store::open(dir.0.join("threads.jsonl"))?;
+    let accepted_thread = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "accepted",
+        )
+        .at_source(OriginVersion::commit(&accepted), OriginSide::Target),
+        "accepted\n",
+        1,
+    )?;
+    let working_thread = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "working",
+        )
+        .at_source(
+            OriginVersion::working_tree(Some(accepted.clone())),
+            OriginSide::Target,
+        )
+        .with_working_tree_facts(WorkingTreeFacts::new(
+            Some(accepted.clone()),
+            WorkingTreeState::Modified,
+            Some(ContentIdentity::from_text("working\n")),
+            checkout,
+            FullFileDigest::from_bytes(b"working\n"),
+        )),
+        "working\n",
+        2,
+    )?;
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&accepted)?));
+    app.settle_background();
+    app.open(Path::new("a.md"));
+    assert!(app.marks().iter().any(|mark| mark.id() == &accepted_thread));
+
+    let original_mode = fs::metadata(root.join("a.md"))?.permissions().mode();
+    fs::set_permissions(root.join("a.md"), fs::Permissions::from_mode(0o0))?;
+    app.set_comparison_target(ComparisonEndpoint::WorkingTree);
+    app.settle_background();
+    fs::set_permissions(root.join("a.md"), fs::Permissions::from_mode(original_mode))?;
+    let accepted_thread_ref = app.thread(&accepted_thread).context("restored accepted")?;
+    assert!(app.normal_thread(accepted_thread_ref));
+    assert!(!app.inline_thread(accepted_thread_ref));
+    assert!(
+        !app.normal_thread(
+            app.thread(&working_thread)
+                .context("rejected working target")?
+        )
+    );
+    assert_eq!(app.view().text(), "");
+    assert!(app.marks().is_empty());
+
+    app.set_comparison_target(ComparisonEndpoint::WorkingTree);
+    app.settle_background();
+    assert!(
+        !app.normal_thread(
+            app.thread(&accepted_thread)
+                .context("superseded accepted")?
+        )
+    );
+    assert!(
+        app.normal_thread(
+            app.thread(&working_thread)
+                .context("accepted working target")?
+        )
+    );
+    assert_eq!(app.view().text(), "working\n");
+    assert!(app.marks().iter().any(|mark| mark.id() == &working_thread));
+    Ok(())
+}
+
+#[test]
 fn failed_target_refresh_keeps_membership_on_the_accepted_presentation() -> anyhow::Result<()> {
     let dir = repository("comparison-failed-target-membership")?;
     let root = dir.0.join("ws");

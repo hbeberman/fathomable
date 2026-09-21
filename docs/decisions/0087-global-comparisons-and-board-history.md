@@ -21,6 +21,11 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Thread discovery amended 2026-09-21 by
+[0094](0094-diff-range-thread-discovery.md): normal thread viewers follow the
+accepted comparison's commit range, with a shared **All threads** override.
+Inline placement remains subject to exact endpoint and side eligibility.
+
 Normal viewer membership and transition behavior amended 2026-09-20 by
 [0093](0093-version-scoped-viewer-membership.md): normal surfaces now follow
 the last accepted version presentation, while explicit history remains

@@ -71,6 +71,8 @@ impl ReviewView {
 pub(crate) struct ReviewState {
     /// The board view or one of its explicit history views.
     pub(crate) view: ReviewView,
+    /// Normal thread viewers include history outside the comparison.
+    pub(crate) all_threads: bool,
     /// Resolved threads are listed too; hidden by default.
     pub(crate) resolved: bool,
     /// Only the current document's threads (the list's `f`).
@@ -81,6 +83,7 @@ impl Default for ReviewState {
     fn default() -> Self {
         Self {
             view: ReviewView::Board,
+            all_threads: false,
             resolved: false,
             file_only: false,
         }
@@ -615,6 +618,11 @@ impl App {
         self.review
     }
 
+    /// Whether normal thread viewers include all unarchived history.
+    pub(crate) fn all_threads(&self) -> bool {
+        self.review.all_threads
+    }
+
     /// The threads the review lists, in its order (ADR 0049, ADR 0066):
     /// resolved ones only when asked for, the past ones among them with
     /// their commit (ADR 0072), narrowed to the current file when
@@ -734,18 +742,17 @@ impl App {
                     return None;
                 }
                 let worktree = (!exact).then(|| self.worktree_of(thread.id())).flatten();
-                let commit = (view == ReviewView::Board
-                    && worktree.is_none()
-                    && !self.normal_thread(thread))
-                .then(|| thread.commit().map(short_commit))
-                .flatten();
-                let origin_context = (view == ReviewView::Archived)
-                    .then(|| origin_label(thread))
+                let commit = (view == ReviewView::Board && worktree.is_none() && !exact)
+                    .then(|| thread.commit().map(short_commit))
                     .flatten();
+                let origin_context = (view == ReviewView::Archived
+                    || (view == ReviewView::Board && !exact && worktree.is_none()))
+                .then(|| origin_label(thread))
+                .flatten();
                 let context = worktree
                     .as_deref()
-                    .or(commit.as_deref())
-                    .or(origin_context.as_deref());
+                    .or(origin_context.as_deref())
+                    .or(commit.as_deref());
                 let summary =
                     ThreadSummary::new(thread, Some(placement), self.user_name(), context);
                 let source_unavailable = self.review_list.evidence.as_ref() == Some(thread.id());
@@ -757,6 +764,7 @@ impl App {
                 let moved =
                     path != thread.origin().path() || placement.range() != thread.origin().range();
                 let origin_warning = (view != ReviewView::Board
+                    || !exact
                     || worktree.is_some()
                     || commit.is_some()
                     || placement.is_detached()
@@ -1000,18 +1008,7 @@ impl App {
                 });
             return (placement, Words::of(Some(placement), thread));
         }
-        let absolute = self.workspace().root().join(self.thread_path(thread));
-        let placement = if absolute.is_file() {
-            std::fs::read_to_string(absolute).map_or_else(
-                |_| detached(),
-                |text| {
-                    let hashes = fathomable_core::annotations::LineHashes::of(&text);
-                    App::project_placement(thread, &text, &hashes)
-                },
-            )
-        } else {
-            detached()
-        };
+        let placement = detached();
         (placement, Words::of(Some(placement), thread))
     }
 
@@ -1546,6 +1543,23 @@ impl App {
             "resolved hidden"
         });
         self.reshow_review();
+    }
+
+    /// Include or exclude unarchived history on both normal thread viewers.
+    pub(crate) fn toggle_all_threads(&mut self) {
+        self.review.all_threads = !self.review.all_threads;
+        self.refresh_review_paths();
+        self.reconcile_normal_thread_cursor();
+        self.reconcile_threads_pane_cursor();
+        self.reveal_threads_pane_selection();
+        self.notice(if self.review.all_threads {
+            "all threads shown"
+        } else {
+            "comparison threads shown"
+        });
+        if self.review.view == ReviewView::Board {
+            self.reshow_review();
+        }
     }
 
     /// The rows changed under the list: keep the cursor's entry in view,

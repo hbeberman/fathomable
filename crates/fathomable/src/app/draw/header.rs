@@ -950,6 +950,9 @@ pub(crate) fn review_header(app: &App) -> Header {
             ("workspace", "w")
         };
         counts.insert(0, HintOf::responsive_word(scope, compact, Tone::Info));
+        if review.all_threads {
+            counts.insert(1, HintOf::word("all history".to_owned(), Tone::Info));
+        }
         Header::counted_with_tail(
             vec![(" Threads ".to_owned(), Tone::Pane)],
             counts,
@@ -1065,13 +1068,17 @@ pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
 pub(crate) fn threads_pane_header(app: &App) -> Header {
     let scope = app.sidebar_scope();
     let file_only = scope == crate::app::threads::pane::PaneScope::File;
+    let mut filters = vec![HintOf::responsive_word(
+        scope.word(),
+        scope.short_word(),
+        Tone::Info,
+    )];
+    if app.all_threads() {
+        filters.push(HintOf::word("all history".to_owned(), Tone::Info));
+    }
     Header::counted_with_tail(
         vec![(" Thread list ".to_owned(), Tone::Pane)],
-        vec![HintOf::responsive_word(
-            scope.word(),
-            scope.short_word(),
-            Tone::Info,
-        )],
+        filters,
         passive_count_hints(
             app.review_counts(file_only),
             app.review().view != ReviewView::Board || app.review().resolved,
@@ -1284,6 +1291,26 @@ mod tests {
             app.open_review_view(view);
             assert_control(review_header(&app), title);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn normal_thread_headers_show_all_history_only_while_enabled() -> anyhow::Result<()> {
+        let dir = testing::workspace("header-all-history", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        let theme = theme()?;
+        app.open_review();
+
+        assert!(!text(&review_header(&app).line(&theme, 100)).contains("all history"));
+        assert!(!text(&threads_pane_header(&app).line(&theme, 100)).contains("all history"));
+
+        app.toggle_all_threads();
+        assert!(text(&review_header(&app).line(&theme, 100)).contains("all history"));
+        assert!(text(&threads_pane_header(&app).line(&theme, 100)).contains("all history"));
+
+        app.open_review_view(ReviewView::RecentlyResolved);
+        assert!(!text(&review_header(&app).line(&theme, 100)).contains("all history"));
+        assert!(text(&threads_pane_header(&app).line(&theme, 100)).contains("all history"));
         Ok(())
     }
 

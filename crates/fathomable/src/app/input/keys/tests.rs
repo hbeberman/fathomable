@@ -313,6 +313,76 @@ fn space_t_uppercase_changes_thread_list_settings_without_moving_focus() -> anyh
 }
 
 #[test]
+fn all_threads_is_shared_and_does_not_move_focus_or_comparison() -> anyhow::Result<()> {
+    let dir = fixture("all-threads-settings")?;
+    let mut app = source_app(&dir)?;
+    annotate(&mut app, 3, "three");
+    let endpoints = app.comparison_menu_pair();
+
+    let focus = app.focus();
+    press(&mut app, " TA");
+    assert!(app.all_threads());
+    assert_eq!(app.focus(), focus);
+    assert_eq!(app.comparison_menu_pair(), endpoints);
+    assert!(!app.review().file_only);
+    assert!(!app.review().resolved);
+
+    app.open_review();
+    press(&mut app, "A");
+    assert!(!app.all_threads());
+    assert_eq!(app.focus(), Focus::Review);
+    assert_eq!(app.comparison_menu_pair(), endpoints);
+
+    app.show_threads_pane();
+    app.focus_threads_pane();
+    press(&mut app, "A");
+    assert!(app.all_threads());
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+    assert_eq!(app.comparison_menu_pair(), endpoints);
+    assert!(!app.review().file_only);
+    assert!(!app.review().resolved);
+    Ok(())
+}
+
+#[test]
+fn dedicated_history_ignores_bare_a_but_keeps_global_and_sidebar_controls() -> anyhow::Result<()> {
+    let dir = fixture("all-threads-history")?;
+    let mut app = source_app(&dir)?;
+    annotate(&mut app, 3, "three");
+    app.open_review_view(crate::app::threads::list::ReviewView::Archived);
+    let endpoints = app.comparison_menu_pair();
+
+    press(&mut app, "A");
+    assert!(!app.all_threads());
+    assert_eq!(
+        app.review().view,
+        crate::app::threads::list::ReviewView::Archived
+    );
+    assert_eq!(app.focus(), Focus::Review);
+
+    press(&mut app, " TA");
+    assert!(app.all_threads());
+    assert_eq!(
+        app.review().view,
+        crate::app::threads::list::ReviewView::Archived
+    );
+    assert_eq!(app.focus(), Focus::Review);
+    assert_eq!(app.comparison_menu_pair(), endpoints);
+
+    app.show_threads_pane();
+    app.focus_threads_pane();
+    press(&mut app, "A");
+    assert!(!app.all_threads());
+    assert_eq!(
+        app.review().view,
+        crate::app::threads::list::ReviewView::Archived
+    );
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+    assert_eq!(app.comparison_menu_pair(), endpoints);
+    Ok(())
+}
+
+#[test]
 fn file_list_click_focuses_the_list_without_leaving_threads() -> anyhow::Result<()> {
     let dir = fixture("review-file-paging")?;
     let mut app = source_app(&dir)?;

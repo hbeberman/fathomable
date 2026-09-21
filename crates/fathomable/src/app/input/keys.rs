@@ -396,20 +396,8 @@ impl App {
             Action::ReviewArchived => self.open_review_view(ReviewView::Archived),
             Action::ArchiveResolved => self.archive_resolved_threads(),
             Action::ClearBoard => self.request_clear_board(),
-            Action::ArchiveThread => {
-                if let Some(id) = self.thread_cursor().thread().cloned() {
-                    self.archive_thread(&id);
-                } else {
-                    self.notice("no thread here");
-                }
-            }
-            Action::RestoreThread => {
-                if let Some(id) = self.thread_cursor().thread().cloned() {
-                    self.restore_thread(&id);
-                } else {
-                    self.notice("no thread here");
-                }
-            }
+            Action::ArchiveThread => self.thread_archive_here(),
+            Action::RestoreThread => self.thread_restore_here(),
             Action::SidebarToggle => self.toggle_sidebar(),
             Action::MenuBarToggle => self.toggle_menu_bar(),
             Action::ThreadsPaneToggle => self.toggle_threads_pane_shown(),
@@ -457,6 +445,13 @@ impl App {
             Action::FilesAutoUnfold => self.toggle_file_auto_unfold(),
             Action::ThreadsFoldAll => self.threads_pane_fold_all(),
             Action::PaneScope => self.threads_pane_toggle_scope(),
+            Action::AllThreadsGlobal => self.toggle_all_threads(),
+            Action::AllThreads
+                if place == Where::ThreadsPane
+                    || (place == Where::Review && self.review().view == ReviewView::Board) =>
+            {
+                self.toggle_all_threads();
+            }
             Action::ReviewResolved => self.review_toggle_resolved(),
             Action::CommandLine => {
                 if place == Where::Tree {

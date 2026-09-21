@@ -166,6 +166,62 @@ fn focused_file_list_uses_the_same_filter_suffixes() -> anyhow::Result<()> {
 }
 
 #[test]
+fn all_threads_immediately_refreshes_only_review_paths() -> anyhow::Result<()> {
+    let dir = testing::bare("files-shown-all-thread-paths")?;
+    let root = testing::root(&dir);
+    git::init(&root)?;
+    fs::write(root.join("history.md"), "history\n")?;
+    git::commit_and_stage(&root, &[("history.md", "history\n")])?;
+    let history = Workspace::discover(&root)?
+        .head_commit()
+        .context("history commit")?;
+    fs::write(root.join("current.md"), "current\n")?;
+    git::commit_and_stage(&root, &[("current.md", "current\n")])?;
+    let current = Workspace::discover(&root)?
+        .head_commit()
+        .context("current commit")?;
+    let mut store = Store::open(testing::store_path(&dir))?;
+    let finding = store.annotate(
+        Draft::new(
+            Author::agent("reviewer"),
+            Path::new("history.md"),
+            LineRange::new(1, 1),
+            "history finding",
+        )
+        .at_source(OriginVersion::commit(history), OriginSide::Target),
+        "history\n",
+        1,
+    )?;
+    let mut app = AppBuilder::new(&dir)
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&current)?));
+    app.settle_background();
+    app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
+    app.show_tree();
+    app.files_toggle(Rule::Reviews);
+    assert!(names(&app).is_empty());
+    let focus = app.focus();
+    let endpoints = app.comparison_menu_pair();
+
+    app.toggle_all_threads();
+    assert!(app.normal_thread_without_draft(app.thread(&finding).context("history finding")?));
+    assert_eq!(names(&app), ["history.md"]);
+    assert_eq!(app.focus(), focus);
+    assert_eq!(app.comparison_menu_pair(), endpoints);
+
+    app.toggle_all_threads();
+    assert!(names(&app).is_empty());
+    assert_eq!(app.focus(), focus);
+    assert_eq!(app.comparison_menu_pair(), endpoints);
+    Ok(())
+}
+
+#[test]
 fn file_list_auto_unfold_uses_both_entry_paths_and_marks_its_state() -> anyhow::Result<()> {
     let dir = fixture("auto-unfold-entry-paths")?;
     let mut app = AppBuilder::new(&dir).build()?;

@@ -1455,8 +1455,18 @@ fn the_threads_title_opens_checked_settings_below_the_header() -> anyhow::Result
         settings,
         [
             ("only current file".to_owned(), Some(true)),
+            ("all threads".to_owned(), Some(false)),
             ("show resolved".to_owned(), Some(false)),
         ]
+    );
+    assert_eq!(
+        app.menu()
+            .and_then(|menu| menu
+                .entries()
+                .iter()
+                .find(|entry| entry.label() == "all threads"))
+            .map(super::Entry::key),
+        Some("A")
     );
     let grid = app.menu().context("the Threads menu")?.grid_in(
         app.size().0,
@@ -1472,6 +1482,11 @@ fn the_threads_title_opens_checked_settings_below_the_header() -> anyhow::Result
         app.sidebar_scope(),
         crate::app::threads::pane::PaneScope::Workspace
     );
+
+    left(&mut app, 1, header_row);
+    let cell = entry_cell(&app, "all threads")?;
+    left(&mut app, cell.0, cell.1);
+    assert!(app.all_threads());
 
     left(&mut app, 1, header_row);
     let cell = entry_cell(&app, "show resolved")?;
@@ -1517,8 +1532,18 @@ fn the_reviews_title_opens_checked_settings_below_the_header() -> anyhow::Result
             ("open file".to_owned(), None),
             (String::new(), None),
             ("only current file".to_owned(), Some(false)),
+            ("all threads".to_owned(), Some(false)),
             ("show resolved".to_owned(), Some(false)),
         ]
+    );
+    assert_eq!(
+        app.menu()
+            .and_then(|menu| menu
+                .entries()
+                .iter()
+                .find(|entry| entry.label() == "all threads"))
+            .map(super::Entry::key),
+        Some("A")
     );
     let grid = app.menu().context("the Threads menu")?.grid_in(
         app.size().0,
@@ -1531,6 +1556,11 @@ fn the_reviews_title_opens_checked_settings_below_the_header() -> anyhow::Result
     let cell = entry_cell(&app, "only current file")?;
     left(&mut app, cell.0, cell.1);
     assert!(app.review().file_only);
+
+    left(&mut app, sidebar + 1, header_row);
+    let cell = entry_cell(&app, "all threads")?;
+    left(&mut app, cell.0, cell.1);
+    assert!(app.all_threads());
 
     left(&mut app, sidebar + 1, header_row);
     let cell = entry_cell(&app, "show resolved")?;
@@ -1553,6 +1583,20 @@ fn the_reviews_title_opens_checked_settings_below_the_header() -> anyhow::Result
     left(&mut app, cell.0, cell.1);
     assert!(!app.review_list().is_open());
     assert_eq!(app.focus(), Focus::View);
+    Ok(())
+}
+
+#[test]
+fn history_view_does_not_open_normal_threads_settings() -> anyhow::Result<()> {
+    let dir = fixture("history-all-threads-setting")?;
+    let mut app = app(&dir)?;
+    annotate(&mut app)?;
+    app.open_review_view(crate::app::threads::list::ReviewView::Archived);
+    let header_row = app.pane_top();
+    let title_column = app.sidebar_width() + 1;
+    left(&mut app, title_column, header_row);
+    assert!(app.menu().is_none());
+    assert!(!app.all_threads());
     Ok(())
 }
 

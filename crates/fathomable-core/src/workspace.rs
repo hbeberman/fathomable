@@ -27,7 +27,7 @@
 
 use std::cell::Cell;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::io::{self, Read as _};
@@ -282,6 +282,26 @@ impl fmt::Display for CommitIdError {
 }
 
 impl std::error::Error for CommitIdError {}
+
+/// Immutable commits introduced between two graph endpoints.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommitRange {
+    commits: BTreeSet<String>,
+}
+
+impl CommitRange {
+    /// Whether `id` belongs to the source-exclusive, target-inclusive range.
+    #[must_use]
+    pub fn contains(&self, id: &str) -> bool {
+        self.commits.contains(id)
+    }
+
+    /// Whether the graph difference contains no commits.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.commits.is_empty()
+    }
+}
 
 /// Immutable identity of one checkout and its shared repository.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -781,6 +801,11 @@ const REACH_SLACK: gix::date::SecondsSinceUnixEpoch = 7 * 24 * 60 * 60;
 /// not needed for review and must be rejected before `gix` allocates it.
 const MAX_EXACT_METADATA_BYTES: u64 = 64 * 1_024 * 1_024;
 
+const COMPARISON_PATH_LIMIT_MESSAGE: &str =
+    "comparison limited: increase limits.comparison-paths and limits.retained-paths in config";
+const COMPARISON_BYTE_LIMIT_MESSAGE: &str =
+    "comparison limited: increase limits.comparison-bytes in config";
+
 /// The committer time of the commit `hex` names, `None` when the object
 /// store does not hold such a commit.
 fn commit_time(repo: &gix::Repository, hex: &str) -> Option<gix::date::SecondsSinceUnixEpoch> {
@@ -967,9 +992,7 @@ impl Workspace {
     pub(crate) fn check_path_count(&self, count: usize) -> Result<(), WorkspaceError> {
         self.check_scan()?;
         if count > self.limits.comparison_path_limit() {
-            return Err(
-                self.scan_error("comparison limited by path budget; coverage is incomplete")
-            );
+            return Err(self.scan_error(COMPARISON_PATH_LIMIT_MESSAGE));
         }
         Ok(())
     }
@@ -989,8 +1012,7 @@ impl Workspace {
         self.check_scan()?;
         let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
         if bytes > self.content_limit() {
-            return Err(self
-                .scan_error("comparison limited by content byte budget; coverage is incomplete"));
+            return Err(self.scan_error(COMPARISON_BYTE_LIMIT_MESSAGE));
         }
         if let Some(remaining) = self.content_remaining.get() {
             self.content_remaining.set(Some(remaining - bytes));
@@ -1236,6 +1258,97 @@ impl Workspace {
         check_commit_header(&repo, id)
             .and_then(|()| commit_record(&repo, id))
             .map_err(|message| self.revision_error("HEAD", &message))
+    }
+
+    /// Discover `Reach(target) - Reach(source)` from exact local commit objects.
+    ///
+    /// `None` represents the empty tree, which excludes no ancestors. The
+    /// target is included unless it is also reachable from the source. Every
+    /// merge parent is followed, and replacements are ignored.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] outside Git, when an endpoint or parent is
+    /// missing, corrupt, oversized, or not a commit, when cancellation is
+    /// requested, or when the comparison path or metadata-byte limit cannot
+    /// cover the graph.
+    pub fn commit_range(
+        &self,
+        source: Option<&CommitId>,
+        target: &CommitId,
+    ) -> Result<CommitRange, WorkspaceError> {
+        let repo = self.exact_repository(target.as_str(), MAX_EXACT_METADATA_BYTES)?;
+        let target_id = parse_object_id(target).map_err(|message| {
+            self.revision_error(
+                target.as_str(),
+                &format!("invalid target commit: {message}"),
+            )
+        })?;
+        let mut budget = CommitGraphBudget::new(
+            self.limits.comparison_path_limit(),
+            self.limits.comparison_bytes.max(MAX_EXACT_METADATA_BYTES),
+        );
+        if source == Some(target) {
+            self.check_scan()?;
+            budget
+                .discover(target_id)
+                .and_then(|()| inspect_commit_header(&repo, target_id, &mut budget))
+                .map_err(|message| self.revision_error(target.as_str(), &message))?;
+            return Ok(CommitRange::default());
+        }
+        let parsed_source = source
+            .map(|source| {
+                parse_object_id(source)
+                    .map(|id| (source, id))
+                    .map_err(|message| {
+                        self.revision_error(
+                            source.as_str(),
+                            &format!("invalid source commit: {message}"),
+                        )
+                    })
+            })
+            .transpose()?;
+        if let Some((source, source_id)) = parsed_source {
+            budget
+                .discover(source_id)
+                .and_then(|()| inspect_commit_header(&repo, source_id, &mut budget))
+                .map_err(|message| self.revision_error(source.as_str(), &message))?;
+            budget
+                .discover(target_id)
+                .and_then(|()| inspect_commit_header(&repo, target_id, &mut budget))
+                .map_err(|message| self.revision_error(target.as_str(), &message))?;
+            if let Some(included) =
+                paint_commit_range(&repo, source_id, target_id, &mut budget, &self.cancellation)
+                    .map_err(|message| self.revision_error(target.as_str(), &message))?
+            {
+                return Ok(CommitRange {
+                    commits: included
+                        .into_iter()
+                        .map(|id| id.to_hex().to_string())
+                        .collect(),
+                });
+            }
+        }
+        let excluded = match parsed_source {
+            Some((source, source_id)) => walk_commit_graph(
+                &repo,
+                source_id,
+                &HashSet::new(),
+                &mut budget,
+                &self.cancellation,
+            )
+            .map_err(|message| self.revision_error(source.as_str(), &message))?,
+            None => HashSet::new(),
+        };
+        let included =
+            walk_commit_graph(&repo, target_id, &excluded, &mut budget, &self.cancellation)
+                .map_err(|message| self.revision_error(target.as_str(), &message))?;
+        Ok(CommitRange {
+            commits: included
+                .into_iter()
+                .map(|id| id.to_hex().to_string())
+                .collect(),
+        })
     }
 
     fn exact_repository(
@@ -1583,6 +1696,13 @@ impl Workspace {
             self.check_scan()?;
             let base_file = base_files.get(&path);
             let target_file = target_files.get(&path);
+            if let (Some(base_file), Some(target_file)) = (base_file, target_file)
+                && base_file.info.mode() == target_file.info.mode()
+                && let Some(object) = base_file.info.object()
+                && target_file.info.object() == Some(object)
+            {
+                continue;
+            }
             let mut base_state = base_file.map_or(PathState::Absent, |file| {
                 PathState::Present(file.info.clone())
             });
@@ -2761,8 +2881,7 @@ impl Workspace {
             })?
             .size();
         if size > self.content_limit() {
-            return Err(self
-                .scan_error("comparison limited by content byte budget; coverage is incomplete"));
+            return Err(self.scan_error(COMPARISON_BYTE_LIMIT_MESSAGE));
         }
         let object = git
             .repo
@@ -2800,9 +2919,7 @@ impl Workspace {
         if metadata.is_file() {
             let limit = self.content_limit();
             if metadata.len() > limit {
-                return Err(self.scan_error(
-                    "comparison limited by content byte budget; coverage is incomplete",
-                ));
+                return Err(self.scan_error(COMPARISON_BYTE_LIMIT_MESSAGE));
             }
             let mut bytes = Vec::new();
             fs::File::open(&absolute)
@@ -2812,9 +2929,7 @@ impl Workspace {
                     message: format!("cannot read working-tree file: {error}"),
                 })?;
             if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
-                return Err(self.scan_error(
-                    "comparison limited by content byte budget; coverage is incomplete",
-                ));
+                return Err(self.scan_error(COMPARISON_BYTE_LIMIT_MESSAGE));
             }
             return Ok(Some(bytes));
         }
@@ -3980,6 +4095,299 @@ fn commit_record(repo: &gix::Repository, id: ObjectId) -> Result<Commit, String>
     })
 }
 
+fn parse_object_id(id: &CommitId) -> Result<ObjectId, String> {
+    ObjectId::from_hex(id.as_str().as_bytes()).map_err(|error| error.to_string())
+}
+
+struct CommitGraphBudget {
+    discovered: HashSet<ObjectId>,
+    metadata_charged: HashSet<ObjectId>,
+    node_limit: usize,
+    metadata_remaining: u64,
+}
+
+impl CommitGraphBudget {
+    fn new(node_limit: usize, metadata_limit: u64) -> Self {
+        Self {
+            discovered: HashSet::new(),
+            metadata_charged: HashSet::new(),
+            node_limit,
+            metadata_remaining: metadata_limit,
+        }
+    }
+
+    fn discover(&mut self, id: ObjectId) -> Result<(), String> {
+        if self.discovered.contains(&id) {
+            return Ok(());
+        }
+        if self.discovered.len() >= self.node_limit {
+            return Err(
+                "commit graph limited by limits.comparison-paths; coverage is incomplete"
+                    .to_owned(),
+            );
+        }
+        self.discovered.insert(id);
+        Ok(())
+    }
+
+    fn charge_metadata(&mut self, id: ObjectId, bytes: u64) -> Result<(), String> {
+        if self.metadata_charged.contains(&id) {
+            return Ok(());
+        }
+        if bytes > self.metadata_remaining {
+            return Err(
+                "commit graph metadata limited by limits.comparison-bytes; coverage is incomplete"
+                    .to_owned(),
+            );
+        }
+        self.metadata_charged.insert(id);
+        self.metadata_remaining -= bytes;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CommitPaint {
+    flags: u8,
+    generation: u32,
+    processed: bool,
+}
+
+const TARGET_PAINT: u8 = 1 << 0;
+const SOURCE_PAINT: u8 = 1 << 1;
+const STALE_PAINT: u8 = 1 << 2;
+
+fn paint_commit_range(
+    repo: &gix::Repository,
+    source: ObjectId,
+    target: ObjectId,
+    budget: &mut CommitGraphBudget,
+    cancellation: &Cancellation,
+) -> Result<Option<HashSet<ObjectId>>, String> {
+    let graph = repo
+        .commit_graph_if_enabled()
+        .map_err(|error| format!("cannot read commit graph: {error}"))?;
+    let Some(graph) = graph else {
+        return Ok(None);
+    };
+    let Some(source_generation) = graph.commit_by_id(source).map(|commit| commit.generation())
+    else {
+        return Ok(None);
+    };
+    let Some(target_generation) = graph.commit_by_id(target).map(|commit| commit.generation())
+    else {
+        return Ok(None);
+    };
+    paint_commit_graph(
+        source,
+        source_generation,
+        target,
+        target_generation,
+        budget,
+        cancellation,
+        |id, generation, budget| {
+            let parents = commit_parents(repo, id, budget)?;
+            let mut with_generations = Vec::with_capacity(parents.len());
+            for parent in parents {
+                let Some(parent_generation) =
+                    graph.commit_by_id(parent).map(|commit| commit.generation())
+                else {
+                    return Ok(None);
+                };
+                if parent_generation >= generation {
+                    return Err(format!(
+                        "commit graph generation for parent {parent} is not below child {id}; coverage is incomplete"
+                    ));
+                }
+                with_generations.push((parent, parent_generation));
+            }
+            Ok(Some(with_generations))
+        },
+    )
+}
+
+fn paint_commit_graph(
+    source: ObjectId,
+    source_generation: u32,
+    target: ObjectId,
+    target_generation: u32,
+    budget: &mut CommitGraphBudget,
+    cancellation: &Cancellation,
+    mut parents: impl FnMut(
+        ObjectId,
+        u32,
+        &mut CommitGraphBudget,
+    ) -> Result<Option<Vec<(ObjectId, u32)>>, String>,
+) -> Result<Option<HashSet<ObjectId>>, String> {
+    let mut states = HashMap::new();
+    let mut pending = BinaryHeap::new();
+    let mut live_pending = 0;
+    queue_commit_paint(
+        source,
+        source_generation,
+        SOURCE_PAINT,
+        &mut states,
+        &mut pending,
+        &mut live_pending,
+        budget,
+    )?;
+    queue_commit_paint(
+        target,
+        target_generation,
+        TARGET_PAINT,
+        &mut states,
+        &mut pending,
+        &mut live_pending,
+        budget,
+    )?;
+    let mut included = HashSet::new();
+    while live_pending > 0 {
+        let Some((generation, id)) = pending.pop() else {
+            return Err("commit graph paint frontier is incomplete".to_owned());
+        };
+        if cancellation.is_cancelled() {
+            return Err("commit graph scan cancelled; coverage is incomplete".to_owned());
+        }
+        let Some(state) = states.get_mut(&id) else {
+            return Err("commit graph paint state is incomplete".to_owned());
+        };
+        if state.processed || state.generation != generation {
+            continue;
+        }
+        state.processed = true;
+        let mut flags = state.flags;
+        if flags & STALE_PAINT == 0 {
+            live_pending -= 1;
+        }
+        if flags & (TARGET_PAINT | SOURCE_PAINT) == TARGET_PAINT | SOURCE_PAINT {
+            flags |= STALE_PAINT;
+        } else if flags & TARGET_PAINT != 0 {
+            included.insert(id);
+        }
+        let Some(parents) = parents(id, generation, budget)? else {
+            return Ok(None);
+        };
+        for (parent, parent_generation) in parents {
+            queue_commit_paint(
+                parent,
+                parent_generation,
+                flags,
+                &mut states,
+                &mut pending,
+                &mut live_pending,
+                budget,
+            )?;
+        }
+    }
+    Ok(Some(included))
+}
+
+fn queue_commit_paint(
+    id: ObjectId,
+    generation: u32,
+    flags: u8,
+    states: &mut HashMap<ObjectId, CommitPaint>,
+    pending: &mut BinaryHeap<(u32, ObjectId)>,
+    live_pending: &mut usize,
+    budget: &mut CommitGraphBudget,
+) -> Result<(), String> {
+    use std::collections::hash_map::Entry;
+
+    match states.entry(id) {
+        Entry::Vacant(entry) => {
+            budget.discover(id)?;
+            entry.insert(CommitPaint {
+                flags,
+                generation,
+                processed: false,
+            });
+            pending.push((generation, id));
+            if flags & STALE_PAINT == 0 {
+                *live_pending += 1;
+            }
+        }
+        Entry::Occupied(mut entry) => {
+            let state = entry.get_mut();
+            if state.generation != generation {
+                return Err(format!(
+                    "commit graph reports inconsistent generations for {id}; coverage is incomplete"
+                ));
+            }
+            if state.processed {
+                return Err(format!(
+                    "commit graph paint reached processed commit {id}; coverage is incomplete"
+                ));
+            }
+            let combined = state.flags | flags;
+            if combined != state.flags {
+                if state.flags & STALE_PAINT == 0 && combined & STALE_PAINT != 0 {
+                    *live_pending -= 1;
+                }
+                state.flags = combined;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn walk_commit_graph(
+    repo: &gix::Repository,
+    start: ObjectId,
+    excluded: &HashSet<ObjectId>,
+    budget: &mut CommitGraphBudget,
+    cancellation: &Cancellation,
+) -> Result<HashSet<ObjectId>, String> {
+    if excluded.contains(&start) {
+        return Ok(HashSet::new());
+    }
+    let mut reached = HashSet::new();
+    let mut pending = Vec::new();
+    budget.discover(start)?;
+    reached.insert(start);
+    pending.push(start);
+    while let Some(id) = pending.pop() {
+        if cancellation.is_cancelled() {
+            return Err("commit graph scan cancelled; coverage is incomplete".to_owned());
+        }
+        for parent in commit_parents(repo, id, budget)? {
+            if excluded.contains(&parent) || reached.contains(&parent) {
+                continue;
+            }
+            budget.discover(parent)?;
+            reached.insert(parent);
+            pending.push(parent);
+        }
+    }
+    Ok(reached)
+}
+
+fn inspect_commit_header(
+    repo: &gix::Repository,
+    id: ObjectId,
+    budget: &mut CommitGraphBudget,
+) -> Result<(), String> {
+    let header = repo
+        .find_header(id)
+        .map_err(|error| format!("cannot inspect commit object: {error}"))?;
+    if header.kind() != gix::objs::Kind::Commit {
+        return Err(format!("{id} is not a commit object"));
+    }
+    check_exact_metadata_size(header.size(), "commit object")?;
+    budget.charge_metadata(id, header.size())
+}
+
+fn commit_parents(
+    repo: &gix::Repository,
+    id: ObjectId,
+    budget: &mut CommitGraphBudget,
+) -> Result<Vec<ObjectId>, String> {
+    inspect_commit_header(repo, id, budget)?;
+    let commit = repo
+        .find_commit(id)
+        .map_err(|error| format!("cannot read commit graph object {id}: {error}"))?;
+    Ok(commit.parent_ids().map(gix::Id::detach).collect())
+}
+
 fn named_revision_choice(
     reference: &mut gix::Reference<'_>,
     kind: RevisionChoiceKind,
@@ -4863,6 +5271,189 @@ mod tests {
             workspace.commits_from_matching_prefix("HEAD", &last.as_str()[..8])?[0].id(),
             last
         );
+        Ok(())
+    }
+
+    #[test]
+    fn commit_range_paint_stops_at_the_common_frontier() -> Result<(), Box<dyn std::error::Error>> {
+        let id = |value: u8| ObjectId::from_hex(format!("{value:040x}").as_bytes());
+        let ancestor = id(1)?;
+        let source_parent = id(2)?;
+        let source = id(3)?;
+        let side_parent = id(4)?;
+        let side = id(5)?;
+        let target = id(6)?;
+        let graph = BTreeMap::from([
+            (ancestor, (1, Vec::new())),
+            (source_parent, (2, vec![ancestor])),
+            (source, (3, vec![source_parent])),
+            (side_parent, (2, vec![ancestor])),
+            (side, (3, vec![side_parent])),
+            (target, (4, vec![source, side])),
+        ]);
+        let mut budget = CommitGraphBudget::new(6, 1);
+        let inspected = Cell::new(0);
+
+        let range = paint_commit_graph(
+            source,
+            3,
+            target,
+            4,
+            &mut budget,
+            &Cancellation::default(),
+            |id, _, _| {
+                inspected.set(inspected.get() + 1);
+                Ok(graph.get(&id).map(|(_, parents)| {
+                    parents
+                        .iter()
+                        .map(|parent| (*parent, graph[parent].0))
+                        .collect()
+                }))
+            },
+        )?
+        .ok_or("synthetic graph unexpectedly fell back")?;
+
+        assert_eq!(range, HashSet::from([side_parent, side, target]));
+        assert_eq!(
+            budget.discovered.len(),
+            6,
+            "all frontier nodes share one unique-node budget"
+        );
+        assert_eq!(
+            inspected.get(),
+            5,
+            "stale paint reaches the side frontier without scanning below it"
+        );
+
+        let mut metadata_budget = CommitGraphBudget::new(2, 1);
+        metadata_budget.discover(ancestor)?;
+        metadata_budget.charge_metadata(ancestor, 1)?;
+        metadata_budget.discover(source_parent)?;
+        let Err(error) = metadata_budget.charge_metadata(source_parent, 1) else {
+            return Err("metadata beyond the byte budget completed".into());
+        };
+        assert!(error.contains("limits.comparison-bytes"));
+        Ok(())
+    }
+
+    #[test]
+    fn commit_range_is_source_exclusive_and_follows_merge_parents()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("workspace-commit-range-merge")?;
+        init(&dir.0)?;
+        commit_and_stage(&dir.0, &[("a.md", "a\n")])?;
+        let first = head(&dir.0)?;
+        commit_and_stage(&dir.0, &[("a.md", "b\n")])?;
+        let main = head(&dir.0)?;
+        let repo = gix::open_opts(&dir.0, open_options())?;
+        let signature = gix::actor::SignatureRef {
+            name: "test".into(),
+            email: "test@example.com".into(),
+            time: "2 +0000",
+        };
+        let side = repo
+            .commit_as(
+                signature,
+                signature,
+                "refs/heads/side",
+                "side",
+                repo.head_tree_id()?.detach(),
+                Some(ObjectId::from_hex(first.as_str().as_bytes())?),
+            )?
+            .detach();
+        let merge = repo
+            .commit_as(
+                signature,
+                signature,
+                "HEAD",
+                "merge",
+                repo.head_tree_id()?.detach(),
+                [ObjectId::from_hex(main.as_str().as_bytes())?, side],
+            )?
+            .detach();
+        let workspace = Workspace::discover(&dir.0)?;
+
+        let range =
+            workspace.commit_range(Some(&first), &CommitId::parse(merge.to_hex().to_string())?)?;
+        assert!(!range.contains(first.as_str()));
+        assert!(range.contains(main.as_str()));
+        assert!(range.contains(&side.to_hex().to_string()));
+        assert!(range.contains(&merge.to_hex().to_string()));
+
+        let main_only = workspace.commit_range(Some(&first), &main)?;
+        assert!(
+            !main_only.contains(&side.to_hex().to_string()),
+            "a commit reachable only from an unrelated branch is excluded"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn commit_range_honors_limits_and_cancellation() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("workspace-commit-range-limits")?;
+        init(&dir.0)?;
+        commit_and_stage(&dir.0, &[("a.md", "a\n")])?;
+        let first = head(&dir.0)?;
+        commit_and_stage(&dir.0, &[("a.md", "b\n")])?;
+        commit_and_stage(&dir.0, &[("a.md", "c\n")])?;
+        let target = head(&dir.0)?;
+        let mut workspace = Workspace::discover(&dir.0)?;
+        workspace.set_limits(crate::config::LimitsConfig {
+            retained_paths: 2,
+            comparison_paths: 2,
+            ..crate::config::LimitsConfig::default()
+        });
+        let Err(limited) = workspace.commit_range(Some(&first), &target) else {
+            return Err("three graph nodes fit a two-node limit".into());
+        };
+        assert!(limited.message().contains("commit graph limited"));
+
+        let cancellation = Cancellation::default();
+        cancellation.cancel();
+        workspace.set_limits(crate::config::LimitsConfig::default());
+        workspace.set_cancellation(cancellation);
+        let Err(cancelled) = workspace.commit_range(Some(&first), &target) else {
+            return Err("cancelled graph scan completed".into());
+        };
+        assert!(cancelled.message().contains("cancelled"));
+        assert!(cancelled.message().contains("coverage is incomplete"));
+        Ok(())
+    }
+
+    #[test]
+    fn commit_range_reports_missing_parent_objects() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("workspace-commit-range-missing-parent")?;
+        init(&dir.0)?;
+        commit_and_stage(&dir.0, &[("a.md", "a\n")])?;
+        let repo = gix::open_opts(&dir.0, open_options())?;
+        let signature = gix::actor::SignatureRef {
+            name: "test".into(),
+            email: "test@example.com".into(),
+            time: "2 +0000",
+        };
+        let missing = ObjectId::from_hex(b"1111111111111111111111111111111111111111")?;
+        let commit = gix::objs::Commit {
+            message: "missing parent".into(),
+            tree: repo.head_tree_id()?.detach(),
+            author: signature.into(),
+            committer: signature.into(),
+            encoding: None,
+            parents: [missing].into_iter().collect(),
+            extra_headers: Vec::default(),
+        };
+        let target = CommitId::parse(repo.write_object(&commit)?.to_hex().to_string())?;
+        let workspace = Workspace::discover(&dir.0)?;
+
+        let empty = workspace.commit_range(Some(&target), &target)?;
+        assert!(
+            !empty.contains(target.as_str()),
+            "equal endpoints do not inspect parent history"
+        );
+
+        let Err(error) = workspace.commit_range(None, &target) else {
+            return Err("missing graph parent produced a complete range".into());
+        };
+        assert!(error.message().contains("cannot inspect commit object"));
         Ok(())
     }
 

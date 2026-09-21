@@ -102,6 +102,11 @@ them:
   remote provenance or retention. `HEAD` is pinned once per call, selected
   cursors and retries use the echoed full ID, and unavailable objects fail
   without fetching or substituting working-tree bytes.
+- Viewer [diff-range discovery](decisions/0094-diff-range-thread-discovery.md)
+  walks local commit metadata as bounded, cancellable work tied to the accepted
+  comparison. Incomplete history must not silently become a complete range.
+  Range membership and the All threads override expose stored discussions,
+  not authority to place their excerpts on unrelated current source.
 - Diagnostics and disclosure reports minimize sensitive data. Dependency and
   distribution checks supplement, rather than replace, boundary review
   ([dependency monitoring](dependency-monitoring.md)).

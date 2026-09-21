@@ -90,7 +90,14 @@ impl Default for WatchLimits {
         // limits while allowing an ordinary monorepo to finish. Discovery
         // and queues have separate ceilings so a single wide directory
         // cannot allocate in proportion to an arbitrary workspace.
-        Self::new(8_192, 100_000, 50_000, 4_096).unwrap_or(Self {
+        let limits = fathomable_core::config::LimitsConfig::default();
+        Self::new(
+            limits.workspace_watches,
+            limits.discovery_entries,
+            limits.retained_paths,
+            limits.pending_events,
+        )
+        .unwrap_or(Self {
             workspace_watches: NonZeroUsize::MIN,
             discovery_entries: NonZeroUsize::MIN,
             retained_paths: NonZeroUsize::MIN,
@@ -111,7 +118,9 @@ pub(crate) enum LimitReason {
 impl std::fmt::Display for LimitReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::WorkspaceWatches => "workspace watch limit reached",
+            Self::WorkspaceWatches => {
+                "workspace watch limit reached; raise limits.workspace-watches in config"
+            }
             Self::DiscoveryEntries => "directory-entry examination limit reached",
             Self::RetainedPaths => "pending-path retention limit reached",
             Self::ControlWatches => "Git control watch limit reached",

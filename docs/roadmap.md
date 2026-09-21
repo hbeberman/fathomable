@@ -509,3 +509,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     MCP reads remain repository-wide, while selected MCP reads remain
     immutable-origin-only
     ([0093](decisions/0093-version-scoped-viewer-membership.md)).
+86. **Diff-range thread discovery.** Thread viewers automatically include
+    findings from the accepted Source-to-Target commit range, using captured
+    HEAD for WorkingTree and Index boundaries. Diff Off stays Target-only.
+    Shared `A` / `Space T A` and checked **All threads** menu items reveal
+    stored repository history without changing file or lifecycle filters,
+    provenance, or strict inline placement
+    ([0094](decisions/0094-diff-range-thread-discovery.md)).

@@ -287,6 +287,7 @@ fn archived_history_never_populates_the_normal_sidebar() -> anyhow::Result<()> {
     app.thread_toggle_resolved();
     app.archive_thread(&id);
     app.open_review_view(crate::app::threads::list::ReviewView::Archived);
+    app.review.all_threads = true;
 
     press(&mut app, "T");
     assert_eq!(app.focus(), Focus::ThreadsPane);

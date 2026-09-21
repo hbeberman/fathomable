@@ -351,6 +351,8 @@ actions! {
     WindowThreads,
     ApplicationMenu,
     PaneScope,
+    AllThreads,
+    AllThreadsGlobal,
     ReviewResolved,
     Help,
     OpenThreadNext,
@@ -1141,6 +1143,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "show or hide resolved threads",
     ),
     bind(
+        W::ThreadsPane,
+        &[&[c('A')]],
+        A::AllThreads,
+        "Thread list",
+        "show or hide all threads",
+    ),
+    bind(
         W::Any,
         &[&[c(' '), c('T'), c('s')]],
         A::PaneScope,
@@ -1153,6 +1162,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::ReviewResolved,
         "Space menu",
         "thread list: show or hide resolved threads",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('T'), c('A')]],
+        A::AllThreadsGlobal,
+        "Space menu",
+        "thread list: all threads",
     ),
     bind(
         W::Any,
@@ -1351,6 +1367,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::ReviewResolved,
         "Threads",
         "show or hide resolved threads",
+    ),
+    bind(
+        W::Review,
+        &[&[c('A')]],
+        A::AllThreads,
+        "Threads",
+        "show or hide all threads",
     ),
     bind(
         W::Review,
@@ -1891,6 +1914,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn all_threads_keys_do_not_collide_with_archive_or_clear_board() {
+        for place in [Where::Review, Where::ThreadsPane] {
+            assert_eq!(lookup(place, &[c('A')]), Match::Exact(Action::AllThreads));
+            assert_eq!(
+                lookup(place, &[c('a')]),
+                Match::Exact(Action::ArchiveThread)
+            );
+        }
+        for place in PANES {
+            assert_eq!(
+                lookup(place, &[c(' '), c('T'), c('A')]),
+                Match::Exact(Action::AllThreadsGlobal)
+            );
+            assert_eq!(
+                lookup(place, &[c(' '), c('t'), c('a')]),
+                Match::Exact(Action::ArchiveResolved)
+            );
+            assert_eq!(
+                lookup(place, &[c(' '), c('t'), c('A')]),
+                Match::Exact(Action::ClearBoard)
+            );
+        }
+    }
+
     const PANES: [Where; 4] = [Where::View, Where::Tree, Where::ThreadsPane, Where::Review];
 
     #[test]
@@ -2063,7 +2111,7 @@ mod tests {
             keys(Where::View, &[c(' '), c('t')]),
             ["R", "h", "a", "A", "c", "r", "e", "d", "f"]
         );
-        assert_eq!(keys(Where::View, &[c(' '), c('T')]), ["s", "x", "Z"]);
+        assert_eq!(keys(Where::View, &[c(' '), c('T')]), ["s", "x", "A", "Z"]);
         assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "r"]);
         assert_eq!(
             keys(Where::Review, &[c(' '), c('d')]),

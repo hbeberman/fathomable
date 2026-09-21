@@ -1,10 +1,8 @@
 ---
 type: Decision
 title: Provenance-scoped viewer membership and durable landing
-description: Immutable origin provenance and the accepted presentation determine normal membership; landing remains evidence only.
+description: Exact endpoint eligibility and durable landing evidence preserve provenance independently of broader thread discovery.
 resource: crates/fathomable/src/app/landing.rs
-related_resources:
-  - crates/fathomable/src/app/threads/visibility.rs
 tags:
   - annotations
   - architecture
@@ -19,6 +17,13 @@ tags:
 # 0093 Provenance-scoped viewer membership and durable landing
 
 Status: accepted (2026-09-20)
+
+Viewer discovery amended 2026-09-21 by
+[0094](0094-diff-range-thread-discovery.md): thread lists also include Commit
+origins in the accepted Source-to-Target range and offer a shared **All
+threads** backstop. The exact endpoint and side rules below still govern
+inline eligibility; range membership alone never grants placement authority.
+Landing and MCP source-selection rules are unchanged.
 
 Amends [0087](0087-global-comparisons-and-board-history.md) and
 [0092](0092-per-call-commit-sources.md). Comparisons remain checkout-wide,

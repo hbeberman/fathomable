@@ -235,6 +235,7 @@ fn workspace_checks(
         report.check(false, format!("workspace: {error}"));
         return;
     };
+    workspace.set_limits(config.limits().clone());
     if workspace.is_git() {
         match workspace.head_text(Path::new(".fathomable-doctor-probe")) {
             Ok(_) => report.check(
@@ -272,7 +273,11 @@ fn workspace_checks(
         );
     }
 
-    let (watch_ok, watch) = watch_budget(&mut workspace, &config.watch().ignore);
+    let (watch_ok, watch) = watch_budget(
+        &mut workspace,
+        &config.watch().ignore,
+        config.limits().workspace_watches,
+    );
     report.check(watch_ok, watch);
     match worktrees_line(&workspace) {
         Ok(Some(line)) => report.check(true, line),
@@ -352,7 +357,11 @@ fn worktrees_line(
     )))
 }
 
-fn watch_budget(workspace: &mut Workspace, extra_ignores: &[String]) -> (bool, String) {
+fn watch_budget(
+    workspace: &mut Workspace,
+    extra_ignores: &[String],
+    workspace_watch_limit: usize,
+) -> (bool, String) {
     use fathomable_core::follow::Ignore;
 
     let ignore = Ignore::new(extra_ignores).unwrap_or_default();
@@ -383,6 +392,14 @@ fn watch_budget(workspace: &mut Workspace, extra_ignores: &[String]) -> (bool, S
     let budget = fs::read_to_string("/proc/sys/fs/inotify/max_user_watches")
         .ok()
         .and_then(|text| text.trim().parse::<usize>().ok());
+    if dirs > workspace_watch_limit {
+        return (
+            false,
+            format!(
+                "{summary}, but limits.workspace-watches is {workspace_watch_limit}: raise it in config, or live updates have partial coverage"
+            ),
+        );
+    }
     match budget {
         Some(max) if dirs < max => (true, format!("{summary}; inotify allows {max} per user")),
         Some(max) => (
@@ -429,8 +446,9 @@ mod tests {
     use fathomable_core::XdgDirs;
     use fathomable_core::workspace::Workspace;
     use fathomable_testing::TempDir;
+    use fathomable_testing::git;
 
-    use super::{Kind, collect};
+    use super::{Kind, collect, watch_budget};
 
     #[test]
     fn one_report_backs_cli_and_in_app_diagnostics() -> anyhow::Result<()> {
@@ -456,6 +474,44 @@ mod tests {
                 .iter()
                 .any(|line| line.text.contains("is not a git work tree"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn watch_budget_names_the_config_setting_that_needs_to_increase() -> anyhow::Result<()> {
+        let dir = TempDir::new("doctor-watch-config")?;
+        let root = dir.0.join("workspace");
+        fs::create_dir_all(root.join("nested"))?;
+        let mut workspace = Workspace::discover(&root)?;
+
+        let (ok, message) = watch_budget(&mut workspace, &[], 1);
+
+        assert!(!ok);
+        assert!(message.contains("limits.workspace-watches is 1"));
+        assert!(message.contains("raise it in config"));
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_checks_apply_configured_comparison_limits() -> anyhow::Result<()> {
+        let dir = TempDir::new("doctor-comparison-config")?;
+        let root = dir.0.join("workspace");
+        git::init(&root)?;
+        git::commit_and_stage(&root, &[("one", "1"), ("two", "2")])?;
+        let config = dir.0.join("config.kdl");
+        fs::write(&config, "limits { comparison-paths 1 }\n")?;
+        let xdg = dir.0.join("xdg");
+        let dirs = XdgDirs::resolve(|name| Some(xdg.join(name).into_os_string()));
+
+        let report = collect(&dirs, Some(&config), Some(&root), Some((90, 28)));
+
+        assert!(report.lines().iter().any(|line| {
+            line.kind == Kind::Fail
+                && line.text.contains("git status: ")
+                && line.text.contains(
+                    "comparison limited: increase limits.comparison-paths and limits.retained-paths in config"
+                )
+        }));
         Ok(())
     }
 

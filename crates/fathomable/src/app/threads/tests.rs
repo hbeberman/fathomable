@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use fathomable_core::annotations::{
     AgentReplyCommand, AutoResolve, ContentIdentity, Draft, FullFileDigest, LineRange,
-    MessageTarget, OriginSide, OriginVersion, Status, Store, Thread, WorkingTreeFacts,
+    MessageTarget, OriginSide, OriginVersion, Status, Store, Thread, ThreadId, WorkingTreeFacts,
     WorkingTreeState,
 };
 
@@ -23,7 +23,7 @@ use crate::app::testing::{self, app, press};
 use fathomable_core::editor::{Cursor, Edit, Motion};
 use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Workspace};
 
-use super::{ComposeTarget, ThreadState};
+use super::{ComposeTarget, ThreadState, summary::ThreadSummary};
 use crate::app::draw::message::MESSAGE_INDENT;
 use crate::app::threads::draft::DraftRow;
 use crate::app::threads::list::{BODY_INDENT, ReviewView, Row};
@@ -40,6 +40,70 @@ fn type_in(app: &mut App, text: &str) {
             app.compose_insert(&ch.to_string());
         }
     }
+}
+
+fn assert_origin_summary(summary: &ThreadSummary, location: &str, original: &str) {
+    let short = &original[..7];
+    assert_eq!(summary.location(), location);
+    assert_eq!(summary.context(), Some(format!("origin {short}").as_str()));
+}
+
+fn assert_all_history_filters(
+    app: &mut App,
+    active: &ThreadId,
+    resolved: &ThreadId,
+    archived: &ThreadId,
+    other: &ThreadId,
+) {
+    let ids = app
+        .review_entries(false)
+        .into_iter()
+        .map(|entry| entry.id().clone())
+        .collect::<Vec<_>>();
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains(active));
+    assert!(ids.contains(other));
+    assert!(!ids.contains(resolved));
+    assert!(!ids.contains(archived));
+    assert_eq!(
+        app.review_counts(false),
+        crate::app::threads::list::Counts {
+            active: 2,
+            proposed: 0,
+            resolved: 1,
+        }
+    );
+
+    app.review_toggle_file();
+    let ids = app
+        .review_entries(true)
+        .into_iter()
+        .map(|entry| entry.id().clone())
+        .collect::<Vec<_>>();
+    assert_eq!(ids.as_slice(), std::slice::from_ref(active));
+
+    app.review_toggle_resolved();
+    let ids = app
+        .review_entries(true)
+        .into_iter()
+        .map(|entry| entry.id().clone())
+        .collect::<Vec<_>>();
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains(active));
+    assert!(ids.contains(resolved));
+    assert!(!ids.contains(archived));
+
+    app.review_toggle_file();
+    let ids = app
+        .review_entries(false)
+        .into_iter()
+        .map(|entry| entry.id().clone())
+        .collect::<Vec<_>>();
+    assert_eq!(ids.len(), 3);
+    assert!(ids.contains(active));
+    assert!(ids.contains(resolved));
+    assert!(ids.contains(other));
+    assert!(!ids.contains(archived));
 }
 
 #[test]
@@ -564,12 +628,292 @@ fn unavailable_enter_fallback_keeps_the_explicit_review_destination() -> anyhow:
     assert_eq!(app.review_thread_cursor().thread(), Some(&destination));
     assert_eq!(app.thread_cursor().thread(), Some(&destination));
     assert_eq!(app.file_thread_cursor().thread(), Some(&file_thread));
+    let evidence = app
+        .review_entries(false)
+        .into_iter()
+        .find(|entry| entry.id() == &destination)
+        .context("destination evidence")?;
+    assert_eq!(evidence.summary().location(), "L1?");
     app.thread_reply();
     assert!(matches!(
         app.popup(),
         Some(Popup::Compose(compose))
             if compose.target() == &ComposeTarget::Reply(destination)
     ));
+    Ok(())
+}
+
+#[test]
+fn all_history_uses_original_evidence_for_list_pane_preview_tab_and_enter() -> anyhow::Result<()> {
+    let dir = testing::workspace("all-history-navigation", testing::README)?;
+    let root = testing::root(&dir);
+    fathomable_testing::git::init(&root)?;
+    fathomable_testing::git::commit_and_stage(&root, &[("README.md", testing::README)])?;
+    let original = Workspace::discover(&root)?
+        .head_commit()
+        .context("original commit")?;
+    let mut store = Store::open(testing::store_path(&dir))?;
+    let id = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(3, 3),
+            "historical finding",
+        )
+        .at_source(OriginVersion::commit(&original), OriginSide::Target),
+        testing::README,
+        1,
+    )?;
+    let middle_text = format!("middle\n{}", testing::README);
+    fathomable_testing::git::commit_and_stage(&root, &[("README.md", &middle_text)])?;
+    let middle = Workspace::discover(&root)?
+        .head_commit()
+        .context("middle commit")?;
+    let target_text = format!("target\n{middle_text}");
+    fathomable_testing::git::commit_and_stage(&root, &[("README.md", &target_text)])?;
+    let target = Workspace::discover(&root)?
+        .head_commit()
+        .context("target commit")?;
+
+    let mut app = testing::AppBuilder::at(&root)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&middle)?));
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&target)?));
+    app.settle_background();
+    app.open(Path::new("README.md"));
+    assert!(!app.thread_matches_presentation(app.thread(&id).context("historical thread")?));
+    assert!(!app.inline_thread(app.thread(&id).context("historical thread")?));
+    assert!(!app.marks().iter().any(|mark| mark.id() == &id));
+    app.open_review();
+    assert!(app.review_entries(false).is_empty());
+    app.toggle_all_threads();
+
+    let entries = app.review_entries(false);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].range(), Some(LineRange::new(3, 3)));
+    assert_origin_summary(entries[0].summary(), "L3?", &original);
+    assert_eq!(
+        entries[0].summary().commit_reference(),
+        Some(format!("@{}", &original[..7]).as_str())
+    );
+    assert!(
+        app.review_rows(app.column_width())
+            .rows
+            .iter()
+            .any(|row| matches!(row, Row::OriginWarning { .. }))
+    );
+    assert!(!app.thread_source_is_displayable(&id));
+    assert!(app.normal_thread(app.thread(&id).context("all-history thread")?));
+    assert!(!app.inline_thread(app.thread(&id).context("all-history thread")?));
+
+    app.thread_step_across(1);
+    assert_eq!(app.focus(), Focus::Review);
+    assert_eq!(app.review_thread_cursor().thread(), Some(&id));
+
+    app.show_threads_pane();
+    app.threads_pane_toggle_scope();
+    app.focus_threads_pane();
+    let pane = app.threads_pane_entries();
+    assert_eq!(pane.len(), 1);
+    assert_eq!(pane[0].range(), Some(LineRange::new(3, 3)));
+    assert_origin_summary(pane[0].summary_facts(), "L3?", &original);
+
+    app.clear_message();
+    app.threads_pane_move(1);
+    assert_eq!(
+        app.message(),
+        Some("source unavailable; press Enter for thread evidence")
+    );
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+    assert_eq!(app.threads_pane_thread_cursor().thread(), Some(&id));
+    assert!(!app.marks().iter().any(|mark| mark.id() == &id));
+
+    app.clear_message();
+    app.thread_step_across(1);
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+    assert_eq!(app.threads_pane_thread_cursor().thread(), Some(&id));
+    assert!(!app.marks().iter().any(|mark| mark.id() == &id));
+
+    app.threads_pane_open();
+
+    assert!(app.review_list().is_open());
+    assert_eq!(app.focus(), Focus::Review);
+    assert_eq!(app.review_thread_cursor().thread(), Some(&id));
+    assert!(!app.marks().iter().any(|mark| mark.id() == &id));
+    Ok(())
+}
+
+#[test]
+fn all_history_keeps_file_and_resolved_filters_and_excludes_archived() -> anyhow::Result<()> {
+    let dir = testing::workspace("all-history-filters", "readme\n")?;
+    let root = testing::root(&dir);
+    fs::write(root.join("other.md"), "other\n")?;
+    fathomable_testing::git::init(&root)?;
+    fathomable_testing::git::commit_and_stage(
+        &root,
+        &[("README.md", "readme\n"), ("other.md", "other\n")],
+    )?;
+    let original = Workspace::discover(&root)?
+        .head_commit()
+        .context("original commit")?;
+    let mut store = Store::open(testing::store_path(&dir))?;
+    let active = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(1, 1),
+            "active",
+        )
+        .at_source(OriginVersion::commit(&original), OriginSide::Target),
+        "readme\n",
+        1,
+    )?;
+    let resolved = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(1, 1),
+            "resolved",
+        )
+        .at_source(OriginVersion::commit(&original), OriginSide::Target),
+        "readme\n",
+        2,
+    )?;
+    let archived = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(1, 1),
+            "archived",
+        )
+        .at_source(OriginVersion::commit(&original), OriginSide::Target),
+        "readme\n",
+        3,
+    )?;
+    let other = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("other.md"),
+            LineRange::new(1, 1),
+            "other",
+        )
+        .at_source(OriginVersion::commit(&original), OriginSide::Target),
+        "other\n",
+        4,
+    )?;
+    store.resolve(&resolved, Some(&original), 5)?;
+    store.resolve(&archived, Some(&original), 6)?;
+    store.archive(&archived, 7)?;
+
+    fathomable_testing::git::commit_and_stage(
+        &root,
+        &[("README.md", "middle\n"), ("other.md", "middle\n")],
+    )?;
+    let middle = Workspace::discover(&root)?
+        .head_commit()
+        .context("middle commit")?;
+    fathomable_testing::git::commit_and_stage(
+        &root,
+        &[("README.md", "target\n"), ("other.md", "target\n")],
+    )?;
+    let target = Workspace::discover(&root)?
+        .head_commit()
+        .context("target commit")?;
+
+    let mut app = testing::AppBuilder::at(&root)
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&middle)?));
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&target)?));
+    app.settle_background();
+    app.open_review();
+    assert!(app.review_entries(false).is_empty());
+    app.toggle_all_threads();
+
+    assert_all_history_filters(&mut app, &active, &resolved, &archived, &other);
+    Ok(())
+}
+
+#[test]
+fn all_history_missing_source_stays_discoverable_as_original_evidence() -> anyhow::Result<()> {
+    let dir = testing::workspace("all-history-missing-source", "readme\n")?;
+    let root = testing::root(&dir);
+    fs::write(root.join("gone.md"), "first\nsecond\n")?;
+    fathomable_testing::git::init(&root)?;
+    fathomable_testing::git::commit_and_stage(
+        &root,
+        &[("README.md", "readme\n"), ("gone.md", "first\nsecond\n")],
+    )?;
+    let original = Workspace::discover(&root)?
+        .head_commit()
+        .context("original commit")?;
+    let mut store = Store::open(testing::store_path(&dir))?;
+    let id = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("gone.md"),
+            LineRange::new(2, 2),
+            "missing source",
+        )
+        .at_source(OriginVersion::commit(&original), OriginSide::Target),
+        "first\nsecond\n",
+        1,
+    )?;
+    fathomable_testing::git::commit_and_stage(&root, &[("README.md", "middle\n")])?;
+    let middle = Workspace::discover(&root)?
+        .head_commit()
+        .context("middle commit")?;
+    fathomable_testing::git::commit_and_stage(&root, &[("README.md", "target\n")])?;
+    let target = Workspace::discover(&root)?
+        .head_commit()
+        .context("target commit")?;
+
+    let mut app = testing::AppBuilder::at(&root)
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&middle)?));
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&target)?));
+    app.settle_background();
+    app.open_review();
+    app.toggle_all_threads();
+
+    let entries = app.review_entries(false);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].id(), &id);
+    assert_eq!(entries[0].path(), Path::new("gone.md"));
+    assert_eq!(entries[0].range(), Some(LineRange::new(2, 2)));
+    assert_origin_summary(entries[0].summary(), "L2?", &original);
+    assert!(
+        app.review_rows(app.column_width())
+            .rows
+            .iter()
+            .any(|row| matches!(row, Row::OriginWarning { .. }))
+    );
+
+    app.show_threads_pane();
+    app.threads_pane_toggle_scope();
+    app.focus_threads_pane();
+    let pane = app.threads_pane_entries();
+    assert_eq!(pane.len(), 1);
+    assert_eq!(pane[0].range(), Some(LineRange::new(2, 2)));
+    assert_eq!(pane[0].summary_facts().location(), "L2?");
+    app.threads_pane_open();
+
+    assert!(app.review_list().is_open());
+    assert_eq!(app.focus(), Focus::Review);
+    assert_eq!(app.review_thread_cursor().thread(), Some(&id));
+    assert!(!app.thread_source_is_displayable(&id));
     Ok(())
 }
 

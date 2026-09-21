@@ -32,6 +32,7 @@ Start here before changing documented behavior or adding project documentation.
 - [Pane focus navigation](decisions/0091-pane-focus-navigation.md)
 - [Per-call commit sources](decisions/0092-per-call-commit-sources.md)
 - [Provenance-scoped viewer membership and durable landing](decisions/0093-version-scoped-viewer-membership.md)
+- [Diff-range thread discovery](decisions/0094-diff-range-thread-discovery.md)
 - [Parked ideas and open investigations](parked.md)
 - [Documentation system](okf.md)
 - [Tag vocabulary](tags.md)

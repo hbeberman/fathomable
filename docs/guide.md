@@ -68,12 +68,20 @@ retained paths, comparison paths, comparison content bytes, and pending
 events. Positive invocation-only overrides are `--discovery-entries`,
 `--workspace-watches`, `--retained-paths`, `--comparison-paths`,
 `--comparison-bytes`, and `--pending-events`; zero is rejected, not unlimited.
+Thread-range discovery also caps distinct commits at the smaller of
+`comparison-paths` and `retained-paths`. Its separate metadata-read budget is
+the larger of `comparison-bytes` and 64 MiB, with a 64 MiB per-commit ceiling.
+An incomplete graph keeps the last accepted comparison rather than silently
+hiding findings.
 Content bytes count reads, including line-count passes, rather than unique
-file sizes. Git status uses the same scan/path/content budgets and remains
-stale on exhaustion. These are operation budgets, not an exact process-RSS
-ceiling: loaded documents, Git metadata decoding, and allocator overhead are
-separate. Cancellation does not interrupt a blocked filesystem syscall, but
-quitting does not join discovery workers.
+file sizes. Matching immutable Git object identities and modes prove a path
+unchanged without reading or charging its blob. The generous aggregate ceiling
+is a last-resort backstop for unusually large changed-content workloads, not a
+normal sizing target. Git status uses the same scan/path/content budgets and
+remains stale on exhaustion. These are operation budgets, not an exact
+process-RSS ceiling: loaded documents, Git metadata decoding, and allocator
+overhead are separate. Cancellation does not interrupt a blocked filesystem
+syscall, but quitting does not join discovery workers.
 
 ## UX
 
@@ -111,7 +119,10 @@ includes ignored paths, and `r` lists files opened during this viewer session.
 auto-unfold without moving focus from another pane. `Space t`
 contains thread workflows, while `Space T` contains Thread-list controls:
 `s` and `x` change scope and resolved visibility, and `Z` folds or unfolds all
-file groups without moving focus. Section rules in mixed leader menus separate
+file groups without moving focus. `Space T A` toggles **All threads** for both
+thread viewers without moving focus; bare `A` does the same when either has
+focus. The setting is also in both thread-view title menus and **Review**.
+Section rules in mixed leader menus separate
 modes, endpoint presets, durable actions, and settings.
 
 The focused pane marks its name with a purple `▎`; filenames, counts, filters,
@@ -207,6 +218,7 @@ the table below is a quick reference, not the full list.
 | `Space F u` `Space F i` | hide untracked / show ignored in File list |
 | `Space F Z` | toggle auto-unfold in File list |
 | `Space T s` `Space T x` | Thread-list scope / show resolved |
+| `A` / `Space T A` | toggle All threads in either thread viewer / from any pane |
 | `Space T Z` | fold or unfold all file groups in Thread list |
 | `Space d n` `Space d u` `Space d o` | Normal / Unified / Off diff mode |
 | `Space d s` `Space d t` | pick the diff source / target |
@@ -473,33 +485,39 @@ actions. On a thread row, `comment c` becomes `reply c`; where both fold
 actions apply, the footer uses `folding z/Z`.
 
 The stored board is shared across the repository's worktrees and survives
-commits and branch changes. Normal membership follows immutable origin
-provenance and the Source/Target pair that last reached the screen. Working
-tree, index, commit, review point, and empty tree remain distinct identities;
-a clean WorkingTree or Index never aliases its observed `HEAD`.
+commits and branch changes. **Threads** and **Thread list** automatically
+include findings from the Source-to-Target commit range that last reached the
+screen, alongside discussions belonging directly to its endpoints and sides.
+There is no separate range selector.
 
-A Commit(C) Target- or Unspecified-side thread belongs whenever Target is
-Commit(C), including `C^ -> C`, another commit to C, and Diff Off Target C. It
-does not belong in `C -> WorkingTree` or `C -> Index`. A Base-side thread with
-recorded comparison facts belongs only to that exact accepted ordered pair,
-which keeps deletion review context without admitting it to every comparison
-sharing Source. If either recorded endpoint is WorkingTree or Index, its
-comparison checkout must also be the accepted presentation checkout, so equal
-`HEAD` values in linked worktrees do not alias. Wholly immutable comparisons
-remain repository-wide. Without comparison facts, Base requires an exact typed
-Source match in an active diff.
+The range includes commits reachable from Target but not Source, including
+merged history. In a linear `A -> B -> C` history, Source A to Target C includes
+findings from B and C. Working tree and index endpoints use the comparison's
+captured `HEAD` as their graph boundary; a review-point Source uses its recorded
+baseline. Their local discussions keep their distinct typed provenance and
+checkout identity. Pending or failed comparisons do not replace the accepted
+range. With Diff Off, only Target membership applies.
 
-WorkingTree and Index Target- or Unspecified-side origins require the matching
-typed Target in their recorded checkout. Review-point origins require the
-exact point. Diff Off is Target-only and never admits Base-side origins.
-Unknown or incomplete provenance is absent from normal surfaces, but explicit
-history and direct thread-ID actions remain available.
+**All threads** widens both thread viewers to the repository's stored
+non-archived history, regardless of the diff, branch, or availability of the
+original commit. Toggle it with `A` in either thread viewer, `Space T A` from
+any normal pane, either pane's title menu, or **Review > All threads**.
+The override starts off each session; both normal thread-view headers say
+**all history** while it is enabled. **Only current file** and **Show resolved**
+still apply. The override does not change Source, Target, or focus, and turning
+it off returns to the current comparison's membership. Archived discussions
+remain in **Archived threads**.
 
-Membership does not guarantee an inline mark: the current endpoint and side
-must be eligible and anchor/context placement must succeed. Detached listed
-threads remain reply-, edit-, and resolution-actionable. Landing records the
-first observed exact full-file commit match, but never adds, removes, or
-changes membership.
+List membership does not guarantee an inline mark. Inline eligibility still
+requires the exact typed endpoint and side, including the recorded ordered
+pair for Base-side comparison discussions, and successful anchor/context
+placement. WorkingTree and Index remain checkout-qualified; neither aliases
+a commit merely because its bytes are clean. Historical or detached findings
+remain readable and actionable through stored original context even when they
+cannot appear on the displayed code. Landing records an exact full-file
+commit match but never adds membership or rewrites origin.
+See [diff-range thread discovery](decisions/0094-diff-range-thread-discovery.md)
+for the full range and placement contract.
 
 **Review** also offers repository-wide **Recently resolved**, **Archived
 threads**, and **Clear board...**. Clearing archives the shared board after
@@ -538,10 +556,10 @@ viewer {
 
 limits {
     discovery-entries 100000 // Entry count; positive; no unlimited value.
-    workspace-watches 8192 // Watch count; positive; no unlimited value.
-    retained-paths 50000 // Path count; positive; no unlimited value.
-    comparison-paths 10000 // Path count; positive; no unlimited value.
-    comparison-bytes 67108864 // Byte count; positive; no unlimited value.
+    workspace-watches 65536 // Watch count; positive; no unlimited value.
+    retained-paths 100000 // Path count; positive; no unlimited value.
+    comparison-paths 100000 // Path count; positive; no unlimited value.
+    comparison-bytes 4294967296 // Byte count; positive; no unlimited value.
     pending-events 4096 // Event count; positive; no unlimited value.
 }
 

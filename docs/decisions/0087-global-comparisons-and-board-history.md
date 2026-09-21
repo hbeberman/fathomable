@@ -21,6 +21,11 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Thread discovery amended 2026-09-21 by
+[0094](0094-diff-range-thread-discovery.md): normal thread viewers follow the
+accepted comparison's commit range, with a shared **All threads** override.
+Inline placement remains subject to exact endpoint and side eligibility.
+
 Normal viewer membership and transition behavior amended 2026-09-20 by
 [0093](0093-version-scoped-viewer-membership.md): normal surfaces now follow
 the last accepted version presentation, while explicit history remains
@@ -59,6 +64,10 @@ Path and aggregate content-read budgets are finite, including saved
 review-point content. Mutable reads use bounded readers, not only a size
 check before an unbounded read. Changed-path line counts are computed on the
 worker rather than rereading every changed file on the event-loop thread.
+Immutable Git endpoints with equal object identity and mode prove a path
+unchanged without reading or charging its blob. The aggregate content ceiling
+is deliberately generous and remains a last-resort bound on pathological
+changed-content work rather than a repository-size target.
 While a requested active mode is waiting for its comparison, filesystem
 events replace the scan without cancelling that presentation intent. An
 explicit Off selection cancels it.

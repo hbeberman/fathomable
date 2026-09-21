@@ -426,7 +426,7 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("watching status row"))?;
         assert_eq!(
             watching,
-            "limited: workspace watch limit reached (8 watched, 21 entries examined)"
+            "limited: workspace watch limit reached; raise limits.workspace-watches in config (8 watched, 21 entries examined)"
         );
         Ok(())
     }

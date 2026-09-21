@@ -347,6 +347,47 @@ fn head_parent_shortcut_selects_one_immutable_pair() -> anyhow::Result<()> {
 }
 
 #[test]
+fn immutable_comparison_budget_covers_only_changed_blob_passes() -> anyhow::Result<()> {
+    let dir = repository("comparison-immutable-budget")?;
+    let root = dir.0.join("ws");
+    let unchanged = "x".repeat(1_024);
+    git::commit_and_stage(
+        &root,
+        &[("changed.txt", "old\n"), ("unchanged.txt", &unchanged)],
+    )?;
+    git::commit_and_stage(
+        &root,
+        &[("changed.txt", "new\n"), ("unchanged.txt", &unchanged)],
+    )?;
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .options(|mut options| {
+            options.limits.comparison_bytes = 16;
+            options
+        })
+        .build()?;
+
+    press(&mut app, " dl");
+
+    assert_eq!(app.comparison.error(), None);
+    assert_eq!(
+        app.comparison().map(fathomable_core::diff::Comparison::len),
+        Some(1)
+    );
+    let changed = app
+        .comparison_status()
+        .get(Path::new("changed.txt"))
+        .context("changed comparison entry")?;
+    assert_eq!((changed.added(), changed.removed()), (1, 1));
+    assert!(
+        app.comparison_status()
+            .get(Path::new("unchanged.txt"))
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
 fn commit_parent_picker_selects_the_chosen_commit_and_first_parent() -> anyhow::Result<()> {
     let dir = repository("comparison-commit-parent")?;
     let root = dir.0.join("ws");

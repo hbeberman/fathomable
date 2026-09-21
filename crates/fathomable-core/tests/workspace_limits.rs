@@ -5,7 +5,7 @@ use std::path::Path;
 
 use fathomable_core::config::LimitsConfig;
 use fathomable_core::diff::PathChangeKind;
-use fathomable_core::workspace::{Cancellation, ComparisonEndpoint, Filter, Workspace};
+use fathomable_core::workspace::{Cancellation, CommitId, ComparisonEndpoint, Filter, Workspace};
 use fathomable_testing::TempDir;
 
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -119,7 +119,7 @@ fn comparison_path_budget_is_not_a_clean_empty_result() -> Result {
         )
         .err()
         .ok_or("comparison should exceed its path budget")?;
-    assert!(error.message().contains("path budget"));
+    assert!(error.message().contains("limits.comparison-paths"));
     Ok(())
 }
 
@@ -162,6 +162,49 @@ fn exact_content_budget_preserves_complete_comparison() -> Result {
     )?;
     assert_eq!(comparison.len(), 1);
     assert_eq!(comparison.changes()[0].kind(), PathChangeKind::Added);
+    Ok(())
+}
+
+#[test]
+fn immutable_comparison_does_not_read_identical_blobs() -> Result {
+    let dir = TempDir::new("comparison-identical-objects")?;
+    fathomable_testing::git::init(&dir.0)?;
+    let unchanged = "x".repeat(1_024);
+    fathomable_testing::git::commit_and_stage(
+        &dir.0,
+        &[("changed", "old\n"), ("unchanged", &unchanged)],
+    )?;
+    let base = Workspace::discover(&dir.0)?
+        .head_commit()
+        .ok_or("base commit missing")?;
+    fathomable_testing::git::commit_and_stage(
+        &dir.0,
+        &[("changed", "new\n"), ("unchanged", &unchanged)],
+    )?;
+    let target = Workspace::discover(&dir.0)?
+        .head_commit()
+        .ok_or("target commit missing")?;
+
+    let mut workspace = Workspace::discover(&dir.0)?;
+    workspace.set_limits(LimitsConfig {
+        comparison_bytes: 8,
+        ..LimitsConfig::default()
+    });
+    let comparison = workspace.compare(
+        ComparisonEndpoint::Commit(CommitId::parse(&base)?),
+        ComparisonEndpoint::Commit(CommitId::parse(&target)?),
+    )?;
+
+    assert_eq!(
+        comparison.target_paths(),
+        [Path::new("changed"), Path::new("unchanged")]
+    );
+    assert_eq!(comparison.changes().len(), 1);
+    assert_eq!(comparison.changes()[0].path(), Path::new("changed"));
+    assert_eq!(
+        comparison.changes()[0].kind(),
+        PathChangeKind::ContentChanged
+    );
     Ok(())
 }
 
@@ -239,7 +282,7 @@ fn git_status_hashing_obeys_the_content_budget() -> Result {
         .status()
         .err()
         .ok_or("oversized status content must fail")?;
-    assert!(error.message().contains("budget"));
+    assert!(error.message().contains("limits.comparison-bytes"));
     Ok(())
 }
 
@@ -258,7 +301,7 @@ fn git_status_line_counts_charge_aggregate_content_reads() -> Result {
         .status()
         .err()
         .ok_or("aggregate status content must be charged")?;
-    assert!(error.message().contains("budget"));
+    assert!(error.message().contains("limits.comparison-bytes"));
     Ok(())
 }
 

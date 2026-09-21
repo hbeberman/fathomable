@@ -78,7 +78,7 @@ fn comparison_exhaustion_never_enables_a_clean_comparison() -> anyhow::Result<()
     assert!(
         app.comparison
             .error()
-            .is_some_and(|error| error.contains("budget"))
+            .is_some_and(|error| error.contains("limits.comparison-bytes"))
     );
     assert!(app.comparison().is_none());
     app.open(Path::new("file"));

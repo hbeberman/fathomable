@@ -59,6 +59,10 @@ Path and aggregate content-read budgets are finite, including saved
 review-point content. Mutable reads use bounded readers, not only a size
 check before an unbounded read. Changed-path line counts are computed on the
 worker rather than rereading every changed file on the event-loop thread.
+Immutable Git endpoints with equal object identity and mode prove a path
+unchanged without reading or charging its blob. The aggregate content ceiling
+is deliberately generous and remains a last-resort bound on pathological
+changed-content work rather than a repository-size target.
 While a requested active mode is waiting for its comparison, filesystem
 events replace the scan without cancelling that presentation intent. An
 explicit Off selection cancels it.

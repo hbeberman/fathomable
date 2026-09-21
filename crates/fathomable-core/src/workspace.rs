@@ -781,6 +781,11 @@ const REACH_SLACK: gix::date::SecondsSinceUnixEpoch = 7 * 24 * 60 * 60;
 /// not needed for review and must be rejected before `gix` allocates it.
 const MAX_EXACT_METADATA_BYTES: u64 = 64 * 1_024 * 1_024;
 
+const COMPARISON_PATH_LIMIT_MESSAGE: &str =
+    "comparison limited: increase limits.comparison-paths and limits.retained-paths in config";
+const COMPARISON_BYTE_LIMIT_MESSAGE: &str =
+    "comparison limited: increase limits.comparison-bytes in config";
+
 /// The committer time of the commit `hex` names, `None` when the object
 /// store does not hold such a commit.
 fn commit_time(repo: &gix::Repository, hex: &str) -> Option<gix::date::SecondsSinceUnixEpoch> {
@@ -967,9 +972,7 @@ impl Workspace {
     pub(crate) fn check_path_count(&self, count: usize) -> Result<(), WorkspaceError> {
         self.check_scan()?;
         if count > self.limits.comparison_path_limit() {
-            return Err(
-                self.scan_error("comparison limited by path budget; coverage is incomplete")
-            );
+            return Err(self.scan_error(COMPARISON_PATH_LIMIT_MESSAGE));
         }
         Ok(())
     }
@@ -989,8 +992,7 @@ impl Workspace {
         self.check_scan()?;
         let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
         if bytes > self.content_limit() {
-            return Err(self
-                .scan_error("comparison limited by content byte budget; coverage is incomplete"));
+            return Err(self.scan_error(COMPARISON_BYTE_LIMIT_MESSAGE));
         }
         if let Some(remaining) = self.content_remaining.get() {
             self.content_remaining.set(Some(remaining - bytes));
@@ -1583,6 +1585,13 @@ impl Workspace {
             self.check_scan()?;
             let base_file = base_files.get(&path);
             let target_file = target_files.get(&path);
+            if let (Some(base_file), Some(target_file)) = (base_file, target_file)
+                && base_file.info.mode() == target_file.info.mode()
+                && let Some(object) = base_file.info.object()
+                && target_file.info.object() == Some(object)
+            {
+                continue;
+            }
             let mut base_state = base_file.map_or(PathState::Absent, |file| {
                 PathState::Present(file.info.clone())
             });
@@ -2761,8 +2770,7 @@ impl Workspace {
             })?
             .size();
         if size > self.content_limit() {
-            return Err(self
-                .scan_error("comparison limited by content byte budget; coverage is incomplete"));
+            return Err(self.scan_error(COMPARISON_BYTE_LIMIT_MESSAGE));
         }
         let object = git
             .repo
@@ -2800,9 +2808,7 @@ impl Workspace {
         if metadata.is_file() {
             let limit = self.content_limit();
             if metadata.len() > limit {
-                return Err(self.scan_error(
-                    "comparison limited by content byte budget; coverage is incomplete",
-                ));
+                return Err(self.scan_error(COMPARISON_BYTE_LIMIT_MESSAGE));
             }
             let mut bytes = Vec::new();
             fs::File::open(&absolute)
@@ -2812,9 +2818,7 @@ impl Workspace {
                     message: format!("cannot read working-tree file: {error}"),
                 })?;
             if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
-                return Err(self.scan_error(
-                    "comparison limited by content byte budget; coverage is incomplete",
-                ));
+                return Err(self.scan_error(COMPARISON_BYTE_LIMIT_MESSAGE));
             }
             return Ok(Some(bytes));
         }

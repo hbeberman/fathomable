@@ -114,10 +114,10 @@ fn limits_have_finite_defaults_and_parse_every_key() -> TestResult {
         Config::default().limits(),
         &LimitsConfig {
             discovery_entries: 100_000,
-            workspace_watches: 8_192,
-            retained_paths: 50_000,
-            comparison_paths: 10_000,
-            comparison_bytes: 67_108_864,
+            workspace_watches: 65_536,
+            retained_paths: 100_000,
+            comparison_paths: 100_000,
+            comparison_bytes: 4_294_967_296,
             pending_events: 4_096,
         }
     );

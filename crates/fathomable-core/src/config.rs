@@ -229,19 +229,19 @@ impl Default for SidebarConfig {
     }
 }
 
-// These finite defaults cover conservative small-workspace use without
-// claiming to cap process RSS: each retained item can own additional data.
+// These finite defaults cover large source workspaces without claiming to
+// cap process RSS: each retained item can own additional data.
 const DEFAULT_DISCOVERY_ENTRIES: usize = 100_000;
-const DEFAULT_WORKSPACE_WATCHES: usize = 8_192;
-const DEFAULT_RETAINED_PATHS: usize = 50_000;
-const DEFAULT_COMPARISON_PATHS: usize = 10_000;
-const DEFAULT_COMPARISON_BYTES: u64 = 64 * 1_024 * 1_024;
+const DEFAULT_WORKSPACE_WATCHES: usize = 65_536;
+const DEFAULT_RETAINED_PATHS: usize = 100_000;
+const DEFAULT_COMPARISON_PATHS: usize = 100_000;
+const DEFAULT_COMPARISON_BYTES: u64 = 4 * 1_024 * 1_024 * 1_024;
 const DEFAULT_PENDING_EVENTS: usize = 4_096;
 
 /// Finite resource ceilings for workspace processing.
 ///
-/// The defaults conservatively accommodate a small workspace. They bound
-/// individual collections or workloads, not total process RSS.
+/// The defaults accommodate large source workspaces. They bound individual
+/// collections or workloads, not total process RSS.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LimitsConfig {
     /// Maximum entries considered during workspace discovery.

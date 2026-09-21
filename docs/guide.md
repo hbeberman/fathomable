@@ -69,11 +69,14 @@ events. Positive invocation-only overrides are `--discovery-entries`,
 `--workspace-watches`, `--retained-paths`, `--comparison-paths`,
 `--comparison-bytes`, and `--pending-events`; zero is rejected, not unlimited.
 Content bytes count reads, including line-count passes, rather than unique
-file sizes. Git status uses the same scan/path/content budgets and remains
-stale on exhaustion. These are operation budgets, not an exact process-RSS
-ceiling: loaded documents, Git metadata decoding, and allocator overhead are
-separate. Cancellation does not interrupt a blocked filesystem syscall, but
-quitting does not join discovery workers.
+file sizes. Matching immutable Git object identities and modes prove a path
+unchanged without reading or charging its blob. The generous aggregate ceiling
+is a last-resort backstop for unusually large changed-content workloads, not a
+normal sizing target. Git status uses the same scan/path/content budgets and
+remains stale on exhaustion. These are operation budgets, not an exact
+process-RSS ceiling: loaded documents, Git metadata decoding, and allocator
+overhead are separate. Cancellation does not interrupt a blocked filesystem
+syscall, but quitting does not join discovery workers.
 
 ## UX
 
@@ -538,10 +541,10 @@ viewer {
 
 limits {
     discovery-entries 100000 // Entry count; positive; no unlimited value.
-    workspace-watches 8192 // Watch count; positive; no unlimited value.
-    retained-paths 50000 // Path count; positive; no unlimited value.
-    comparison-paths 10000 // Path count; positive; no unlimited value.
-    comparison-bytes 67108864 // Byte count; positive; no unlimited value.
+    workspace-watches 65536 // Watch count; positive; no unlimited value.
+    retained-paths 100000 // Path count; positive; no unlimited value.
+    comparison-paths 100000 // Path count; positive; no unlimited value.
+    comparison-bytes 4294967296 // Byte count; positive; no unlimited value.
     pending-events 4096 // Event count; positive; no unlimited value.
 }
 

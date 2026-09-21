@@ -1,5 +1,3 @@
-# Fathomable
-
 ![Fathomable banner](docs/assets/banner.png)
 
 A read-only workspace viewer for reviewing diffs and interactive comment

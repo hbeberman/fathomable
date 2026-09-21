@@ -1262,14 +1262,14 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c('h')], &[k(K::Left)]],
         A::MoveLeft,
         "Threads",
-        "collapse the selected thread",
+        "collapse the selected file or thread",
     ),
     bind(
         W::Review,
         &[&[c('l')], &[k(K::Right)]],
         A::MoveRight,
         "Threads",
-        "expand the selected thread",
+        "expand the selected file or thread",
     ),
     bind(
         W::Review,

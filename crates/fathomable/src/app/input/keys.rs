@@ -664,8 +664,8 @@ impl App {
             Action::Escape => {}
             Action::MoveDown => self.review_move(1),
             Action::MoveUp => self.review_move(-1),
-            Action::MoveLeft => self.review_collapse_thread(),
-            Action::MoveRight => self.review_expand_thread(),
+            Action::MoveLeft => self.review_collapse(),
+            Action::MoveRight => self.review_expand(),
             Action::HalfPageDown => self.review_page(1),
             Action::HalfPageUp => self.review_page(-1),
             Action::Top => self.review_goto(false),

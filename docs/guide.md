@@ -143,11 +143,10 @@ its own selection for the next focus return.
 In main Threads, `j`/`Down` and `k`/`Up` walk the visible review vertically:
 each message in an expanded conversation, then the adjacent thread or file
 row. Folded threads and file groups are one stop, and movement stops at the
-top and bottom. On a selected thread, `h`/Left collapses it and `l`/Right
-expands it; these keys leave file-group rows alone. `Tab` and `Shift-Tab`
-remain the direct next/previous open-thread loop. File keeps ordinary
-character movement for `h`/`l` and passes vertically over inline thread
-headers as before.
+top and bottom. On a selected thread or file-group header, `h`/Left collapses
+it and `l`/Right expands it. `Tab` and `Shift-Tab` remain the direct
+next/previous open-thread loop. File keeps ordinary character movement for
+`h`/`l` and passes vertically over inline thread headers as before.
 
 A thread jump temporarily reveals a folded destination without changing the
 remembered fold. File centers the visible source, detached marker, or
@@ -197,7 +196,7 @@ the table below is a quick reference, not the full list.
 | --- | --- |
 | `h` `j` `k` `l` | move left, down, up, right in File (arrow keys also work) |
 | `j` `k` | next / previous visible review item in Threads (`Down` / `Up` also work) |
-| `h` `l` | collapse / expand the selected thread in Threads (`Left` / `Right` also work) |
+| `h` `l` | collapse / expand the selected thread or file group in Threads (`Left` / `Right` also work) |
 | `gg` `G` | top / bottom |
 | `Ctrl-d` `Ctrl-u` | half page down / up |
 | `/` `n` `N` | search, next match, previous match |

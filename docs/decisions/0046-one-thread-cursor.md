@@ -27,9 +27,9 @@ them.
 
 Main Threads movement amended 2026-09-20: `j`/`Down` and `k`/`Up` walk its
 visible review order message by message and continue across thread and file
-boundaries. On a selected thread, `h`/Left collapses and `l`/Right expands;
-they do nothing on file-group rows. `Tab`/`Shift-Tab` remain the direct
-open-thread traversal. File retains ordinary cursor movement.
+boundaries. On a selected thread or file-group header, `h`/Left collapses and
+`l`/Right expands. `Tab`/`Shift-Tab` remain the direct open-thread traversal.
+File retains ordinary cursor movement.
 
 ## Context
 

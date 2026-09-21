@@ -3071,13 +3071,29 @@ fn the_review_groups_by_file_and_folds_files() -> anyhow::Result<()> {
         review_file_selected(&app, "README.md"),
         "the file row is a stop"
     );
-    let files = review_files(&app);
     testing::press(&mut app, "h");
+    assert_eq!(
+        review_files(&app),
+        ["docs/guide.md", "▸ README.md"],
+        "h collapses the selected file group"
+    );
+    testing::press(&mut app, "h");
+    assert_eq!(
+        review_files(&app),
+        ["docs/guide.md", "▸ README.md"],
+        "h is idempotent on a folded file group"
+    );
     testing::press(&mut app, "l");
     assert_eq!(
         review_files(&app),
-        files,
-        "horizontal keys leave file rows alone"
+        ["docs/guide.md", "README.md"],
+        "l expands the selected file group"
+    );
+    testing::press(&mut app, "l");
+    assert_eq!(
+        review_files(&app),
+        ["docs/guide.md", "README.md"],
+        "l is idempotent on an expanded file group"
     );
     app.review_fold();
     assert_eq!(review_files(&app), ["docs/guide.md", "▸ README.md"]);

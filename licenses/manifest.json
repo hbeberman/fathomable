@@ -2,19 +2,19 @@
   "version": 1,
   "target": "x86_64-unknown-linux-gnu",
   "package_notices": {
-    "rmcp@3.1.4": [
+    "rmcp@3.4.0": [
       {
-        "file": "upstream/rmcp-3.1.4-LICENSE.txt",
+        "file": "upstream/rmcp-3.4.0-LICENSE.txt",
         "license": "Apache-2.0",
-        "source": "https://github.com/modelcontextprotocol/rust-sdk/blob/4a738b9dd99eaca418b614afa433a0cbdaf8d056/LICENSE",
+        "source": "https://github.com/modelcontextprotocol/rust-sdk/blob/fd7811fdaa9fefa1c8034534b4d7a31c97204f89/LICENSE",
         "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"
       }
     ],
-    "rmcp-macros@3.1.4": [
+    "rmcp-macros@3.4.0": [
       {
-        "file": "upstream/rmcp-3.1.4-LICENSE.txt",
+        "file": "upstream/rmcp-3.4.0-LICENSE.txt",
         "license": "Apache-2.0",
-        "source": "https://github.com/modelcontextprotocol/rust-sdk/blob/4a738b9dd99eaca418b614afa433a0cbdaf8d056/LICENSE",
+        "source": "https://github.com/modelcontextprotocol/rust-sdk/blob/fd7811fdaa9fefa1c8034534b4d7a31c97204f89/LICENSE",
         "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"
       }
     ]

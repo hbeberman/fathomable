@@ -318,6 +318,16 @@ fn mutable_comparisons_require_a_valid_checkout_qualifier() -> Result<(), Box<dy
 }
 
 #[test]
+fn full_file_digest_preserves_the_standard_sha256_encoding() {
+    let digest = FullFileDigest::from_bytes(b"abc");
+    assert_eq!(
+        digest.sha256(),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+    assert_eq!(digest.bytes(), 3);
+}
+
+#[test]
 fn full_file_digest_covers_every_byte_and_length() {
     let base = FullFileDigest::from_bytes(b"same prefix, ending A");
     let changed = FullFileDigest::from_bytes(b"same prefix, ending B");

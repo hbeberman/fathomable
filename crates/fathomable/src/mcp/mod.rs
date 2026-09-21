@@ -23,7 +23,7 @@ use identity::Launch;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{
     CacheScope, Implementation, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
-    ResultType, ServerCapabilities, ServerInfo,
+    ResultType, ServerCapabilities, ServerConfig,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt, tool_handler};
@@ -150,8 +150,8 @@ fn headless_list(
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for Server {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("fathomable", env!("CARGO_PKG_VERSION")))
             .with_instructions(tools::instructions())
     }

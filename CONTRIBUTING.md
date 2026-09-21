@@ -46,6 +46,8 @@ sudo apt-get install build-essential git curl ca-certificates tar make \
 separately only for `just perf`. `just` is also optional: Fedora and Ubuntu
 package it, while `cargo install just --locked` works where it is not
 packaged. Neither is needed to run the gate.
+The separate profiler-helper regression suite does require `just`, since it
+tests the real recipe; CI installs it explicitly.
 
 Then, with rustup already installed:
 

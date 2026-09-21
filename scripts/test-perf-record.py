@@ -103,8 +103,15 @@ def write_executable(path: Path, contents: str) -> None:
 def run_in_pty(arguments: list[str], environment: dict[str, str]) -> tuple[int, str]:
     pid, descriptor = pty.fork()
     if pid == 0:
-        os.chdir(REPO_ROOT)
-        os.execvpe(arguments[0], arguments, environment)
+        try:
+            os.chdir(REPO_ROOT)
+            os.execvpe(arguments[0], arguments, environment)
+        except OSError as error:
+            try:
+                os.write(2, f"cannot launch {arguments[0]!r}: {error}\n".encode())
+            finally:
+                # Do not unwind into the forked unittest runner.
+                os._exit(127)
 
     output = bytearray()
     while True:
@@ -209,6 +216,14 @@ class PerfRecordTests(unittest.TestCase):
 
     def test_missing_binary_metadata_fails_without_building_or_profiling(self) -> None:
         self.run_helper(["scripts/perf-record.sh", "--", "."], [], no_bins=True)
+
+    def test_pty_launch_failure_exits_child_without_resuming_tests(self) -> None:
+        with tempfile.TemporaryDirectory(dir=SCRATCH_ROOT) as directory:
+            status, output = run_in_pty(["missing-tool"], {"PATH": directory})
+        self.assertEqual(status, 127, output)
+        self.assertIn("cannot launch 'missing-tool'", output)
+        self.assertNotIn("Traceback", output)
+        self.assertNotIn("Ran ", output)
 
     def test_just_recipe_forwards_spaced_path_and_preserves_rustflags(self) -> None:
         arguments = ["just", "perf", "path with spaces.md", "fathomable"]

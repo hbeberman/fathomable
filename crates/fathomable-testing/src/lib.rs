@@ -4,8 +4,8 @@
 //! [`TempDir`] is a throwaway directory under the system temp dir, removed
 //! when dropped; each test module writes its own fixture files into it.
 //! The `git` functions build repositories the way the tests need them,
-//! with `GIT_*` environment overrides ignored as the workspace itself
-//! ignores them.
+//! using only repository-local configuration, without personal/system
+//! configuration or environment overrides.
 //! The [`vocabulary`] module checks agent-facing prose against the
 //! production vocabulary without adding those helpers to the runtime API.
 //!

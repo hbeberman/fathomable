@@ -233,7 +233,9 @@ main job. It does not depend on a locally installed Git hook.
 Additional MSRV and stable jobs build all workspace targets and run tests
 and doctests with `--locked`, without requiring the external gate tools to
 support the product's MSRV. The main job also runs the demo, profiler, and
-toolchain-helper and secret-scanner regression tests. The license gate includes the
+toolchain-helper and secret-scanner regression tests. It installs pinned `just`
+because the profiler regression executes the real recipe; Cargo, perf, and
+script are fixture commands in that test. The license gate includes the
 toolchain-helper tests as well as notice-generation tests.
 
 `just test-commit-hooks` exercises real Git commits and prek shims in

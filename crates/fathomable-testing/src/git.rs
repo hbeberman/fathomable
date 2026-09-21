@@ -1,21 +1,19 @@
 // @okf-doc: /decisions/0048-modules-by-concept.md
 //! Git repositories for tests: init, commit, stage, tag, and amend through
-//! `gix`, ignoring `GIT_*` overrides in the environment.
+//! `gix`, using only repository-local configuration.
 
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
 
-/// Open fixture repositories at the requested path, ignoring `GIT_*` overrides.
+/// Open fixture repositories using only their local configuration.
 ///
-/// This matches the workspace's private policy without exposing `gix` in
-/// the production core API.
+/// Personal/system configuration, global attributes, and environment overrides
+/// cannot supply missing fixture setup. Writes must provide a synthetic identity.
 #[must_use]
 pub fn open_options() -> gix::open::Options {
-    let mut permissions = gix::open::Permissions::default();
-    permissions.env.git_prefix = gix::sec::Permission::Deny;
-    gix::open::Options::default().permissions(permissions)
+    gix::open::Options::isolated()
 }
 
 /// A git operation the fixture could not perform, with the cause's text.

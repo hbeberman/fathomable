@@ -73,8 +73,11 @@ an existing module, which is how the directory got that way.
   check used only by prose-contract tests; the production names and `ALL`
   table remain in `fathomable-core`.
   Fixture-only Git types and open options live in this never-published
-  crate, not the core API. The options ignore `GIT_*` overrides just as the
-  workspace's private options do, including when tests run in a commit hook.
+  crate, not the core API. Fixture options load only repository-local
+  configuration: personal/system configuration, global attributes, and
+  environment overrides cannot hide missing fixture setup, including when
+  tests run in a commit hook. Ref and commit writes supply synthetic identities
+  rather than relying on a contributor's Git identity.
   The app crate's own scaffolding, an `App` builder on such a temp dir
   and key presses against it, is `app/testing.rs`, compiled for tests
   only; the fourteen per-module `fixture`/`app`/`press` copies it

@@ -920,19 +920,36 @@ fn commit_source_rejects_non_relative_paths() -> TestResult {
     Ok(())
 }
 
+fn create_reference(repo: &gix::Repository, name: &str, target: gix::ObjectId) -> TestResult {
+    let signature = gix::actor::SignatureRef {
+        name: "test".into(),
+        email: "test@example.com".into(),
+        time: "0 +0000",
+    };
+    let edit = gix::refs::transaction::RefEdit {
+        change: gix::refs::transaction::Change::Update {
+            log: gix::refs::transaction::LogChange {
+                mode: gix::refs::transaction::RefLog::AndReference,
+                force_create_reflog: false,
+                message: "test reference".into(),
+            },
+            expected: gix::refs::transaction::PreviousValue::MustNotExist,
+            new: gix::refs::Target::Object(target),
+        },
+        name: gix::refs::FullName::try_from(name)?,
+        deref: false,
+    };
+    repo.edit_references_as(Some(edit), Some(signature))?;
+    Ok(())
+}
+
 fn replace_object(repo: &gix::Repository, old: gix::ObjectId, new: gix::ObjectId) -> TestResult {
     let config = repo.git_dir().join("config");
     let mut text = fs::read_to_string(&config)?;
     // gix 0.87.1 enables replacements when this setting is false.
     text.push_str("\n[core]\nuseReplaceRefs = false\n");
     fs::write(config, text)?;
-    repo.reference(
-        format!("refs/replace/{old}"),
-        new,
-        gix::refs::transaction::PreviousValue::MustNotExist,
-        "test replacement",
-    )?;
-    Ok(())
+    create_reference(repo, &format!("refs/replace/{old}"), new)
 }
 
 #[test]
@@ -1028,11 +1045,10 @@ fn commit_source_original_id_wins_over_a_shadow_ref() -> TestResult {
     let repo = gix::open_opts(&dir.0, open_options())?;
     let selected = CommitId::parse(repo.head_id()?.to_hex().to_string())?;
     let shadow = commit_source_modes(&dir.0)?;
-    repo.reference(
-        format!("refs/heads/{selected}"),
+    create_reference(
+        &repo,
+        &format!("refs/heads/{selected}"),
         gix::ObjectId::from_hex(shadow.as_str().as_bytes())?,
-        gix::refs::transaction::PreviousValue::MustNotExist,
-        "shadow full object ID",
     )?;
     let mut workspace = Workspace::discover(&dir.0)?;
     assert_eq!(workspace.resolve_revision(selected.as_str())?.id(), shadow);
@@ -1134,12 +1150,7 @@ fn commit_source_requires_original_commit_despite_replacement_or_shadow_ref() ->
     let missing = gix::ObjectId::from_hex(b"0123456789012345678901234567890123456789")?;
     for object in [blob, missing] {
         replace_object(&repo, object, original)?;
-        repo.reference(
-            format!("refs/heads/{object}"),
-            original,
-            gix::refs::transaction::PreviousValue::MustNotExist,
-            "shadow object ID",
-        )?;
+        create_reference(&repo, &format!("refs/heads/{object}"), original)?;
     }
     let mut workspace = Workspace::discover(&dir.0)?;
     for object in [blob, missing] {

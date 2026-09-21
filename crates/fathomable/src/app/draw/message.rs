@@ -7,6 +7,8 @@
 //! code coloured by its language. File and Threads surfaces share retained
 //! body layouts; inline row counts and drawing use those same layouts, so
 //! navigation and drawing do not parse or highlight a body again.
+//! Stored origin source uses the File view's anchor language: `╭│╰` for
+//! a rendered range and the lifecycle circle for a one-row target.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -135,6 +137,25 @@ enum OriginLineKind {
     Context,
     Selected,
     Omitted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OriginAnchor {
+    Point,
+    Start,
+    Middle,
+    End,
+}
+
+impl OriginAnchor {
+    fn glyph(self, point: &'static str) -> &'static str {
+        match self {
+            Self::Point => point,
+            Self::Start => "╭",
+            Self::Middle => "│",
+            Self::End => "╰",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -284,6 +305,13 @@ pub(crate) struct OriginContextRow {
     pub(crate) line: LayoutLine,
     pub(crate) selected: bool,
     pub(crate) omitted: bool,
+    anchor: Option<OriginAnchor>,
+}
+
+impl OriginContextRow {
+    pub(crate) fn anchor_glyph(&self, point: &'static str) -> Option<&'static str> {
+        self.anchor.map(|anchor| anchor.glyph(point))
+    }
 }
 
 /// Width-dependent rows for one bounded, highlighted immutable origin.
@@ -316,6 +344,7 @@ impl OriginContextLayout {
                     line: line.clone(),
                     selected: kind == OriginLineKind::Selected,
                     omitted: kind == OriginLineKind::Omitted,
+                    anchor: None,
                 }
             })
             .collect();
@@ -328,8 +357,25 @@ impl OriginContextLayout {
                         line: blank.clone(),
                         selected: *kind == OriginLineKind::Selected,
                         omitted: *kind == OriginLineKind::Omitted,
+                        anchor: None,
                     }),
             );
+        }
+        for index in 0..rows.len() {
+            let anchored = rows[index].selected || rows[index].omitted;
+            if !anchored {
+                continue;
+            }
+            let above = index > 0 && (rows[index - 1].selected || rows[index - 1].omitted);
+            let below = rows
+                .get(index + 1)
+                .is_some_and(|row| row.selected || row.omitted);
+            rows[index].anchor = Some(match (above, below) {
+                (false, false) => OriginAnchor::Point,
+                (false, true) => OriginAnchor::Start,
+                (true, true) => OriginAnchor::Middle,
+                (true, false) => OriginAnchor::End,
+            });
         }
         Self {
             width,

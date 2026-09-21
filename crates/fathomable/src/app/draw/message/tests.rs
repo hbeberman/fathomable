@@ -253,6 +253,53 @@ fn legacy_origin_without_context_uses_the_exact_stored_snippet() -> anyhow::Resu
 }
 
 #[test]
+fn origin_anchor_matches_file_glyphs_for_points_and_wrapped_ranges() -> anyhow::Result<()> {
+    let dir = TempDir::new("origin-context-anchor")?;
+    let mut store = Store::open(dir.0.join("threads.jsonl"))?;
+    let selected = "selected source line with a long retained suffix";
+    let text = format!("before\n{selected}\nafter\n");
+    let id = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("src/lib.rs"),
+            LineRange::new(2, 2),
+            "review",
+        ),
+        &text,
+        1,
+    )?;
+    let thread = store.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?;
+    let cache = OriginContextCache::default();
+
+    let wide = cache
+        .layout(thread, 80, &Highlighter::plain())
+        .ok_or_else(|| anyhow::anyhow!("wide line origin"))?;
+    let wide_glyphs = wide
+        .rows()
+        .iter()
+        .filter_map(|row| row.anchor_glyph("●"))
+        .collect::<String>();
+    assert_eq!(wide_glyphs, "●");
+
+    let narrow = cache
+        .layout(thread, 12, &Highlighter::plain())
+        .ok_or_else(|| anyhow::anyhow!("narrow line origin"))?;
+    let narrow_glyphs = narrow
+        .rows()
+        .iter()
+        .filter_map(|row| row.anchor_glyph("●"))
+        .collect::<String>();
+    let mut glyphs = narrow_glyphs.chars();
+    assert_eq!(glyphs.next(), Some('╭'), "{narrow_glyphs}");
+    assert_eq!(glyphs.next_back(), Some('╰'), "{narrow_glyphs}");
+    assert!(
+        glyphs.clone().count() > 0 && glyphs.all(|glyph| glyph == '│'),
+        "{narrow_glyphs}"
+    );
+    Ok(())
+}
+
+#[test]
 fn every_wrapped_selected_and_omission_continuation_keeps_its_kind() -> anyhow::Result<()> {
     let dir = TempDir::new("origin-context-wrapped-kinds")?;
     let mut store = Store::open(dir.0.join("threads.jsonl"))?;
@@ -288,6 +335,12 @@ fn every_wrapped_selected_and_omission_continuation_keeps_its_kind() -> anyhow::
         .collect();
     assert!(omission.len() > 1, "the omission marker must wrap");
     assert!(omission.iter().all(|row| row.omitted));
+    assert!(
+        omission
+            .iter()
+            .all(|row| row.anchor_glyph("●") == Some("│")),
+        "the omitted middle stays inside the anchor bracket"
+    );
     assert!(
         layout
             .rows()

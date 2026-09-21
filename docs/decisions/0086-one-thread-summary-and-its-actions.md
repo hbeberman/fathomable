@@ -56,11 +56,14 @@ textual lifecycle status. Compact Thread-list cards remain unchanged.
 Expanded entries in the main Threads surface now put bounded,
 syntax-highlighted immutable origin context between the header and opening
 message. The block is stored-only, hard-wrapped, unnumbered, four cells
-indented, and uses `thread.inline`; selected origin rows add a slim marker and
-`thread.bracket` tint. Preparation retains at most 16 KiB and 256 logical
+indented, and every row uses `thread.inline`. Its fourth cell repeats the File
+view's anchor language: a one-rendered-row target uses its lifecycle circle,
+while a wrapped or multi-line target uses `╭│╰`; only that cell uses the
+`thread.bracket` background. An omission row inside a bounded selection keeps
+the bracket continuous. Preparation retains at most 16 KiB and 256 logical
 source rows, preserves selected-range head and tail around an omission row,
-and reports capture or preparation truncation explicitly. File-wide and
-folded entries omit the block. Only moved, detached, historical, or
+and reports capture or preparation truncation explicitly. File-wide and folded
+entries omit the block. Only moved, detached, historical, or
 source-unavailable evidence adds a restrained original-location warning.
 
 Builds on [0085](0085-thread-lifecycle-and-auto-resolve.md) and supersedes

@@ -1624,15 +1624,13 @@ fn expanded_reviews_put_stored_origin_context_before_messages() -> anyhow::Resul
     assert!(
         rows.rows[context.clone()]
             .iter()
-            .any(|row| matches!(row, Row::OriginContext { selected: true, .. }))
+            .any(|row| matches!(row, Row::OriginContext { glyph: Some(_), .. }))
     );
-    assert!(rows.rows[context].iter().any(|row| matches!(
-        row,
-        Row::OriginContext {
-            selected: false,
-            ..
-        }
-    )));
+    assert!(
+        rows.rows[context]
+            .iter()
+            .any(|row| matches!(row, Row::OriginContext { glyph: None, .. }))
+    );
     assert!(
         !rows
             .rows

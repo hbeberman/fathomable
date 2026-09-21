@@ -107,8 +107,10 @@ source wrapping; it never passes through Markdown rendering. Width-independent
 syntax preparation is retained separately from at most two wrapped width
 variants, so replies and lifecycle changes do not re-highlight immutable
 evidence. Preparation retains a selected logical blank line at end of file
-as an actual marked and tinted row; this metadata-only row adds no bytes to
-the 16 KiB evidence budget.
+as an actual anchored row; this metadata-only row adds no bytes to the 16 KiB
+evidence budget. The block keeps one `thread.inline` background and repeats
+the File view's highlighted anchor cell: the lifecycle circle for one rendered
+row or `╭│╰` across a rendered range.
 
 [0071](0071-author-stripes.md) gave the expanded thread a two-cell gutter
 of its own, so the message indent is four cells and a body wraps two

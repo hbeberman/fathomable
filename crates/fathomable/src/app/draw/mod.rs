@@ -4074,19 +4074,25 @@ fn list_row<'a>(context: &ListRender<'a>, row: &Row) -> Line<'a> {
         }
         Row::OriginContext {
             line,
-            selected,
+            glyph,
+            state,
             omitted,
             ..
         } => {
-            let surface = if *selected {
-                theme.thread_inline.patch(theme.thread_bracket)
+            let surface = theme.thread_inline;
+            let marker = if let Some(glyph) = glyph {
+                Span::styled(
+                    *glyph,
+                    mark_style(theme, *state)
+                        .patch(surface)
+                        .patch(theme.thread_bracket),
+                )
             } else {
-                theme.thread_inline
+                Span::styled(" ", surface)
             };
-            let marker = if *selected { "▎" } else { " " };
             let mut spans = vec![
                 Span::styled(" ".repeat(ORIGIN_CONTEXT_INDENT.saturating_sub(1)), surface),
-                Span::styled(marker, surface.patch(theme.thread_bracket)),
+                marker,
             ];
             spans.extend(line.spans().iter().map(|span| {
                 let foreground = if *omitted {
@@ -5352,7 +5358,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_blank_origin_row_uses_marker_and_existing_tint() -> anyhow::Result<()> {
+    fn origin_anchor_uses_file_glyph_and_only_its_cell_is_highlighted() -> anyhow::Result<()> {
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
         let theme = Theme::from_core(&core);
         let source = Layout::source("", 12);
@@ -5360,7 +5366,8 @@ mod tests {
         let row = Row::OriginContext {
             entry: 0,
             line: source.lines()[0].clone(),
-            selected: true,
+            glyph: Some("●"),
+            state: crate::app::threads::ThreadState::Active,
             omitted: false,
         };
         let context = ListRender {
@@ -5371,17 +5378,16 @@ mod tests {
         };
         let line = list_row(&context, &row);
         assert_eq!(line.spans[0].content, " ".repeat(3));
-        assert_eq!(line.spans[1].content, "▎");
-        assert_eq!(
-            line.style.bg,
-            theme.thread_inline.patch(theme.thread_bracket).bg
-        );
+        assert_eq!(line.spans[1].content, "●");
+        assert_eq!(line.spans[1].style.bg, theme.thread_bracket.bg);
+        assert_eq!(line.spans[1].style.fg, theme.thread_active.fg);
+        assert_eq!(line.style.bg, theme.thread_inline.bg);
         assert!(
             line.spans
                 .iter()
                 .skip(2)
                 .take(line.spans.len().saturating_sub(3))
-                .all(|span| span.style.bg == line.style.bg)
+                .all(|span| span.style.bg == theme.thread_inline.bg)
         );
         assert_eq!(
             line.spans

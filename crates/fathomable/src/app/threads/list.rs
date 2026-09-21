@@ -258,11 +258,12 @@ pub(crate) enum Row {
         entry: usize,
         line: Line,
     },
-    /// One wrapped row of stored immutable origin source.
+    /// One wrapped row of stored immutable origin source and its File-style anchor.
     OriginContext {
         entry: usize,
         line: Line,
-        selected: bool,
+        glyph: Option<&'static str>,
+        state: ThreadState,
         omitted: bool,
     },
     /// Explicit notice that capture or preparation omitted origin source.
@@ -1022,11 +1023,13 @@ impl App {
                 self.highlighter(),
             )
         {
+            let words = entry.words();
             out.rows
                 .extend(layout.rows().iter().map(|row| Row::OriginContext {
                     entry: index,
                     line: row.line.clone(),
-                    selected: row.selected,
+                    glyph: row.anchor_glyph(words.glyph()),
+                    state: words.state(),
                     omitted: row.omitted,
                 }));
             if layout.is_truncated() {

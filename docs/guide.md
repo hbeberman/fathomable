@@ -394,13 +394,16 @@ Keep comments focused; each new message is limited to 1024 UTF-8 bytes.
 An expanded entry in the wide main **Threads** surface places its stored
 immutable origin context before the conversation. Source uses the origin
 path's syntax, wraps without line numbers, and marks the originally selected
-rows. Fathomable prepares at most 16 KiB and 256 logical source rows; an
-omission marker preserves the beginning and end of a larger selection, and a
-truncation row says when capture or preparation omitted evidence. File-wide
-threads and compact **Thread list** cards do not show this block. Moved,
-detached, historical, or unavailable entries instead add one short original
-location warning; unchanged placement adds none. Preparing this block uses
-only stored evidence, never a fresh checkout or Git read.
+rows with the File view's highlighted anchor cell: `●` for one rendered row,
+or `╭│╰` for a wrapped or multi-line range. The surrounding source keeps one
+background and the four-cell indent. Fathomable prepares at most 16 KiB and
+256 logical source rows; an omission marker preserves the beginning and end of
+a larger selection, and a truncation row says when capture or preparation
+omitted evidence. File-wide threads and compact **Thread list** cards do not
+show this block. Moved, detached, historical, or unavailable entries instead
+add one short original location warning; unchanged placement adds none.
+Preparing this block uses only stored evidence, never a fresh checkout or Git
+read.
 
 Full File and main Threads thread headers place a neutral `@` plus seven
 commit characters after the location when the origin captured a commit,

@@ -33,6 +33,7 @@ GATE_COMMANDS = {
     "okf": ["python3", "scripts/okf-lint.py", "--repo-root", ".", "docs"],
     "links": [
         "lychee", "--offline", "--no-progress", "docs", "README.md",
+        "CHANGELOG.md", "crates/fathomable-core/README.md",
         ".github/CONTRIBUTING.md", "AGENTS.md",
         ".agents/skills/open-knowledge-format/SKILL.md",
         ".agents/skills/fathomable-threatmodel/SKILL.md",

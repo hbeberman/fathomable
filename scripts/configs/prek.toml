@@ -81,7 +81,7 @@ priority = 6
 [[repos.hooks]]
 id = "links"
 name = "Documentation links"
-entry = "lychee --offline --no-progress docs README.md .github/CONTRIBUTING.md AGENTS.md .agents/skills/open-knowledge-format/SKILL.md .agents/skills/fathomable-threatmodel/SKILL.md"
+entry = "lychee --offline --no-progress docs README.md CHANGELOG.md crates/fathomable-core/README.md .github/CONTRIBUTING.md AGENTS.md .agents/skills/open-knowledge-format/SKILL.md .agents/skills/fathomable-threatmodel/SKILL.md"
 language = "system"
 always_run = true
 pass_filenames = false

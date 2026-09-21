@@ -2,6 +2,7 @@
 """Verify repeated packaging with real Cargo and a dependency-free workspace."""
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -42,9 +43,14 @@ class PackageTests(unittest.TestCase):
             (root / "Cargo.toml").write_text(
                 '[workspace]\nmembers = ["core", "app", "testing"]\nresolver = "3"\n'
             )
+            app_manifest = tomllib.loads(
+                (SOURCE_ROOT / "crates/fathomable/Cargo.toml").read_text()
+            )
+            excludes = json.dumps(app_manifest["package"].get("exclude", []))
             for folder, name, extra in (
                 ("core", "fathomable-core", ""),
                 ("app", "fathomable",
+                 f'exclude = {excludes}\n'
                  '[dependencies]\nfathomable-core = { path = "../core", version = "0.1.0" }\n'),
                 ("testing", "fathomable-testing", "publish = false\n"),
             ):
@@ -55,6 +61,8 @@ class PackageTests(unittest.TestCase):
                     'edition = "2024"\nlicense = "MIT"\n' + extra
                 )
             (root / "testing/src/lib.rs").write_text("")
+            (root / "app/examples").mkdir()
+            (root / "app/examples/seed.rs").write_text("fn main() {}\n")
             environment = {
                 key: value for key, value in os.environ.items()
                 if not key.startswith("GIT_") and key not in {
@@ -86,6 +94,13 @@ class PackageTests(unittest.TestCase):
                     archive = target / "package/fathomable-core-0.1.0.crate"
                     checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
                     with tarfile.open(target / "package/fathomable-0.1.0.crate") as bundle:
+                        self.assertNotIn("fathomable-0.1.0/examples/seed.rs", bundle.getnames())
+                        packaged_manifest = bundle.extractfile("fathomable-0.1.0/Cargo.toml")
+                        self.assertIsNotNone(packaged_manifest)
+                        packaged = tomllib.loads(packaged_manifest.read().decode())
+                        self.assertNotIn(
+                            "seed", [example["name"] for example in packaged.get("example", [])],
+                        )
                         lock = bundle.extractfile("fathomable-0.1.0/Cargo.lock")
                         self.assertIsNotNone(lock)
                         packages = tomllib.loads(lock.read().decode())["package"]

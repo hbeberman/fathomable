@@ -78,6 +78,11 @@ All three crates inherit the shared repository URL and homepage
 values; defining them only at the workspace does not populate package
 metadata.
 
+The shared author is Henry Beberman. The application uses the repository
+README, while `fathomable-core` ships its own short library README.
+The application excludes `examples/seed.rs` from its source package; the
+example remains available in the checkout for `scripts/demo-repo.sh`.
+
 The MIT SPDX identifier remains in `license`, while `license-file` points
 to the root `LICENSE`. Members inherit both so Cargo includes that same
 copyright and permission notice as `LICENSE` in each package without

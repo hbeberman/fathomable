@@ -7,6 +7,8 @@ threads with agents via MCP.
 
 ## Install
 
+Fathomable currently requires Rust 1.95+ and a Linux host.
+
 ```sh
 # Azure Linux 4 / Fedora
 sudo dnf install gcc git curl ca-certificates tar

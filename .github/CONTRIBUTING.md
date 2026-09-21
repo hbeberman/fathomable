@@ -323,7 +323,9 @@ This creates and builds `fathomable-core` and `fathomable` together through
 Cargo's temporary local registry, proving that the application package uses
 the packaged core rather than the workspace path. The package manifests omit
 the path-only `fathomable-testing` dev-dependency; that fixture crate remains
-unpublished. The helper scans the exact generated archives (including
+unpublished. The application archive excludes the demo-only `seed` example,
+and the core archive includes its own library README.
+The helper scans the exact generated archives (including
 custom Cargo target directories) before returning success.
 Inspect the two `.crate` archives under `target/package/` by default.
 Packaging is local and does not upload, tag, or create a GitHub release.

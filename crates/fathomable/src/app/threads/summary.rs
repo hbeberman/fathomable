@@ -15,6 +15,7 @@ pub(crate) struct ThreadSummary {
     lifecycle: Lifecycle,
     auto_resolve: AutoResolve,
     location: String,
+    commit_reference: Option<[u8; 8]>,
     context: Option<String>,
     author: String,
     author_is_user: bool,
@@ -38,6 +39,7 @@ impl ThreadSummary {
             lifecycle: thread.lifecycle(),
             auto_resolve: thread.auto_resolve(),
             location: location(thread, placement),
+            commit_reference: Self::short_commit_reference(thread.origin_version()),
             context: context.map(str::to_owned),
             author: author_label(author, user),
             author_is_user: author.is_user(),
@@ -64,8 +66,27 @@ impl ThreadSummary {
         self.context.as_deref()
     }
 
+    pub(crate) fn commit_reference(&self) -> Option<&str> {
+        self.commit_reference
+            .as_ref()
+            .and_then(|reference| std::str::from_utf8(reference).ok())
+    }
+
     pub(crate) fn author(&self) -> &str {
         &self.author
+    }
+
+    fn short_commit_reference(
+        version: &fathomable_core::annotations::OriginVersion,
+    ) -> Option<[u8; 8]> {
+        let reference = version.commit_reference()?;
+        let short = reference.as_bytes().get(..7)?;
+        short.iter().all(u8::is_ascii_hexdigit).then(|| {
+            let mut token = [0; 8];
+            token[0] = b'@';
+            token[1..].copy_from_slice(short);
+            token
+        })
     }
 
     pub(crate) fn author_is_user(&self) -> bool {
@@ -175,7 +196,10 @@ pub(crate) fn layout(
 ) -> SummaryLayout {
     let mut spans = Vec::new();
     let mut used = options.leading;
-    let disclosure_start = used + 2;
+    let reserve_commit = usize::from(summary.commit_reference().is_some()) * 8;
+    let prefix_budget = options
+        .width
+        .saturating_sub(options.leading + reserve_commit);
 
     push_clipped(
         &mut spans,
@@ -184,23 +208,34 @@ pub(crate) fn layout(
         summary.glyph(),
         SummaryTone::Lifecycle(summary.lifecycle),
     );
+    let gap = usize::from(prefix_budget >= 3);
+    if gap > 0 {
+        push_clipped(
+            &mut spans,
+            &mut used,
+            options.width,
+            " ",
+            SummaryTone::Surface,
+        );
+    }
+    let disclosure_start = used;
+    let chevron = if prefix_budget >= 6 {
+        if options.expanded { "▾   " } else { "▸   " }
+    } else if prefix_budget >= 4 {
+        if options.expanded { "▾ " } else { "▸ " }
+    } else {
+        if options.expanded { "▾" } else { "▸" }
+    };
     push_clipped(
         &mut spans,
         &mut used,
         options.width,
-        " ",
-        SummaryTone::Surface,
-    );
-    push_clipped(
-        &mut spans,
-        &mut used,
-        options.width,
-        if options.expanded { "▾   " } else { "▸   " },
+        chevron,
         SummaryTone::Chevron,
     );
-    let disclosure_end = (disclosure_start + 4).min(options.width);
+    let disclosure_end = (disclosure_start + display_width(chevron)).min(options.width);
 
-    let mut facts = Vec::with_capacity(5);
+    let mut facts = Vec::with_capacity(6);
     if let Some(status) = summary.status() {
         facts.push((Fact::Status, status.to_owned()));
     }
@@ -208,6 +243,9 @@ pub(crate) fn layout(
         facts.push((Fact::Context, context.to_owned()));
     }
     facts.push((Fact::Location, summary.location().to_owned()));
+    if let Some(reference) = summary.commit_reference() {
+        facts.push((Fact::Commit, reference.to_owned()));
+    }
     if summary.replies() > 0 {
         facts.push((Fact::Replies, format!("↩{}", summary.replies())));
     }
@@ -216,9 +254,15 @@ pub(crate) fn layout(
     let prefix_used = used;
     let mut shown = facts;
     while fixed_width(prefix_used, &shown) > options.width {
-        let remove = [Fact::Context, Fact::Replies, Fact::Modified, Fact::Location]
-            .into_iter()
-            .find(|fact| shown.iter().any(|(candidate, _)| candidate == fact));
+        let remove = [
+            Fact::Context,
+            Fact::Modified,
+            Fact::Replies,
+            Fact::Status,
+            Fact::Location,
+        ]
+        .into_iter()
+        .find(|fact| shown.iter().any(|(candidate, _)| candidate == fact));
         let Some(remove) = remove else {
             break;
         };
@@ -292,6 +336,7 @@ enum Fact {
     Status,
     Context,
     Location,
+    Commit,
     Replies,
     Modified,
 }
@@ -396,7 +441,7 @@ mod tests {
     use std::path::Path;
 
     use fathomable_core::annotations::{
-        Author, Draft, LineRange, MessageTarget, Reply, Store, UserSubmit,
+        Author, Draft, LineRange, MessageTarget, OriginVersion, Reply, Store, UserSubmit,
     };
     use fathomable_testing::TempDir;
 
@@ -630,6 +675,159 @@ mod tests {
         assert!(!text.contains("↩1"));
         assert!(!text.contains("2m"));
         assert!(text.contains("L42-46"));
+        Ok(())
+    }
+
+    #[test]
+    fn full_headers_show_every_captured_commit_reference_and_keep_it_narrow() -> anyhow::Result<()>
+    {
+        for version in [
+            OriginVersion::commit("c403a01abcdef"),
+            OriginVersion::working_tree(Some("c403a01abcdef".to_owned())),
+            OriginVersion::index(Some("c403a01abcdef".to_owned())),
+            OriginVersion::review_point("point", Some("c403a01abcdef".to_owned())),
+        ] {
+            let token = ThreadSummary::short_commit_reference(&version);
+            assert_eq!(
+                token
+                    .as_ref()
+                    .and_then(|reference| std::str::from_utf8(reference).ok()),
+                Some("@c403a01")
+            );
+        }
+        let versions = [OriginVersion::commit("c403a01abcdef")];
+        for (index, version) in versions.into_iter().enumerate() {
+            let dir = TempDir::new(&format!("summary-origin-{index}"))?;
+            let mut store = Store::open(dir.0.join("threads.jsonl"))?;
+            let id = store.annotate(
+                Draft::new(
+                    Author::User,
+                    Path::new("a.md"),
+                    LineRange::new(42, 46),
+                    "opening",
+                )
+                .at_source(version, fathomable_core::annotations::OriginSide::Target),
+                &"\n".repeat(50),
+                1,
+            )?;
+            let summary = ThreadSummary::new(
+                store.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?,
+                Some(Placement::Anchored(LineRange::new(42, 46))),
+                "User",
+                Some("lower priority"),
+            );
+            assert_eq!(summary.commit_reference(), Some("@c403a01"));
+            let wide = text(&layout(
+                &summary,
+                SummaryLayoutOptions {
+                    width: 80,
+                    leading: 1,
+                    expanded: true,
+                },
+                120,
+            ));
+            assert!(
+                wide.find("L42-46") < wide.find("@c403a01"),
+                "location precedes reference: {wide}"
+            );
+            let narrow = text(&layout(
+                &summary,
+                SummaryLayoutOptions {
+                    width: 20,
+                    leading: 3,
+                    expanded: true,
+                },
+                120,
+            ));
+            assert!(narrow.contains("@c403a01"), "{narrow}");
+            assert!(!narrow.contains("lower priority"), "{narrow}");
+            assert!(!narrow.contains("2m"), "{narrow}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn minimum_inline_header_keeps_the_full_commit_and_disclosure_hit_region() -> anyhow::Result<()>
+    {
+        let dir = TempDir::new("summary-minimum-inline-origin")?;
+        let mut store = Store::open(dir.0.join("threads.jsonl"))?;
+        let id = store.annotate(
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(1, 1),
+                "opening",
+            )
+            .at_source(
+                OriginVersion::commit("abcdef0123456789"),
+                fathomable_core::annotations::OriginSide::Target,
+            ),
+            "line\n",
+            1,
+        )?;
+        let summary = ThreadSummary::new(
+            store.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?,
+            Some(Placement::Anchored(LineRange::new(1, 1))),
+            "User",
+            None,
+        );
+        let row = layout(
+            &summary,
+            SummaryLayoutOptions {
+                width: 14,
+                leading: 1,
+                expanded: false,
+            },
+            1,
+        );
+        let rendered = text(&row);
+        assert!(rendered.contains("@abcdef0"), "{rendered}");
+        let chevron_byte = rendered
+            .find('▸')
+            .ok_or_else(|| anyhow::anyhow!("chevron"))?;
+        let chevron = 1 + display_width(&rendered[..chevron_byte]);
+        assert!(row.disclosure_at(chevron));
+        let commit_byte = rendered
+            .find("@abcdef0")
+            .ok_or_else(|| anyhow::anyhow!("commit"))?;
+        let commit = 1 + display_width(&rendered[..commit_byte]);
+        assert!((commit..commit + 8).all(|column| !row.disclosure_at(column)));
+        Ok(())
+    }
+
+    #[test]
+    fn origins_without_a_captured_commit_omit_the_reference() -> anyhow::Result<()> {
+        for version in [
+            OriginVersion::working_tree(None),
+            OriginVersion::index(None),
+            OriginVersion::review_point("point", None),
+            OriginVersion::EmptyTree,
+            OriginVersion::Unknown,
+        ] {
+            assert_eq!(ThreadSummary::short_commit_reference(&version), None);
+        }
+        for (index, version) in [OriginVersion::Unknown].into_iter().enumerate() {
+            let dir = TempDir::new(&format!("summary-no-origin-{index}"))?;
+            let mut store = Store::open(dir.0.join("threads.jsonl"))?;
+            let id = store.annotate(
+                Draft::new(
+                    Author::User,
+                    Path::new("a.md"),
+                    LineRange::new(1, 1),
+                    "opening",
+                )
+                .at_source(version, fathomable_core::annotations::OriginSide::Target),
+                "line\n",
+                1,
+            )?;
+            let summary = ThreadSummary::new(
+                store.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?,
+                Some(Placement::Anchored(LineRange::new(1, 1))),
+                "User",
+                None,
+            );
+            assert_eq!(summary.commit_reference(), None);
+        }
         Ok(())
     }
 }

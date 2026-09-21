@@ -1,6 +1,6 @@
 use fathomable_testing::{TempDir, git};
 
-use crate::app::testing::{AppBuilder, complete_highlights, press};
+use crate::app::testing::{self, AppBuilder, complete_highlights, press};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -831,6 +831,49 @@ fn a_directory_highlight_shows_its_summary_instead_of_the_last_file() -> anyhow:
     assert_eq!(app.focus(), Focus::View);
     assert_eq!(app.directory_path(), Some(Path::new("docs")));
     assert!(screen(&app)?.join("\n").contains("subdirectories  1"));
+    Ok(())
+}
+
+#[test]
+fn directory_preview_dismisses_a_temporary_file_thread_expansion() -> anyhow::Result<()> {
+    let dir = fixture("directory-dismisses-thread-peek")?;
+    let mut store = Store::open(testing::store_path(&dir))?;
+    let id = store.annotate(
+        crate::app::testing::at_working_tree(
+            &dir.0,
+            fathomable_core::annotations::Draft::new(
+                fathomable_core::annotations::Author::User,
+                Path::new("README.md"),
+                fathomable_core::annotations::LineRange::new(1, 1),
+                "temporary",
+            ),
+            "# Readme\n\nhello\n",
+        )?,
+        "# Readme\n\nhello\n",
+        1,
+    )?;
+    let mut app = app_with(
+        &dir,
+        Options {
+            store: Some(Store::open(testing::store_path(&dir))?),
+            ..Options::for_test(dir.0.clone())
+        },
+    )?;
+    app.open(Path::new("README.md"));
+    app.thread_step_across(1);
+    assert!(app.is_expanded(&id));
+    assert!(!app.expanded.contains(&id));
+    app.show_tree();
+    app.synchronize_tree_to(Path::new("docs"));
+
+    app.show_highlight();
+
+    assert_eq!(app.directory_path(), Some(Path::new("docs")));
+    app.open(Path::new("README.md"));
+    assert!(
+        !app.is_expanded(&id),
+        "returning to the file must not resurrect the dismissed peek"
+    );
     Ok(())
 }
 

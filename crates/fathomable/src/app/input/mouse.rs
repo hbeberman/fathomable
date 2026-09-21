@@ -179,7 +179,7 @@ fn review_mouse(
             let list_row = row - 1;
             let width = app.column_width();
             let rows = app.review_rows(width);
-            let at = app.review_list().scroll() + list_row;
+            let at = app.review_viewport_scroll(rows.rows.len()) + list_row;
             let summary_row = rows.rows.get(at).and_then(|row| match row {
                 Row::Header { entry, summary, .. } | Row::Stub { entry, summary, .. } => {
                     Some((*entry, summary))
@@ -733,6 +733,7 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
         if text_row >= text_rows {
             return Effect::None;
         }
+        app.retire_change_jump();
         // A Ctrl-click opens the linked file or URL (ADR 0052).
         if event.modifiers.contains(KeyModifiers::CONTROL) {
             app.view_mut().click(text_row, col);
@@ -752,6 +753,14 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
             view.click(text_row, col);
         }
         return Effect::None;
+    }
+    if matches!(
+        event.kind,
+        MouseEventKind::ScrollDown
+            | MouseEventKind::ScrollUp
+            | MouseEventKind::Drag(MouseButton::Left)
+    ) {
+        app.retire_change_jump();
     }
     let linewise = app.press.is_some_and(|press| press.gutter);
     let view = app.view_mut();

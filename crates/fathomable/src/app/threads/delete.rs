@@ -74,12 +74,19 @@ impl App {
             return;
         }
         tracing::info!(%id, "thread deleted");
+        self.dismiss_navigation_peek();
         // An expanded thread that is gone leaves its rows with it, and a
         // cursor pinned on it rides the text again (ADR 0046).
         self.expanded.remove(id);
         if self.thread_cursor.thread() == Some(id) {
             self.thread_cursor = crate::app::threads::cursor::ThreadCursor::default();
             self.thread_cursor_anchor = None;
+        }
+        if self.review_thread_cursor.thread() == Some(id) {
+            self.review_thread_cursor = crate::app::threads::cursor::ThreadCursor::default();
+        }
+        if self.threads_pane_cursor.thread() == Some(id) {
+            self.threads_pane_cursor = crate::app::threads::cursor::ThreadCursor::default();
         }
         self.place_stub_rows();
         if self.focus == Focus::ThreadsPane && self.threads_pane_height() == 0 {
@@ -151,17 +158,17 @@ mod tests {
         );
         assert!(app.delete_armed().is_none());
         assert_eq!(app.marks().len(), 2);
-        // The click left the text cursor on L4, between the threads, so
-        // `j` in the pane lands on the next one (ADR 0046).
+        // The click moved File to L4, but the pane retains its own L5
+        // selection. Its next `j` therefore lands on L7.
         app.focus_threads_pane();
         press_key(&mut app, KeyCode::Char('j'));
-        assert_eq!(app.view().cursor_source_line(), Some(5));
-        press_key(&mut app, KeyCode::Char('j'));
         assert_eq!(app.view().cursor_source_line(), Some(7));
+        press_key(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.view().cursor_source_line(), Some(5));
         press_key(&mut app, KeyCode::Char('d'));
         press_key(&mut app, KeyCode::Char('d'));
         assert_eq!(app.marks().len(), 1);
-        assert_eq!(app.marks()[0].range().map(|r| r.start()), Some(5));
+        assert_eq!(app.marks()[0].range().map(|r| r.start()), Some(7));
         assert_eq!(app.focus(), Focus::ThreadsPane, "one thread left");
 
         // The review list: the entry under the selection goes.

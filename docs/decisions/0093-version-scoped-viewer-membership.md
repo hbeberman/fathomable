@@ -112,6 +112,17 @@ Landing is evidence only. It never adds, removes, or changes normal membership,
 including Diff Off and commit routes. There is no comparison between
 `landed_commit` and `observed_head` for membership.
 
+The short commit reference shown in a full thread header is likewise a
+provenance label only. Immutable origin-context rendering and an
+original-location warning expose stored evidence but grant no membership,
+placement, landing, or navigation authority.
+
+Navigation-owned peeks also confer no membership or landing authority. They
+can reveal only a thread already selected from the candidate set admitted by
+the owning surface. They never make a thread eligible for normal File,
+Threads, or Thread-list membership, never bypass endpoint projection, and
+never authorize source placement.
+
 ### HEAD and Index transitions preserve intent and evidence
 
 The viewer observes typed symbolic, detached, unborn, and unavailable HEAD

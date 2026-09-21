@@ -10,7 +10,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use fathomable_core::annotations::LineRange;
-use fathomable_core::diff::{Compare, Diff, LineStatus};
+use fathomable_core::diff::{Compare, Diff, Hunk, LineStatus};
 use fathomable_core::highlight::{Highlighter, Highlights};
 use fathomable_core::layout::{Face, Layout, LineIndex, RowAnchor, display_width};
 use regex::Regex;
@@ -165,6 +165,8 @@ pub(crate) struct View {
     diff_shown: Option<DiffView>,
     /// How diffs are compared and listed (ADR 0060).
     compare: Compare,
+    /// A pure-deletion hunk temporarily projected into normal presentation.
+    normal_deletion: Option<(std::ops::Range<usize>, usize)>,
     /// The working tree against `HEAD`: the gutter, diff traversal, and counts.
     diff: Option<Diff>,
     /// The working tree against the index: which hunks are not yet staged.
@@ -217,6 +219,27 @@ struct StubSeat {
     anchor: RowAnchor,
     ordinal: usize,
     index: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RelayoutPoint {
+    Source {
+        line: usize,
+        column: usize,
+    },
+    ProjectedOld {
+        line: usize,
+        cell: usize,
+        on_marker: bool,
+    },
+}
+
+/// A cursor seat within a projected old-side comparison line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ProjectedOldSeat {
+    line: usize,
+    cell: usize,
+    on_marker: bool,
 }
 
 impl View {
@@ -291,6 +314,7 @@ impl View {
             comparison: None,
             diff_shown: None,
             compare: Compare::default(),
+            normal_deletion: None,
             diff: None,
             unstaged: None,
             activity: Instant::now(),
@@ -571,12 +595,29 @@ impl View {
 
     /// Retain a body independently of later working-document reloads.
     pub(crate) fn set_comparison_body(&mut self, body: DiffBody) {
+        let body_changed = self.comparison.as_ref() != Some(&body);
+        let had_normal_deletion = body_changed && self.normal_deletion.take().is_some();
         self.comparison = Some(body);
+        if had_normal_deletion && !self.diff_view() {
+            self.relayout();
+        }
     }
 
     /// Forget a body when this view no longer uses a comparison projection.
     pub(crate) fn clear_comparison_body(&mut self) {
+        let had_normal_deletion = self.normal_deletion.take().is_some();
         self.comparison = None;
+        if had_normal_deletion && !self.diff_view() {
+            self.relayout();
+        }
+    }
+
+    /// The retained base text for immutable annotation evidence.
+    pub(crate) fn comparison_base_text(&self) -> Option<&str> {
+        match self.comparison.as_ref() {
+            Some(DiffBody::Diff { base, .. }) => Some(Self::text_of(base)),
+            Some(DiffBody::Notice(_)) | None => None,
+        }
     }
 
     /// `(added, removed)` between the diff's sides, while one is shown.
@@ -632,6 +673,7 @@ impl View {
         if self.missing.worktree == missing {
             return;
         }
+        let had_normal_deletion = self.normal_deletion.take().is_some();
         self.missing.worktree = missing;
         let display_changed = missing && self.display == Display::Rendered;
         if missing && self.display != Display::Diff {
@@ -641,7 +683,7 @@ impl View {
             self.home_display = Display::Source;
         }
         self.rediff();
-        if display_changed || self.diff_view() {
+        if display_changed || self.diff_view() || had_normal_deletion {
             self.relayout();
         }
     }
@@ -657,7 +699,15 @@ impl View {
         self.activity.elapsed()
     }
 
+    /// Comparison hunks with their complete old- and target-side ranges.
+    pub(crate) fn hunks(&self) -> Vec<Hunk> {
+        self.diff
+            .as_ref()
+            .map_or_else(Vec::new, |diff| diff.hunks().to_vec())
+    }
+
     /// Every hunk's 1-based target line, preserving comparison order.
+    #[cfg(test)]
     pub(crate) fn hunk_target_lines(&self) -> Vec<usize> {
         self.diff
             .as_ref()
@@ -670,6 +720,151 @@ impl View {
             .unwrap_or_default()
     }
 
+    /// The rendered changed rows belonging to `hunk`.
+    ///
+    /// In a unified diff both sides retain their exact line identities.
+    /// Normal presentation uses target rows, except that an entirely
+    /// deleted path displays its old side under the deletion banner.
+    pub(crate) fn hunk_rows(
+        &self,
+        hunk: &Hunk,
+        entire_deletion: bool,
+    ) -> Option<std::ops::Range<usize>> {
+        let old = hunk.old_range();
+        let new = hunk.new_range();
+        let changed =
+            |line: &fathomable_core::layout::Line| {
+                let removed =
+                    line.spans().iter().any(|span| {
+                        span.style().face == fathomable_core::layout::Face::DiffRemoved
+                    }) && line
+                        .diff_old_line()
+                        .is_some_and(|number| old.contains(&(number - 1)));
+                if self.diff_view() {
+                    let added =
+                        line.spans().iter().any(|span| {
+                            span.style().face == fathomable_core::layout::Face::DiffAdded
+                        }) && line
+                            .diff_new_line()
+                            .is_some_and(|number| new.contains(&(number - 1)));
+                    removed || added
+                } else {
+                    if new.is_empty() && removed {
+                        return true;
+                    }
+                    let range = if entire_deletion { &old } else { &new };
+                    line.source().is_some_and(|source| {
+                        let index = self.layout.index();
+                        let first = index.line_of(source.start) - 1;
+                        let last = index.line_of(source.end.max(source.start + 1) - 1) - 1;
+                        first < range.end && range.start <= last
+                    })
+                }
+            };
+        let start = self.layout.lines().iter().position(changed).or_else(|| {
+            (!self.diff_view() && new.is_empty() && !entire_deletion)
+                .then(|| self.row_of_source_line(hunk.target_line(self.diff.as_ref()?.new_lines())))
+                .flatten()
+        })?;
+        let end = self
+            .layout
+            .lines()
+            .iter()
+            .rposition(changed)
+            .unwrap_or(start);
+        Some(start..end + 1)
+    }
+
+    /// Project a selected old-side deletion into normal presentation.
+    pub(crate) fn show_normal_deletion(&mut self, hunk: &Hunk, entire_deletion: bool) {
+        let deletion = (!self.diff_view()
+            && !entire_deletion
+            && hunk.new_range().is_empty()
+            && !hunk.old_range().is_empty())
+        .then(|| (hunk.old_range(), hunk.new_range().start + 1));
+        if self.normal_deletion != deletion {
+            self.normal_deletion = deletion;
+            self.relayout();
+        }
+    }
+
+    /// Remove a previously projected normal-mode deletion hunk.
+    pub(crate) fn clear_normal_deletion(&mut self) {
+        if self.normal_deletion.take().is_some() {
+            self.relayout();
+        }
+    }
+
+    /// Whether normal presentation currently includes old-side deletion rows.
+    pub(crate) fn projects_normal_deletion(&self) -> bool {
+        self.normal_deletion.is_some() && !self.diff_view()
+    }
+
+    /// The logical old-side cursor seat in a projected Normal deletion.
+    pub(crate) fn projected_old_seat(&self) -> Option<ProjectedOldSeat> {
+        let RelayoutPoint::ProjectedOld {
+            line,
+            cell,
+            on_marker,
+        } = self.relayout_point(self.cursor)?
+        else {
+            return None;
+        };
+        Some(ProjectedOldSeat {
+            line,
+            cell,
+            on_marker,
+        })
+    }
+
+    /// Restore a logical old-side cursor seat after its projection is rebuilt.
+    pub(crate) fn goto_projected_old_seat(&mut self, seat: ProjectedOldSeat) -> bool {
+        if !self.projects_normal_deletion() {
+            return false;
+        }
+        let cursor = self.cursor_for_point(
+            Some(RelayoutPoint::ProjectedOld {
+                line: seat.line,
+                cell: seat.cell,
+                on_marker: seat.on_marker,
+            }),
+            self.cursor,
+        );
+        if self
+            .layout
+            .lines()
+            .get(cursor.row)
+            .and_then(fathomable_core::layout::Line::diff_old_line)
+            != Some(seat.line)
+        {
+            return false;
+        }
+        self.cursor = cursor;
+        self.want_col = cursor.col;
+        self.extend_selection();
+        self.ensure_visible();
+        true
+    }
+
+    /// The first rendered row of a 1-based source line.
+    pub(crate) fn rendered_row_of_source_line(&self, line: usize) -> Option<usize> {
+        self.row_of_source_line(line)
+    }
+
+    /// Place a deliberate jump span without changing cursor state.
+    pub(crate) fn place_jump_span(
+        &mut self,
+        span: std::ops::Range<usize>,
+        priority: std::ops::Range<usize>,
+    ) {
+        self.scroll = super::placement::center_span(span, priority, self.height, self.max_scroll());
+    }
+
+    /// Place a deliberate comparison row at the exact top-third anchor.
+    pub(crate) fn place_jump_top_third(&mut self, row: usize) {
+        self.scroll = super::placement::top_third(row, self.height, self.max_scroll());
+    }
+
     pub(crate) fn index(&self) -> &LineIndex {
         self.layout.index()
     }
@@ -680,6 +875,11 @@ impl View {
 
     pub(crate) fn scroll(&self) -> usize {
         self.scroll
+    }
+
+    #[cfg(test)]
+    pub(crate) fn body_height(&self) -> usize {
+        self.height
     }
 
     pub(crate) fn mode(&self) -> Mode {
@@ -786,6 +986,7 @@ impl View {
         if self.text == text {
             return false;
         }
+        self.normal_deletion = None;
         self.text = text;
         self.missing.worktree = false;
         self.changed = true;
@@ -818,10 +1019,11 @@ impl View {
         if index == self.index && head == self.head {
             return;
         }
+        let had_normal_deletion = self.normal_deletion.take().is_some();
         self.index = index;
         self.head = head;
         self.rediff();
-        if self.diff_view() {
+        if self.diff_view() || had_normal_deletion {
             self.relayout();
         }
     }
@@ -877,11 +1079,12 @@ impl View {
     /// and column, on its detached row, or on the thread's rows `seat`
     /// names, the stub once the thread has folded.
     fn relayout_seated(&mut self, seat: Option<StubSeat>) {
+        let cursor_point = self.relayout_point(self.cursor);
         let selection = self.selection.map(|selection| {
             (
                 selection,
-                self.source_point(selection.anchor),
-                self.source_point(selection.head),
+                self.relayout_point(selection.anchor),
+                self.relayout_point(selection.head),
             )
         });
         let detached_viewport = (self.cursor.row < self.scroll
@@ -891,14 +1094,14 @@ impl View {
                     row: self.scroll,
                     col: 0,
                 };
-                (top, self.source_point(top))
+                (top, self.relayout_point(top))
             });
         // A cursor on a detached row stays on it (ADR 0039).
         let on_detached = self.detached_anchor_of_row(self.cursor.row);
         // A cursor on a row with no source — a blank rendered row — is
         // anchored to the nearest sourced row above it and put back the
         // same number of document rows below that one.
-        let anchor_row = if self.cursor_offset().is_none() && on_detached.is_none() {
+        let anchor_row = if cursor_point.is_none() && on_detached.is_none() {
             (0..self.cursor.row)
                 .rev()
                 .find(|&row| self.layout.lines()[row].source().is_some())
@@ -920,7 +1123,10 @@ impl View {
                 let index = self.layout.index();
                 (index.line_of(start), index.column_of(self.shown(), start))
             }
-            None => self.source_position(),
+            None => match cursor_point {
+                Some(RelayoutPoint::Source { line, column }) => (line, column),
+                Some(RelayoutPoint::ProjectedOld { .. }) | None => self.source_position(),
+            },
         };
         // The row that keeps its place on screen: the cursor's, or for a
         // cursor on a stub row, the document row the stub hangs under, so
@@ -932,19 +1138,9 @@ impl View {
         };
         let screen_row = kept_row.saturating_sub(self.scroll);
         self.layout = self.build_layout();
-        let index = self.layout.index();
-        let line = line.min(index.line_count());
-        let offset = index.offset_at(self.shown(), line, column);
-        let row = on_detached
-            .and_then(|anchor| {
-                self.layout
-                    .lines()
-                    .iter()
-                    .position(|line| line.stands_before() == Some(anchor))
-            })
-            .or_else(|| offset.and_then(|offset| self.layout.line_at_offset(offset)))
-            .unwrap_or(self.cursor.row);
-        let mut row = row.min(self.last_row());
+        let cursor =
+            self.cursor_after_relayout(cursor_point, self.cursor, on_detached, (line, column));
+        let mut row = cursor.row.min(self.last_row());
         let hangs_under = row;
         for _ in 0..rows_below {
             row = (row + 1..=self.last_row())
@@ -958,11 +1154,16 @@ impl View {
             self.cursor.row = seated;
             hangs_under
         } else {
+            self.cursor.col = cursor.col;
             self.cursor.row = self.settle(row, false);
             self.cursor.row
         };
         self.scroll = kept.saturating_sub(screen_row);
-        self.clamp_col();
+        if matches!(cursor_point, Some(RelayoutPoint::ProjectedOld { .. })) {
+            self.want_col = self.cursor.col;
+        } else {
+            self.clamp_col();
+        }
         self.selection = selection.map(|(selection, anchor, head)| Selection {
             anchor: self.cursor_for_point(anchor, selection.anchor),
             head: self.cursor_for_point(head, selection.head),
@@ -994,6 +1195,14 @@ impl View {
             Display::Source => self.source_layout(),
             Display::Rendered => self.rendered_layout(),
         };
+        let layout = if !self.diff_view()
+            && let Some((old_range, before_line)) = &self.normal_deletion
+            && let Some(old) = self.head.as_deref()
+        {
+            layout.with_old_deletion(old, old_range.clone(), *before_line)
+        } else {
+            layout
+        };
         layout.with_rows_before(&self.detached).with_rows_after(
             &self
                 .stubs
@@ -1003,27 +1212,119 @@ impl View {
         )
     }
 
-    fn source_point(&self, cursor: Cursor) -> Option<(usize, usize)> {
-        let offset = self.layout.lines().get(cursor.row)?.source_at(cursor.col)?;
-        let index = self.layout.index();
-        Some((index.line_of(offset), index.column_of(self.shown(), offset)))
+    fn relayout_point(&self, cursor: Cursor) -> Option<RelayoutPoint> {
+        let rendered = self.layout.lines().get(cursor.row)?;
+        if let Some(offset) = rendered.source_at(cursor.col) {
+            let index = self.layout.index();
+            return Some(RelayoutPoint::Source {
+                line: index.line_of(offset),
+                column: index.column_of(self.shown(), offset),
+            });
+        }
+        let old_line = self
+            .projects_normal_deletion()
+            .then(|| rendered.diff_old_line())
+            .flatten()?;
+        let preceding = self.layout.lines()[..cursor.row]
+            .iter()
+            .filter(|line| line.diff_old_line() == Some(old_line))
+            .map(|line| line.width().saturating_sub(1))
+            .sum::<usize>();
+        Some(RelayoutPoint::ProjectedOld {
+            line: old_line,
+            cell: preceding
+                + cursor
+                    .col
+                    .saturating_sub(1)
+                    .min(rendered.width().saturating_sub(1)),
+            on_marker: cursor.col == 0,
+        })
     }
 
-    fn cursor_for_point(&self, point: Option<(usize, usize)>, fallback: Cursor) -> Cursor {
-        if let Some((line, column)) = point
-            && let Some(offset) = self.layout.index().offset_at(self.shown(), line, column)
-            && let Some(row) = self.layout.line_at_offset(offset)
-        {
-            let line = &self.layout.lines()[row];
-            let col = line
-                .columns()
-                .into_iter()
-                .min_by_key(|&col| {
-                    line.source_at(col)
-                        .map_or(usize::MAX, |at| at.abs_diff(offset))
-                })
-                .unwrap_or(0);
-            return Cursor { row, col };
+    fn cursor_after_relayout(
+        &self,
+        point: Option<RelayoutPoint>,
+        fallback: Cursor,
+        detached: Option<usize>,
+        source: (usize, usize),
+    ) -> Cursor {
+        if let Some(row) = detached.and_then(|anchor| {
+            self.layout
+                .lines()
+                .iter()
+                .position(|line| line.stands_before() == Some(anchor))
+        }) {
+            return Cursor {
+                row,
+                col: fallback.col,
+            };
+        }
+        if point.is_some() {
+            return self.cursor_for_point(point, fallback);
+        }
+        let index = self.layout.index();
+        let line = source.0.min(index.line_count());
+        index
+            .offset_at(self.shown(), line, source.1)
+            .and_then(|offset| self.layout.line_at_offset(offset))
+            .map_or(fallback, |row| Cursor {
+                row,
+                col: fallback.col,
+            })
+    }
+
+    fn cursor_for_point(&self, point: Option<RelayoutPoint>, fallback: Cursor) -> Cursor {
+        match point {
+            Some(RelayoutPoint::Source { line, column })
+                if let Some(offset) = self.layout.index().offset_at(self.shown(), line, column)
+                    && let Some(row) = self.layout.line_at_offset(offset) =>
+            {
+                let line = &self.layout.lines()[row];
+                let col = line
+                    .columns()
+                    .into_iter()
+                    .min_by_key(|&col| {
+                        line.source_at(col)
+                            .map_or(usize::MAX, |at| at.abs_diff(offset))
+                    })
+                    .unwrap_or(0);
+                return Cursor { row, col };
+            }
+            Some(RelayoutPoint::ProjectedOld {
+                line,
+                mut cell,
+                on_marker,
+            }) => {
+                let last = self
+                    .layout
+                    .lines()
+                    .iter()
+                    .rposition(|rendered| rendered.diff_old_line() == Some(line));
+                if let Some(last) = last {
+                    for (row, rendered) in self.layout.lines().iter().enumerate() {
+                        if rendered.diff_old_line() != Some(line) {
+                            continue;
+                        }
+                        let width = rendered.width().saturating_sub(1);
+                        if cell < width || row == last {
+                            let desired = if width == 0 || on_marker && cell == 0 {
+                                0
+                            } else {
+                                cell.min(width.saturating_sub(1)) + 1
+                            };
+                            let col = rendered
+                                .columns()
+                                .into_iter()
+                                .take_while(|column| *column <= desired)
+                                .last()
+                                .unwrap_or(0);
+                            return Cursor { row, col };
+                        }
+                        cell = cell.saturating_sub(width);
+                    }
+                }
+            }
+            Some(RelayoutPoint::Source { .. }) | None => {}
         }
         let row = fallback.row.min(self.last_row());
         let col = self

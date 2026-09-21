@@ -1,8 +1,9 @@
 use std::fs;
 use std::path::Path;
 
+use anyhow::Context as _;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use fathomable_core::annotations::{Author, Reply, Thread};
+use fathomable_core::annotations::{Author, AutoResolve, Lifecycle, Reply, Thread};
 use fathomable_testing::TempDir;
 
 use crate::app::testing::{self, press, source_app};
@@ -297,6 +298,103 @@ fn archived_history_never_populates_the_normal_sidebar() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn file_scoped_actions_reconcile_a_cross_file_cursor_before_dispatch() -> anyhow::Result<()> {
+    let dir = fixture("cross-file-authority")?;
+    let mut app = source_app(&dir)?;
+    annotate(&mut app, 3, "file A");
+    let file_a = app.file_threads()[0].clone();
+
+    app.open(Path::new("docs/guide.md"));
+    for (line, body) in [(1, "file B one"), (3, "file B two"), (4, "file B three")] {
+        annotate(&mut app, line, body);
+    }
+    let file_b = app.file_threads();
+
+    app.open(Path::new("README.md"));
+    app.show_threads_pane();
+    app.set_threads_pane_cursor(&file_a, 0);
+    app.open(Path::new("docs/guide.md"));
+    app.focus_threads_pane();
+
+    let selected = app
+        .thread_cursor()
+        .thread()
+        .cloned()
+        .context("File B selection")?;
+    assert!(file_b.contains(&selected));
+    assert_ne!(selected, file_a);
+
+    press(&mut app, "c");
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::Compose(compose))
+            if compose.target() == &ComposeTarget::Reply(selected.clone())
+    ));
+    app.compose_cancel();
+
+    press(&mut app, "R");
+    assert_eq!(
+        app.thread(&selected).map(Thread::auto_resolve),
+        Some(AutoResolve::Enabled)
+    );
+    assert_eq!(
+        app.thread(&file_a).map(Thread::auto_resolve),
+        Some(AutoResolve::Disabled)
+    );
+
+    press(&mut app, "r");
+    assert_eq!(
+        app.thread(&selected).map(Thread::lifecycle),
+        Some(Lifecycle::Resolved)
+    );
+    assert_eq!(
+        app.thread(&file_a).map(Thread::lifecycle),
+        Some(Lifecycle::Active)
+    );
+    let delete_target = app
+        .thread_cursor()
+        .thread()
+        .cloned()
+        .context("remaining File B selection")?;
+    assert!(file_b.contains(&delete_target));
+    assert_ne!(delete_target, selected);
+
+    press(&mut app, "dd");
+    assert!(app.thread(&delete_target).is_none());
+    assert!(app.thread(&file_a).is_some(), "File A must not be mutated");
+    Ok(())
+}
+
+#[test]
+fn file_scoped_actions_have_no_authority_when_the_file_has_no_threads() -> anyhow::Result<()> {
+    let dir = fixture("cross-file-empty-authority")?;
+    let mut app = source_app(&dir)?;
+    annotate(&mut app, 3, "file A");
+    let file_a = app.file_threads()[0].clone();
+    app.show_threads_pane();
+    app.set_threads_pane_cursor(&file_a, 0);
+
+    app.open(Path::new("docs/guide.md"));
+    app.focus_threads_pane();
+    assert!(app.thread_cursor().thread().is_none());
+    assert_eq!(app.threads_pane_selected(), None);
+
+    for key in ["c", "r", "R"] {
+        press(&mut app, key);
+        assert!(app.thread(&file_a).is_some(), "{key} mutated File A");
+        assert!(
+            !matches!(app.popup(), Some(Popup::Compose(_))),
+            "{key} opened a File A draft"
+        );
+        assert_eq!(app.message(), Some("no thread here"));
+    }
+    press(&mut app, "dd");
+    assert!(app.thread(&file_a).is_some(), "dd mutated File A");
+    assert!(app.delete_armed().is_none());
+    Ok(())
+}
+
 /// `s` lists the workspace grouped by file in the files pane's
 /// order, the place saying the lines alone; `j` opens the other file
 /// and keeps the keys; Enter and `c` act on the cursor's thread
@@ -316,6 +414,7 @@ fn the_pane_lists_the_workspace_by_file() -> anyhow::Result<()> {
         rows.iter().map(PaneEntry::place).collect::<Vec<_>>(),
         ["L3", "L7"]
     );
+    app.threads_pane_scroll = 0;
     let column = sidebar_column(&app)?;
     assert!(
         column[app.tree_rows() + 1].contains("Thread list")
@@ -330,7 +429,7 @@ fn the_pane_lists_the_workspace_by_file() -> anyhow::Result<()> {
     );
     let bar = &column[app.pane_rows() - 1];
     assert!(
-        bar.contains("fold z") && !bar.contains("archive a"),
+        bar.contains("reply c") && !bar.contains("archive a"),
         "{bar:?}"
     );
 
@@ -594,10 +693,9 @@ fn the_sidebar_shows_either_pane_and_the_split_is_fixed() -> anyhow::Result<()> 
     Ok(())
 }
 
-/// A step from any surface moves the one cursor, and every surface
-/// highlights the same thread (ADR 0046).
+/// Surface handoffs seed a logical cursor, then each surface retains its own.
 #[test]
-fn every_surface_shows_the_one_cursor() -> anyhow::Result<()> {
+fn surface_handoffs_preserve_each_logical_cursor() -> anyhow::Result<()> {
     let dir = fixture("cursor")?;
     let mut app = source_app(&dir)?;
     app.show_tree();
@@ -637,6 +735,11 @@ fn every_surface_shows_the_one_cursor() -> anyhow::Result<()> {
     assert_eq!(app.review_selected_index(), Some(2));
     press(&mut app, "k");
     assert_eq!(app.thread_cursor().thread(), Some(&ids[1]));
+    assert_eq!(
+        app.threads_pane_selected(),
+        Some(2),
+        "main Threads movement does not rewrite the sidebar cursor"
+    );
 
     // Enter expands it in the text; the cursor lands on its line.
     keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -692,6 +795,84 @@ fn thread_list_preview_preserves_threads_view_until_enter() -> anyhow::Result<()
 }
 
 #[test]
+fn cross_file_preview_preserves_a_tab_revealed_folded_group() -> anyhow::Result<()> {
+    let dir = fixture("preview-folded-group")?;
+    let mut app = source_app(&dir)?;
+    annotate(&mut app, 3, "file A");
+    let file_a = app.file_threads()[0].clone();
+    app.open(Path::new("docs/guide.md"));
+    for (line, body) in [(1, "file B one"), (3, "file B two"), (4, "file B three")] {
+        app.view_mut().goto_source_line(line);
+        app.start_new_comment();
+        app.compose_insert(body);
+        app.compose_submit();
+    }
+    let file_b = app.file_threads();
+    app.open(Path::new("README.md"));
+    app.open_review();
+    app.show_threads_pane();
+    app.focus_threads_pane();
+    press(&mut app, "s");
+    app.sidebar
+        .folded
+        .insert(Path::new("docs/guide.md").to_path_buf());
+    app.set_thread_cursor(file_a);
+
+    keys::handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert!(app.review_list().is_open(), "Tab stays in main Threads");
+    assert_eq!(
+        app.current_path(),
+        Path::new("README.md"),
+        "Tab retains the underlying File A preview"
+    );
+    assert_eq!(app.thread_cursor().thread(), Some(&file_b[0]));
+    assert!(app.threads_pane_is_folded(Path::new("docs/guide.md")));
+    assert!(app.pane_file_peeked(Path::new("docs/guide.md")));
+    let visible_b = |app: &App| {
+        app.threads_pane_rows()
+            .iter()
+            .filter(|row| {
+                matches!(
+                    row,
+                    PaneRow::Thread(entry) if entry.path == Path::new("docs/guide.md")
+                )
+            })
+            .count()
+    };
+    assert_eq!(visible_b(&app), 3);
+
+    press(&mut app, "j");
+    assert_eq!(
+        app.current_path(),
+        Path::new("docs/guide.md"),
+        "local motion activates the File B preview"
+    );
+    assert!(app.review_list().is_open());
+    assert_eq!(app.thread_cursor().thread(), Some(&file_b[1]));
+    assert!(app.pane_file_peeked(Path::new("docs/guide.md")));
+    assert_eq!(visible_b(&app), 3, "cross-file cleanup keeps every sibling");
+    press(&mut app, "j");
+    assert_eq!(app.thread_cursor().thread(), Some(&file_b[2]));
+    assert_eq!(visible_b(&app), 3);
+    press(&mut app, "k");
+    assert_eq!(app.thread_cursor().thread(), Some(&file_b[1]));
+    assert_eq!(visible_b(&app), 3);
+
+    press(&mut app, "z");
+    assert!(!app.pane_file_peeked(Path::new("docs/guide.md")));
+    assert!(app.threads_pane_is_folded(Path::new("docs/guide.md")));
+    assert_eq!(
+        visible_b(&app),
+        0,
+        "an explicit fold takes ownership from the temporary reveal"
+    );
+    press(&mut app, "z");
+    assert!(!app.threads_pane_is_folded(Path::new("docs/guide.md")));
+    assert_eq!(visible_b(&app), 3, "explicit unfold remains persistent");
+    Ok(())
+}
+
+#[test]
 fn the_highlight_prefers_the_thread_starting_under_the_cursor() -> anyhow::Result<()> {
     let dir = fixture("overlap")?;
     let mut app = source_app(&dir)?;
@@ -721,7 +902,11 @@ fn the_highlight_prefers_the_thread_starting_under_the_cursor() -> anyhow::Resul
         "a row click focuses the list"
     );
     app.view_mut().goto_source_line(3);
-    assert_eq!(app.threads_pane_selected(), Some(0));
+    assert_eq!(
+        app.threads_pane_selected(),
+        Some(1),
+        "File movement does not rewrite an explicitly seated sidebar cursor"
+    );
     app.threads_pane_click(2);
     assert_eq!(app.threads_pane_selected(), Some(1));
     Ok(())

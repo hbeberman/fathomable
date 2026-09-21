@@ -1009,7 +1009,8 @@ pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
                 hints.push(HintOf::keyed(place, Action::EditMessage, "edit"));
             }
         }
-        let cursor_thread = app.thread_cursor().thread().and_then(|id| app.thread(id));
+        let cursor = app.review_thread_cursor();
+        let cursor_thread = cursor.thread().and_then(|id| app.thread(id));
         let resolved = cursor_thread.is_some_and(|thread| {
             thread.lifecycle() == fathomable_core::annotations::Lifecycle::Resolved
         });

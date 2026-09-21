@@ -128,6 +128,34 @@ Threads evidence fallback. The mouse wheel scrolls only the pointed viewport:
 it never changes selection, preview, focus, or the main surface. Dragging the
 sidebar divider resizes it.
 
+`Tab` and `Shift-Tab` follow the pane that owns navigation. In File and File
+list they cycle workspace-wide open threads and land in File. In main Threads
+they cycle only open threads admitted by its current view and filters and
+stay in Threads. In Thread list they use that pane's scope and filter, retain
+pane focus, and preview the current main surface. If a pane target is outside
+the current main Threads view, main Threads stays unchanged and the status
+says to press Enter to open it.
+Thread actions, menus, and history use the logical thread and message retained
+by the surface that owns focus. Returning from a rejected Thread-list preview
+therefore acts on the still-visible main Threads entry, while the sidebar keeps
+its own selection for the next focus return.
+
+A thread jump temporarily reveals a folded destination without changing the
+remembered fold. File centers the visible source, detached marker, or
+file-wide anchor through the newest reply when it fits, otherwise the newest
+reply start; main Threads does the same from stored origin context. The
+thread and text cursors sit on that newest reply. Failed navigation keeps the
+current reveal. Changing the thread scope or filter, or switching worktrees,
+ends it. An explicit `z`, `Z`, Enter, chevron, double-click, or menu fold
+takes over, so a later jump cannot undo that explicit choice.
+
+`Alt-Left` and `Alt-Right` walk logical navigation history. They restore the
+exact message in a temporarily revealed main Threads conversation even when
+Thread list previews another entry. In File they restore projected Normal
+deletion rows by Base line and within-line position rather than substituting a
+nearby Target line; comments started there therefore retain Base evidence.
+Viewport scroll offsets are recomputed from the restored logical position.
+
 In File list, `z` folds or unfolds the selected directory, or the immediate
 parent when a file is selected. Folding a file's parent leaves the cursor on
 that directory, so another `z` unfolds it. A root-level file has no foldable
@@ -182,9 +210,10 @@ the table below is a quick reference, not the full list.
 | `f` `F` | show and focus File / File list |
 | `t` `T` | show and focus Threads / Thread list |
 | `Alt-Space` | open and focus the top-left Fathomable menu |
-| `Shift-Down` `J` / `Shift-Up` `K` | next / previous comparison change across the workspace |
-| `Shift-Right` `L` / `Shift-Left` `H` | next / previous changed file, at its first diff |
-| `Tab` `Shift-Tab` | next / previous open review thread across the workspace |
+| `Shift-Down` `J` / `Shift-Up` `K` | next / previous comparison change, placed at File's top third |
+| `Shift-Right` `L` / `Shift-Left` `H` | next / previous changed file, with its first change at the top third |
+| `Tab` `Shift-Tab` | next / previous open thread in the focused surface's scope |
+| `Alt-Left` `Alt-Right` | back / forward through logical navigation positions |
 | `]w` `[w` | next / previous worktree |
 | `c` `Space t f` | line comment or reply / file comment |
 | `r` `R` | resolve or reopen / toggle one-shot auto-resolve |
@@ -361,6 +390,24 @@ hidden File list catches up when shown.
 Select lines and press `c`, or use `Space t f` for a file-wide comment.
 Threads retain their original excerpt even if edits move or detach them.
 Keep comments focused; each new message is limited to 1024 UTF-8 bytes.
+
+An expanded entry in the wide main **Threads** surface places its stored
+immutable origin context before the conversation. Source uses the origin
+path's syntax, wraps without line numbers, and marks the originally selected
+rows. Fathomable prepares at most 16 KiB and 256 logical source rows; an
+omission marker preserves the beginning and end of a larger selection, and a
+truncation row says when capture or preparation omitted evidence. File-wide
+threads and compact **Thread list** cards do not show this block. Moved,
+detached, historical, or unavailable entries instead add one short original
+location warning; unchanged placement adds none. Preparing this block uses
+only stored evidence, never a fresh checkout or Git read.
+
+Full File and main Threads thread headers place a neutral `@` plus seven
+commit characters after the location when the origin captured a commit,
+observed `HEAD`, or review-point baseline. For mutable origins this is the
+captured reference, not a claim that the retained bytes equal that commit.
+Compact Thread-list cards omit it. Narrow full headers keep the reference
+ahead of age, reply count, optional context, and textual lifecycle status.
 
 The lifecycle marks are **● active**, **◐ resolution proposed**, and
 **○ resolved**. You resolve or reopen with `r`. Enabling `R` gives the

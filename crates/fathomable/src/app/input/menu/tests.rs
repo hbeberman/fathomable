@@ -1278,8 +1278,79 @@ fn the_list_folds_a_thread_by_chevron_double_click_and_menu() -> anyhow::Result<
     );
     right(&mut app, edge + 5, file_y);
     let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, label)| label).collect();
-    assert_eq!(labels, ["unfold", "open file", "show resolved"]);
+    assert_eq!(labels, ["expand", "open file", "show resolved"]);
     app.close_popup();
+    Ok(())
+}
+
+#[test]
+fn navigation_peek_menus_toggle_the_effective_fold_state() -> anyhow::Result<()> {
+    let dir = fixture("peek-fold-menu")?;
+    let mut app = app(&dir)?;
+    annotate(&mut app)?;
+    let id = app.file_threads()[0].clone();
+
+    app.open_review();
+    app.review_toggle_thread(&id);
+    app.thread_step_across(1);
+    assert!(app.review_list().is_thread_folded(&id));
+    assert!(!app.review_thread_is_collapsed(&id));
+    let rows = app.review_rows(app.column_width());
+    let header = rows
+        .rows
+        .iter()
+        .position(|row| matches!(row, crate::app::threads::list::Row::Header { .. }))
+        .context("peeked review header")?;
+    let body_row = header.saturating_sub(app.review_viewport_scroll(rows.rows.len()));
+    app.open_review_menu(
+        body_row,
+        app.sidebar_width() + 10,
+        app.text_top() + body_row,
+    );
+    assert_eq!(entries(&app)?[0].1, "collapse thread");
+    let cell = entry_cell(&app, "collapse thread")?;
+    left(&mut app, cell.0, cell.1);
+    assert!(app.review_thread_is_collapsed(&id));
+    assert!(app.review_list().is_thread_folded(&id));
+
+    let rows = app.review_rows(app.column_width());
+    let stub = rows
+        .rows
+        .iter()
+        .position(|row| matches!(row, crate::app::threads::list::Row::Stub { .. }))
+        .context("collapsed review stub")?;
+    let body_row = stub.saturating_sub(app.review_viewport_scroll(rows.rows.len()));
+    app.open_review_menu(
+        body_row,
+        app.sidebar_width() + 10,
+        app.text_top() + body_row,
+    );
+    assert_eq!(entries(&app)?[0].1, "expand thread");
+    let cell = entry_cell(&app, "expand thread")?;
+    left(&mut app, cell.0, cell.1);
+    assert!(!app.review_list().is_thread_folded(&id));
+
+    app.open_file_view();
+    app.show_threads_pane();
+    app.focus_threads_pane();
+    app.threads_pane_toggle_scope();
+    app.threads_pane_fold();
+    app.thread_step_across(1);
+    assert!(app.threads_pane_is_folded(std::path::Path::new("README.md")));
+    assert!(!app.threads_pane_file_is_collapsed(std::path::Path::new("README.md")));
+
+    app.open_threads_pane_menu(0, 2, app.tree_rows() + 2);
+    assert_eq!(entries(&app)?[0].1, "collapse");
+    let cell = entry_cell(&app, "collapse")?;
+    left(&mut app, cell.0, cell.1);
+    assert!(app.threads_pane_file_is_collapsed(std::path::Path::new("README.md")));
+    assert!(app.threads_pane_is_folded(std::path::Path::new("README.md")));
+
+    app.open_threads_pane_menu(0, 2, app.tree_rows() + 2);
+    assert_eq!(entries(&app)?[0].1, "expand");
+    let cell = entry_cell(&app, "expand")?;
+    left(&mut app, cell.0, cell.1);
+    assert!(!app.threads_pane_is_folded(std::path::Path::new("README.md")));
     Ok(())
 }
 
@@ -1300,8 +1371,8 @@ fn file_rows_and_the_files_pane_open_their_menus() -> anyhow::Result<()> {
     // The first body row is README's file row.
     right(&mut app, 2, top + 2);
     let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, label)| label).collect();
-    assert_eq!(labels, ["fold", "fold all", "open file"]);
-    let cell = entry_cell(&app, "fold")?;
+    assert_eq!(labels, ["collapse", "collapse all", "open file"]);
+    let cell = entry_cell(&app, "collapse")?;
     left(&mut app, cell.0, cell.1);
     assert!(app.threads_pane_is_folded(std::path::Path::new("README.md")));
     assert!(
@@ -1311,7 +1382,7 @@ fn file_rows_and_the_files_pane_open_their_menus() -> anyhow::Result<()> {
     );
     right(&mut app, 2, top + 2);
     let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, label)| label).collect();
-    assert_eq!(labels[..2], ["unfold", "unfold all"]);
+    assert_eq!(labels[..2], ["expand", "expand all"]);
     app.close_popup();
 
     // The files pane offers only actions on the pointed file.

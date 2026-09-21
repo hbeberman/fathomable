@@ -163,16 +163,32 @@ impl App {
     /// Drop a normal-surface cursor once its thread leaves the installed
     /// presentation. Explicit history views keep repository-wide cursors.
     pub(crate) fn reconcile_normal_thread_cursor(&mut self) {
-        if self.review_list.is_open() && self.review.view != super::list::ReviewView::Board {
-            return;
-        }
-        let hidden = self
-            .thread_cursor()
+        let file_hidden = self
+            .file_thread_cursor()
             .thread()
             .and_then(|id| self.thread(id))
             .is_some_and(|thread| !self.normal_thread(thread));
-        if hidden {
-            self.clear_thread_cursor();
+        if file_hidden {
+            self.thread_cursor = super::cursor::ThreadCursor::default();
+            self.thread_cursor_anchor = None;
+        }
+        let pane_hidden = self
+            .threads_pane_thread_cursor()
+            .thread()
+            .and_then(|id| self.thread(id))
+            .is_some_and(|thread| !self.normal_thread(thread));
+        if pane_hidden {
+            self.threads_pane_cursor = super::cursor::ThreadCursor::default();
+        }
+        if !self.review_list.is_open() || self.review.view == super::list::ReviewView::Board {
+            let review_hidden = self
+                .review_thread_cursor()
+                .thread()
+                .and_then(|id| self.thread(id))
+                .is_some_and(|thread| !self.normal_thread(thread));
+            if review_hidden {
+                self.review_thread_cursor = super::cursor::ThreadCursor::default();
+            }
         }
     }
 }

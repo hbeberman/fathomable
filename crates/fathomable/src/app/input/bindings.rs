@@ -632,14 +632,14 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[k(K::Tab)]],
         A::OpenThreadNext,
         "Navigation",
-        "next open review thread",
+        "next open thread in this surface",
     ),
     bind(
         W::Any,
         &[&[k(K::BackTab)]],
         A::OpenThreadPrev,
         "Navigation",
-        "previous open review thread",
+        "previous open thread in this surface",
     ),
     bind(W::Any, &[&[c('w')]], A::WindowNext, "Focus", "next pane"),
     bind(
@@ -669,14 +669,14 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c('J')], &[shift(K::Down)]],
         A::ChangeNext,
         "Navigation",
-        "next comparison change",
+        "next comparison change at top third",
     ),
     bind(
         W::Any,
         &[&[c('K')], &[shift(K::Up)]],
         A::ChangePrev,
         "Navigation",
-        "previous comparison change",
+        "previous comparison change at top third",
     ),
     bind(
         W::Any,

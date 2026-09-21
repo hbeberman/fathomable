@@ -10,14 +10,17 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[cfg(test)]
 use std::cell::Cell;
 
-use fathomable_core::annotations::{Author, Thread, ThreadId};
-use fathomable_core::highlight::Highlighter;
-use fathomable_core::layout::{Layout, display_width};
+use fathomable_core::annotations::{
+    Author, LineRange, MAX_ORIGIN_EVIDENCE_BYTES, Thread, ThreadId,
+};
+use fathomable_core::highlight::{Highlighter, Highlights, language_hint};
+use fathomable_core::layout::{Layout, Line as LayoutLine, display_width};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
@@ -29,6 +32,12 @@ use crate::app::threads::author_label;
 /// thread's own gutter (ADR 0071) and two more.
 pub(crate) const MESSAGE_INDENT: usize = THREAD_GUTTER + 2;
 const CACHED_WIDTHS_PER_THREAD: usize = 2;
+/// Maximum logical source rows prepared for one immutable origin block.
+pub(crate) const MAX_ORIGIN_CONTEXT_ROWS: usize = 256;
+/// Cells between the main Threads edge and immutable source text.
+pub(crate) const ORIGIN_CONTEXT_INDENT: usize = 4;
+const SELECTED_SOURCE_OMITTED: &str = "… selected source omitted …";
+pub(crate) const CAPTURED_CONTEXT_TRUNCATED: &str = "… captured context truncated …";
 
 /// One message of a thread: the comment or a reply.
 struct Message<'a> {
@@ -118,6 +127,311 @@ impl MessageLayoutCache {
     #[cfg(test)]
     pub(crate) fn renders(&self) -> usize {
         self.renders.get()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OriginLineKind {
+    Context,
+    Selected,
+    Omitted,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedOrigin {
+    path: PathBuf,
+    range: LineRange,
+    text: String,
+    lines: Vec<OriginLineKind>,
+    highlights: Option<Highlights>,
+    truncated: bool,
+}
+
+impl PreparedOrigin {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "One bounded pass keeps logical selection, byte limits, and syntax input aligned."
+    )]
+    fn new(thread: &Thread, highlighter: &Highlighter) -> Option<Self> {
+        let origin = thread.origin();
+        let range = origin.range()?;
+        let (before, selected, after, capture_truncated, capture_omitted) =
+            origin.context().map_or_else(
+                || {
+                    let selected = if origin.snippet().is_empty() {
+                        vec![""]
+                    } else {
+                        origin.snippet().split('\n').collect()
+                    };
+                    (Vec::new(), selected, Vec::new(), false, false)
+                },
+                |context| {
+                    (
+                        context
+                            .before_lines()
+                            .iter()
+                            .rev()
+                            .take(3)
+                            .rev()
+                            .map(String::as_str)
+                            .collect(),
+                        context
+                            .selected_lines()
+                            .iter()
+                            .map(String::as_str)
+                            .collect(),
+                        context
+                            .after_lines()
+                            .iter()
+                            .take(3)
+                            .map(String::as_str)
+                            .collect(),
+                        context.is_truncated(),
+                        context.omitted_selected_lines() > 0,
+                    )
+                },
+            );
+        let side_rows = before.len() + after.len();
+        let selected_limit = MAX_ORIGIN_CONTEXT_ROWS.saturating_sub(side_rows);
+        let omit_selected = capture_omitted || selected.len() > selected_limit;
+        let mut logical = Vec::with_capacity(MAX_ORIGIN_CONTEXT_ROWS);
+        logical.extend(
+            before
+                .into_iter()
+                .map(|line| (line, OriginLineKind::Context)),
+        );
+        if omit_selected {
+            let kept = selected.len().min(selected_limit.saturating_sub(1));
+            let head = kept.div_ceil(2);
+            let tail = kept - head;
+            logical.extend(
+                selected[..head]
+                    .iter()
+                    .copied()
+                    .map(|line| (line, OriginLineKind::Selected)),
+            );
+            logical.push((SELECTED_SOURCE_OMITTED, OriginLineKind::Omitted));
+            logical.extend(
+                selected[selected.len().saturating_sub(tail)..]
+                    .iter()
+                    .copied()
+                    .map(|line| (line, OriginLineKind::Selected)),
+            );
+        } else {
+            logical.extend(
+                selected
+                    .iter()
+                    .copied()
+                    .map(|line| (line, OriginLineKind::Selected)),
+            );
+        }
+        logical.extend(
+            after
+                .into_iter()
+                .map(|line| (line, OriginLineKind::Context)),
+        );
+
+        let full_bytes = logical
+            .iter()
+            .map(|(line, _)| line.len())
+            .fold(logical.len().saturating_sub(1), usize::saturating_add);
+        let mut truncated = origin.evidence_truncated() || capture_truncated || omit_selected;
+        let mut text = String::with_capacity(full_bytes.min(MAX_ORIGIN_EVIDENCE_BYTES));
+        let mut lines = Vec::with_capacity(logical.len());
+        let mut remaining = MAX_ORIGIN_EVIDENCE_BYTES;
+        let total = logical.len();
+        for (index, (line, kind)) in logical.into_iter().enumerate() {
+            if index > 0 {
+                text.push('\n');
+                remaining = remaining.saturating_sub(1);
+            }
+            let rows_left = total - index;
+            let separators_left = rows_left.saturating_sub(1);
+            let content_budget = remaining.saturating_sub(separators_left);
+            let fair_budget = if full_bytes > MAX_ORIGIN_EVIDENCE_BYTES {
+                content_budget / rows_left.max(1)
+            } else {
+                content_budget
+            };
+            let end = utf8_prefix(line, line.len().min(fair_budget));
+            text.push_str(&line[..end]);
+            remaining = remaining.saturating_sub(end);
+            truncated |= end < line.len();
+            lines.push(kind);
+        }
+        let highlights = highlighter.highlight(&text, &language_hint(origin.path()));
+        Some(Self {
+            path: origin.path().to_path_buf(),
+            range,
+            text,
+            lines,
+            highlights,
+            truncated,
+        })
+    }
+}
+
+fn utf8_prefix(text: &str, mut end: usize) -> usize {
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    end
+}
+
+/// One wrapped immutable-origin row and its selected-range treatment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OriginContextRow {
+    pub(crate) line: LayoutLine,
+    pub(crate) selected: bool,
+    pub(crate) omitted: bool,
+}
+
+/// Width-dependent rows for one bounded, highlighted immutable origin.
+#[derive(Debug, Clone)]
+pub(crate) struct OriginContextLayout {
+    width: usize,
+    rows: Vec<OriginContextRow>,
+    truncated: bool,
+}
+
+impl OriginContextLayout {
+    fn new(prepared: &PreparedOrigin, width: usize) -> Self {
+        let layout = Layout::source_with_highlights(
+            &prepared.text,
+            width.max(1),
+            prepared.highlights.as_ref(),
+        );
+        let index = fathomable_core::layout::LineIndex::new(&prepared.text);
+        let mut rows: Vec<_> = layout
+            .lines()
+            .iter()
+            .map(|line| {
+                let kind = line
+                    .source_line()
+                    .or_else(|| line.source().map(|source| index.line_of(source.start)))
+                    .and_then(|line| prepared.lines.get(line.saturating_sub(1)))
+                    .copied()
+                    .unwrap_or(OriginLineKind::Context);
+                OriginContextRow {
+                    line: line.clone(),
+                    selected: kind == OriginLineKind::Selected,
+                    omitted: kind == OriginLineKind::Omitted,
+                }
+            })
+            .collect();
+        if prepared.lines.len() > index.line_count() {
+            let blank = Layout::source("", width.max(1)).lines()[0].clone();
+            rows.extend(
+                prepared.lines[index.line_count()..]
+                    .iter()
+                    .map(|kind| OriginContextRow {
+                        line: blank.clone(),
+                        selected: *kind == OriginLineKind::Selected,
+                        omitted: *kind == OriginLineKind::Omitted,
+                    }),
+            );
+        }
+        Self {
+            width,
+            rows,
+            truncated: prepared.truncated,
+        }
+    }
+
+    pub(crate) fn rows(&self) -> &[OriginContextRow] {
+        &self.rows
+    }
+
+    pub(crate) fn is_truncated(&self) -> bool {
+        self.truncated
+    }
+}
+
+#[derive(Debug)]
+struct CachedOrigin {
+    path: PathBuf,
+    range: LineRange,
+    content_hash: Option<String>,
+    context_shape: Option<(usize, usize, usize, bool)>,
+    prepared: Arc<PreparedOrigin>,
+    layouts: VecDeque<Arc<OriginContextLayout>>,
+}
+
+/// Retains immutable source highlighting separately from wrapped variants.
+#[derive(Debug, Default)]
+pub(crate) struct OriginContextCache {
+    entries: RefCell<HashMap<ThreadId, CachedOrigin>>,
+    #[cfg(test)]
+    preparations: Cell<usize>,
+}
+
+impl OriginContextCache {
+    pub(crate) fn layout(
+        &self,
+        thread: &Thread,
+        width: usize,
+        highlighter: &Highlighter,
+    ) -> Option<Arc<OriginContextLayout>> {
+        let origin = thread.origin();
+        let range = origin.range()?;
+        let content_hash = origin
+            .content()
+            .map(fathomable_core::annotations::ContentIdentity::hash);
+        let context_shape = origin.context().map(|context| {
+            (
+                context.before_lines().len(),
+                context.selected_lines().len(),
+                context.after_lines().len(),
+                context.is_truncated(),
+            )
+        });
+        let mut entries = self.entries.borrow_mut();
+        let stale = entries.get(thread.id()).is_some_and(|cached| {
+            cached.path != origin.path()
+                || cached.range != range
+                || cached.content_hash.as_deref() != content_hash
+                || cached.context_shape != context_shape
+        });
+        if stale {
+            entries.remove(thread.id());
+        }
+        let cached = match entries.entry(thread.id().clone()) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let prepared = Arc::new(PreparedOrigin::new(thread, highlighter)?);
+                #[cfg(test)]
+                self.preparations.set(self.preparations.get() + 1);
+                entry.insert(CachedOrigin {
+                    path: prepared.path.clone(),
+                    range: prepared.range,
+                    content_hash: content_hash.map(str::to_owned),
+                    context_shape,
+                    prepared,
+                    layouts: VecDeque::new(),
+                })
+            }
+        };
+        let code_width = width.saturating_sub(ORIGIN_CONTEXT_INDENT).max(1);
+        if let Some(at) = cached
+            .layouts
+            .iter()
+            .position(|layout| layout.width == code_width)
+            && let Some(layout) = cached.layouts.remove(at)
+        {
+            cached.layouts.push_back(Arc::clone(&layout));
+            return Some(layout);
+        }
+        let layout = Arc::new(OriginContextLayout::new(&cached.prepared, code_width));
+        if cached.layouts.len() >= CACHED_WIDTHS_PER_THREAD {
+            cached.layouts.pop_front();
+        }
+        cached.layouts.push_back(Arc::clone(&layout));
+        Some(layout)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn preparations(&self) -> usize {
+        self.preparations.get()
     }
 }
 
@@ -298,139 +612,4 @@ fn body_layout(body: &str, width: usize, highlighter: &Highlighter) -> Layout {
 }
 
 #[cfg(test)]
-mod tests {
-    use ratatui::style::Modifier;
-
-    use super::*;
-
-    fn theme() -> anyhow::Result<Theme> {
-        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
-        Ok(Theme::from_core(&core))
-    }
-
-    fn texts(lines: &[Line<'_>]) -> Vec<String> {
-        lines
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|s| s.content.as_ref())
-                    .collect::<String>()
-            })
-            .collect()
-    }
-
-    /// The same rows without the padding that fills each one out.
-    fn trimmed(lines: &[Line<'_>]) -> Vec<String> {
-        texts(lines)
-            .into_iter()
-            .map(|line| line.trim_end().to_owned())
-            .collect()
-    }
-
-    fn render(body: &str, badge: Option<&str>, width: usize) -> anyhow::Result<Vec<Line<'static>>> {
-        let author = Author::agent("Copilot");
-        let message = Message {
-            author: &author,
-            name: "Copilot",
-            created: 0,
-            badge,
-        };
-        let body = body_layout(body, width, &Highlighter::plain());
-        Ok(message_lines(&theme()?, &message, &body, 0, width, false))
-    }
-
-    #[test]
-    fn plain_sentence_renders_as_itself_under_the_header() -> anyhow::Result<()> {
-        let lines = render("please check this", None, 40)?;
-        assert_eq!(
-            trimmed(&lines),
-            ["  Copilot  just now", "    please check this"]
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn a_newline_stays_a_line_break() -> anyhow::Result<()> {
-        let lines = render("first\nsecond", None, 40)?;
-        assert_eq!(trimmed(&lines)[1..], ["    first", "    second"]);
-        Ok(())
-    }
-
-    #[test]
-    fn markdown_blocks_render_and_wrap_to_the_indented_width() -> anyhow::Result<()> {
-        let body = "Two **points**:\n\n- first\n- second `x`\n\n```rust\nfn a() {}\n```\n";
-        let lines = render(body, Some("proposes resolving"), 30)?;
-        let rows = trimmed(&lines);
-        assert_eq!(rows[0], "  Copilot  just now  [proposes resolving]");
-        assert!(rows.iter().any(|t| t == "    Two points:"), "{rows:?}");
-        assert!(rows.iter().any(|t| t.contains("• first")), "{rows:?}");
-        assert!(rows.iter().any(|t| t.contains("fn a() {}")), "{rows:?}");
-        let bold = lines[1].spans.iter().find(|s| s.content == "points");
-        assert!(
-            bold.is_some_and(|s| s.style.add_modifier.contains(Modifier::BOLD)),
-            "strong span"
-        );
-        let long = "word ".repeat(20);
-        let wrapped = render(&long, None, 30)?;
-        assert!(wrapped.len() > 3, "wrapped: {}", wrapped.len());
-        assert!(texts(&wrapped).iter().all(|t| display_width(t) == 30));
-        Ok(())
-    }
-
-    #[test]
-    fn every_row_fills_the_width_so_the_background_reaches_the_edge() -> anyhow::Result<()> {
-        let lines = render("short", None, 24)?;
-        assert!(texts(&lines).iter().all(|line| display_width(line) == 24));
-        Ok(())
-    }
-
-    /// ADR 0071: the cursor's message keeps its author's stripe and
-    /// gets the bar down its rows and a bold name; another author's
-    /// message sits on its own stripe with no bar.
-    #[test]
-    fn a_selected_message_keeps_its_stripe_and_gets_the_bar() -> anyhow::Result<()> {
-        let theme = theme()?;
-        let message = Message {
-            author: &Author::User,
-            name: "User",
-            created: 0,
-            badge: None,
-        };
-        let body = body_layout("selected\nrows", 24, &Highlighter::plain());
-        let lines = message_lines(&theme, &message, &body, 0, 24, true);
-        assert!(
-            lines
-                .iter()
-                .all(|line| line.style.bg == theme.thread_user.bg)
-        );
-        assert!(texts(&lines).iter().all(|line| display_width(line) == 24));
-        assert!(
-            texts(&lines).iter().all(|line| line.starts_with("▎")),
-            "{:?}",
-            texts(&lines)
-        );
-        let name = lines[0].spans.iter().find(|s| s.content == "User");
-        assert!(
-            name.is_some_and(|s| s.style.add_modifier.contains(Modifier::BOLD)
-                && s.style.fg == theme.thread_user.fg),
-            "bold in the user's colour"
-        );
-        let agent = Author::agent("coder");
-        let other = Message {
-            author: &agent,
-            name: "coder",
-            created: 0,
-            badge: None,
-        };
-        let body = body_layout("theirs", 24, &Highlighter::plain());
-        let lines = message_lines(&theme, &other, &body, 0, 24, false);
-        assert!(
-            lines
-                .iter()
-                .all(|line| line.style.bg == theme.thread_agent.bg)
-        );
-        assert!(texts(&lines).iter().all(|line| line.starts_with(' ')));
-        Ok(())
-    }
-}
+mod tests;

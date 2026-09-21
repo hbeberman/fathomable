@@ -158,6 +158,7 @@ impl App {
 
     /// Apply a completed generation, rejecting removed or reloaded documents.
     pub(crate) fn apply_highlight(&mut self, highlighted: Highlighted) -> bool {
+        self.capture_file_navigation_seat();
         let Some((index, doc)) = self
             .docs
             .iter_mut()
@@ -169,7 +170,11 @@ impl App {
         let changed = doc
             .view
             .apply_highlight(highlighted.generation, highlighted.runs);
-        changed && self.current == Some(index)
+        let current_changed = changed && self.current == Some(index);
+        if current_changed {
+            self.restore_navigation_placement();
+        }
+        current_changed
     }
 }
 

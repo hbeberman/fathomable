@@ -19,9 +19,12 @@ pub(crate) enum Position {
         path: PathBuf,
         line: usize,
         thread: Option<ThreadId>,
+        message: Option<usize>,
+        comparison: Option<super::navigation::ComparisonPosition>,
     },
     Review {
         thread: ThreadId,
+        message: usize,
     },
 }
 
@@ -111,6 +114,8 @@ mod tests {
             path: Path::new(path).to_path_buf(),
             line,
             thread: None,
+            message: None,
+            comparison: None,
         }
     }
 

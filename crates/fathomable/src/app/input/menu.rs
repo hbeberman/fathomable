@@ -1184,8 +1184,7 @@ impl App {
     pub(super) fn open_threads_pane_menu(&mut self, entry_row: usize, column: usize, row: usize) {
         match self.threads_pane_point(entry_row) {
             Some(PanePoint::File(path)) => {
-                let folded = self.threads_pane_is_folded(&path);
-                let menu = self.file_menu(Where::ThreadsPane, &path, folded, column, row);
+                let menu = self.file_menu(Where::ThreadsPane, &path, column, row);
                 self.open_menu(menu);
             }
             Some(PanePoint::Thread) => {
@@ -1200,8 +1199,7 @@ impl App {
     /// file row's menu, or the thread's.
     pub(super) fn open_review_menu(&mut self, list_row: usize, column: usize, row: usize) {
         if let Some(path) = self.review_point(list_row) {
-            let folded = self.review_list().is_folded(&path);
-            let menu = self.file_menu(Where::Review, &path, folded, column, row);
+            let menu = self.file_menu(Where::Review, &path, column, row);
             self.open_menu(menu);
             return;
         }
@@ -1226,33 +1224,35 @@ impl App {
     /// pane fold or unfold every file (the list's `Z` folds threads, ADR
     /// 0076), then open the file. The review list also carries its resolved
     /// toggle; the pane keeps that setting in its title menu.
-    fn file_menu(
-        &self,
-        place: Where,
-        path: &Path,
-        folded: bool,
-        column: usize,
-        row: usize,
-    ) -> Menu {
+    fn file_menu(&self, place: Where, path: &Path, column: usize, row: usize) -> Menu {
         let name = path.file_name().map_or_else(
             || path.display().to_string(),
             |name| name.to_string_lossy().into_owned(),
         );
         let mut menu = Menu::new(name, place, column, row);
+        let collapsed = match place {
+            Where::Review => self.review_file_is_collapsed(path),
+            Where::ThreadsPane => self.threads_pane_file_is_collapsed(path),
+            _ => false,
+        };
         menu.push(
             Action::Fold,
             Action::Fold,
-            if folded { "unfold" } else { "fold" },
+            if collapsed { "expand" } else { "collapse" },
         );
         if place == Where::ThreadsPane {
             let any_folded = self
                 .review_entries(false)
                 .iter()
-                .any(|entry| self.threads_pane_is_folded(entry.path()));
+                .any(|entry| self.threads_pane_file_is_collapsed(entry.path()));
             menu.push(
                 Action::FoldAll,
                 Action::FoldAll,
-                if any_folded { "unfold all" } else { "fold all" },
+                if any_folded {
+                    "expand all"
+                } else {
+                    "collapse all"
+                },
             );
         }
         menu.push(Action::Confirm, Action::Confirm, "open file");
@@ -1276,17 +1276,17 @@ impl App {
     fn thread_menu(&self, place: Where, column: usize, row: usize) -> Menu {
         let mut menu = Menu::new("thread", place, column, row);
         if place == Where::Review {
-            let folded = self
+            let collapsed = self
                 .thread_cursor()
                 .thread()
-                .is_some_and(|id| self.review_list().is_thread_folded(id));
+                .is_some_and(|id| self.review_thread_is_collapsed(id));
             menu.push(
                 Action::Fold,
                 Action::Fold,
-                if folded {
+                if collapsed {
                     "expand thread"
                 } else {
-                    "fold thread"
+                    "collapse thread"
                 },
             );
         }

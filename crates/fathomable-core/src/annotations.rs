@@ -398,6 +398,22 @@ impl OriginVersion {
             | Self::Unknown => None,
         }
     }
+
+    /// Commit reference captured with this origin, when one was recorded.
+    ///
+    /// For mutable origins this identifies the observed baseline, not the
+    /// bytes retained as source evidence.
+    #[must_use]
+    pub fn commit_reference(&self) -> Option<&str> {
+        match self {
+            Self::Commit { id } => Some(id),
+            Self::WorkingTree { observed_head } | Self::Index { observed_head } => {
+                observed_head.as_deref()
+            }
+            Self::ReviewPoint { base, .. } => base.as_deref(),
+            Self::EmptyTree | Self::Unknown => None,
+        }
+    }
 }
 
 /// Which side of a human comparison supplied the original lines.
@@ -961,10 +977,12 @@ impl Origin {
     /// Attach input-bound provenance facts without changing source evidence.
     #[must_use]
     pub fn with_provenance(mut self, mut provenance: Provenance) -> Self {
+        let evidence_truncated = self.provenance.evidence_truncated
+            || self.context.as_ref().is_some_and(Context::is_truncated);
         if provenance.content.is_none() {
             provenance.content = Some(ContentIdentity::from_text(&self.snippet));
         }
-        if self.snippet.len() > MAX_ORIGIN_EVIDENCE_BYTES {
+        if evidence_truncated || self.snippet.len() > MAX_ORIGIN_EVIDENCE_BYTES {
             provenance.evidence_truncated = true;
         }
         self.provenance = provenance;

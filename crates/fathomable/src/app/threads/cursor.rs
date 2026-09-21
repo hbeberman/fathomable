@@ -1,18 +1,10 @@
 // @okf-doc: /decisions/0046-one-thread-cursor.md
-//! The thread cursor: the one thread and message the reader is on, which
-//! the expanded stubs, the threads pane, and the review list all show
-//! and all move.
+//! Logical thread cursors for File, main Threads, and the sidebar Thread list.
 //!
-//! While the review list is open the cursor is what the last motion,
-//! click, or `c` set, and it stays so while
-//! the text cursor rests on the row that motion left it on. Once the
-//! reader moves in the text with both closed, the cursor rides the text
-//! cursor: the thread starting on the cursor line, else the first on its
-//! row, else the nearest starting above, at its newest message, so
-//! reading a file walks the threads pane. Every motion resolves the
-//! cursor with [`App::thread_cursor`] and steps from it, so a step from
-//! any surface is a step from the same place, and two threads folded
-//! into one rendered row are still told apart.
+//! Each action resolves the thread and message from the surface that owns the
+//! action. File follows its seated text cursor, while main Threads and Thread
+//! list retain independent logical selections. This prevents a sidebar preview
+//! from retargeting actions or history on a still-visible main Threads entry.
 //!
 //! The direct workspace motion [`App::thread_step_across`] walks open
 //! threads in path order. File-local stepping remains the sidebar's
@@ -71,11 +63,19 @@ impl ThreadCursor {
 }
 
 impl App {
-    /// The cursor as every thread surface shows it: the stored one while
-    /// the list is open or the text cursor has not moved since it was
-    /// set, else the thread under the text cursor at its newest message.
+    /// The logical cursor owned by the focused surface.
     #[must_use]
     pub(crate) fn thread_cursor(&self) -> ThreadCursor {
+        match self.focus {
+            crate::app::Focus::Review => self.review_thread_cursor.clone(),
+            crate::app::Focus::ThreadsPane => self.threads_pane_thread_cursor(),
+            crate::app::Focus::View | crate::app::Focus::Tree => self.file_thread_cursor(),
+        }
+    }
+
+    /// The logical cursor seated in File.
+    #[must_use]
+    pub(crate) fn file_thread_cursor(&self) -> ThreadCursor {
         if self.cursor_is_stored() {
             self.thread_cursor.clone()
         } else {
@@ -83,11 +83,41 @@ impl App {
         }
     }
 
+    /// The logical cursor retained by main Threads.
+    #[must_use]
+    pub(crate) fn review_thread_cursor(&self) -> ThreadCursor {
+        self.review_thread_cursor.clone()
+    }
+
+    /// The logical cursor retained by the sidebar Thread list.
+    #[must_use]
+    pub(crate) fn threads_pane_thread_cursor(&self) -> ThreadCursor {
+        let ids = self.threads_pane_ids();
+        if self
+            .threads_pane_cursor
+            .thread()
+            .is_some_and(|id| ids.contains(id))
+        {
+            self.threads_pane_cursor.clone()
+        } else {
+            let candidate = if self.review_list.is_open() {
+                self.review_thread_cursor()
+            } else {
+                self.file_thread_cursor()
+            };
+            if candidate.thread().is_some_and(|id| ids.contains(id)) {
+                candidate
+            } else {
+                ThreadCursor::default()
+            }
+        }
+    }
+
     /// Whether the stored cursor is authoritative: the list keeps its own
     /// place, or the text cursor still rests where the last thread motion
     /// left it.
     fn cursor_is_stored(&self) -> bool {
-        self.review_list.is_open() || self.thread_cursor_anchor == Some(self.text_anchor())
+        self.thread_cursor_anchor == Some(self.text_anchor())
     }
 
     /// Where the text cursor is, for telling a rest from a move.
@@ -164,20 +194,51 @@ impl App {
         } else {
             self.newest_message(&id)
         };
-        self.pin_thread_cursor(ThreadCursor::new(id, message));
+        self.set_focused_thread_cursor(ThreadCursor::new(id, message));
     }
 
     /// Put the cursor on message `message` of `id`, clamped to the
     /// thread's messages.
     pub(crate) fn set_thread_cursor_message(&mut self, id: ThreadId, message: usize) {
         let last = self.newest_message(&id);
-        self.pin_thread_cursor(ThreadCursor::new(id, message.min(last)));
+        let message = message.min(last);
+        let cursor = ThreadCursor::new(id, message);
+        self.set_focused_thread_cursor(cursor);
     }
 
-    /// Clear a stored cursor after its pane entry disappears.
-    pub(crate) fn clear_thread_cursor(&mut self) {
-        self.thread_cursor = ThreadCursor::default();
-        self.thread_cursor_anchor = None;
+    fn set_focused_thread_cursor(&mut self, cursor: ThreadCursor) {
+        match self.focus {
+            crate::app::Focus::Review => {
+                if let Some(id) = cursor.thread() {
+                    self.update_review_peek_message(id, cursor.message());
+                }
+                self.review_thread_cursor = cursor;
+            }
+            crate::app::Focus::ThreadsPane => self.threads_pane_cursor = cursor,
+            crate::app::Focus::View | crate::app::Focus::Tree => {
+                if let Some(id) = cursor.thread() {
+                    self.update_file_peek_message(id, cursor.message());
+                }
+                self.pin_thread_cursor(cursor);
+            }
+        }
+    }
+
+    pub(super) fn set_review_thread_cursor(&mut self, id: ThreadId, message: usize) {
+        let message = message.min(self.newest_message(&id));
+        self.update_review_peek_message(&id, message);
+        self.review_thread_cursor = ThreadCursor::new(id, message);
+    }
+
+    pub(super) fn set_threads_pane_cursor(&mut self, id: &ThreadId, message: usize) {
+        self.threads_pane_cursor =
+            ThreadCursor::new(id.clone(), message.min(self.newest_message(id)));
+    }
+
+    pub(super) fn set_file_thread_cursor(&mut self, id: ThreadId, message: usize) {
+        let message = message.min(self.newest_message(&id));
+        self.update_file_peek_message(&id, message);
+        self.pin_thread_cursor(ThreadCursor::new(id, message));
     }
 
     // ----- motions -----
@@ -186,11 +247,19 @@ impl App {
     /// `Err(i)` between threads `i - 1` and `i` when the text cursor is
     /// driving and sits on no thread's first line.
     fn anchor_in(&self, order: &[ThreadId]) -> Result<usize, usize> {
-        if self.cursor_is_stored()
-            && let Some(index) = self
-                .thread_cursor
-                .thread()
-                .and_then(|id| order.iter().position(|other| other == id))
+        let selected = match self.focus {
+            crate::app::Focus::Review => self.review_thread_cursor().thread().cloned(),
+            crate::app::Focus::ThreadsPane => self.threads_pane_thread_cursor().thread().cloned(),
+            crate::app::Focus::View | crate::app::Focus::Tree if self.cursor_is_stored() => {
+                self.thread_cursor.thread().cloned()
+            }
+            crate::app::Focus::View | crate::app::Focus::Tree => self
+                .expanded_row_message(self.view().cursor().row)
+                .map(|(id, _)| id),
+        };
+        if let Some(index) = selected
+            .as_ref()
+            .and_then(|id| order.iter().position(|other| other == id))
         {
             return Ok(index);
         }
@@ -198,15 +267,9 @@ impl App {
             self.current_path().to_path_buf(),
             Some(self.view().cursor_source_line().unwrap_or(0)),
         );
-        if let Some(index) = order
-            .iter()
-            .position(|id| self.thread_start(id).as_ref() == Some(&here))
-        {
-            return Ok(index);
-        }
         Err(order
             .iter()
-            .position(|id| self.thread_start(id).is_some_and(|start| start > here))
+            .position(|id| self.thread_start(id).is_some_and(|start| start >= here))
             .unwrap_or(order.len()))
     }
 
@@ -260,20 +323,78 @@ impl App {
         }
     }
 
-    /// `Tab` / `Shift-Tab`: move through open threads across the workspace.
+    /// `Tab` / `Shift-Tab`: traverse open threads in the focused surface.
     pub(crate) fn thread_step_across(&mut self, delta: isize) {
         if self.store.is_none() {
             self.store_mut();
             return;
         }
-        let order = self.workspace_threads();
+        let order = match self.focus {
+            crate::app::Focus::Review => self.review_open_threads(),
+            crate::app::Focus::ThreadsPane => self.threads_pane_open_threads(),
+            crate::app::Focus::View | crate::app::Focus::Tree => self.workspace_threads(),
+        };
         if order.is_empty() {
-            self.notice("no open threads in the workspace");
+            self.notice(match self.focus {
+                crate::app::Focus::Review => "no open thread in the current view",
+                crate::app::Focus::ThreadsPane
+                    if self.sidebar_scope() == super::pane::PaneScope::File =>
+                {
+                    "no open thread in the current pane"
+                }
+                _ => "no open threads in the workspace",
+            });
             return;
         }
         if let Some(id) = self.step_in(&order, delta) {
-            self.land_on_thread(id);
+            match self.focus {
+                crate::app::Focus::Review => {
+                    self.land_review_thread(&id);
+                }
+                crate::app::Focus::ThreadsPane => self.land_thread_step_in_pane(&id),
+                crate::app::Focus::View | crate::app::Focus::Tree => {
+                    self.land_file_thread_jump(id);
+                }
+            }
         }
+    }
+
+    /// Land a traversal target in File, or fall back to immutable evidence.
+    pub(super) fn land_file_thread_jump(&mut self, id: ThreadId) -> Option<ThreadLanding> {
+        let path = self
+            .thread(&id)
+            .map(|thread| self.thread_path(thread).to_path_buf())?;
+        let previous = (
+            self.current_path().to_path_buf(),
+            self.view().cursor_source_line().unwrap_or(1),
+        );
+        self.close_popup();
+        self.open_file_view();
+        if path != self.current_path() {
+            self.open(&path);
+        }
+        if self.thread_source_is_displayable(&id) {
+            let newest = self.newest_message(&id);
+            self.peek_file_thread(id.clone());
+            self.goto_message(id.clone(), newest);
+            if let Some((span, priority)) = self.file_thread_jump_span(&id, newest) {
+                self.view_mut().place_jump_span(span, priority);
+            }
+            self.set_thread_cursor_message(id, newest);
+            self.focus = crate::app::Focus::View;
+            self.synchronize_tree_to(&path);
+            return Some(ThreadLanding::Source);
+        }
+        if !previous.0.as_os_str().is_empty() && previous.0 != self.current_path() {
+            self.open(&previous.0);
+            if previous.0 == self.current_path() {
+                self.view_mut().goto_source_line(previous.1);
+            }
+        }
+        self.land_thread_evidence(&id).then(|| {
+            self.synchronize_tree_to(&path);
+            ThreadLanding::Review
+        })
     }
 
     /// Go to `id` in source, or show its immutable Review evidence.
@@ -412,8 +533,14 @@ impl App {
         // ones are shown): the cursor moves to the entry now in its
         // place and the scroll stays, the rows below having moved up.
         let place = self.review_selected_index();
+        let pane_place = (self.focus == crate::app::Focus::ThreadsPane)
+            .then(|| self.threads_pane_selected())
+            .flatten();
         self.toggle_resolved(&id);
         self.review_reselect(place);
+        if self.focus == crate::app::Focus::ThreadsPane {
+            self.threads_pane_reselect(pane_place);
+        }
     }
 
     /// `R`: toggle one-shot auto-resolve on the cursor's unresolved thread.

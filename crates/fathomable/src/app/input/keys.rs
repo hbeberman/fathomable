@@ -335,11 +335,27 @@ impl App {
             && self.jump_origin().as_ref() != Some(&from)
         {
             self.record_jump(from);
+            if !matches!(
+                action,
+                Action::OpenThreadNext
+                    | Action::OpenThreadPrev
+                    | Action::ChangeNext
+                    | Action::ChangePrev
+                    | Action::ChangeFileNext
+                    | Action::ChangeFilePrev
+                    | Action::JumpBack
+                    | Action::JumpForward
+            ) {
+                self.dismiss_navigation_peek();
+            }
         }
         effect
     }
 
     fn accepts_action(&mut self, place: Where, action: Action) -> bool {
+        if place == Where::ThreadsPane {
+            self.reconcile_threads_pane_cursor();
+        }
         if matches!(
             place,
             Where::View | Where::Tree | Where::Review | Where::ThreadsPane
@@ -500,6 +516,25 @@ impl App {
             Action::EditMessage => self.thread_edit_message(),
             Action::Delete => self.delete_armed_thread(),
             _ => {
+                if matches!(
+                    action,
+                    Action::MoveDown
+                        | Action::MoveUp
+                        | Action::MoveLeft
+                        | Action::MoveRight
+                        | Action::LineStart
+                        | Action::LineEnd
+                        | Action::GotoLineStart
+                        | Action::GotoLineEnd
+                        | Action::Top
+                        | Action::Bottom
+                        | Action::HalfPageDown
+                        | Action::HalfPageUp
+                        | Action::SearchNext
+                        | Action::SearchPrev
+                ) {
+                    self.retire_change_jump();
+                }
                 let view = self.view_mut();
                 match action {
                     Action::MoveDown => view.move_down(1),

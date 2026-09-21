@@ -524,8 +524,9 @@ fn tab_review_fallback_supports_a_conversation_draft_and_jumplist() -> anyhow::R
     assert!(app.review_list().is_open());
     assert_eq!(app.thread_cursor().thread(), Some(&thread));
     let review = testing::screen(&app)?.join("\n");
-    assert!(review.contains("origin:"), "{review}");
-    assert!(review.contains("excerpt: gone"), "{review}");
+    assert!(review.contains("⚠ original deleted.md:L1"), "{review}");
+    assert!(review.contains("gone"), "{review}");
+    assert!(!review.contains("excerpt:"), "{review}");
 
     app.thread_reply();
     assert!(app.draft().is_some());

@@ -47,6 +47,18 @@ and `Esc`.
 Amended 2026-09-19: pane-independent thread workflows use `Space t`, so
 review-list reply and edit routes are `Space t r` and `Space t e`.
 
+Amended 2026-09-20: a new annotation draft captures its displayed side,
+exact range, immutable source text, source version, and provenance when the
+draft opens. Resize and relayout never reconstruct that evidence from the
+later rendered cursor. A working-tree rename updates only the draft's
+destination path; its captured source identity remains unchanged.
+
+Amended later 2026-09-20: while a draft is active, it owns the viewport.
+Passive resize, rewrap, and delayed syntax-highlight completion keep the final
+draft cursor visible instead of reapplying an earlier thread or comparison
+jump placement. The logical jump identity remains available after the draft
+closes; no raw viewport offset is retained.
+
 ## Context
 
 [0013](0013-annotation-storage-and-ux.md) gave the viewer a comment box

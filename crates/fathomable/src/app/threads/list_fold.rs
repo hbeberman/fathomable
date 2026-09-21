@@ -31,6 +31,16 @@ impl ReviewList {
 }
 
 impl App {
+    /// Whether the file group is effectively collapsed on main Threads.
+    pub(crate) fn review_file_is_collapsed(&self, path: &Path) -> bool {
+        self.review_list.is_folded(path) && !self.review_file_peeked(path)
+    }
+
+    /// Whether the thread is effectively collapsed on main Threads.
+    pub(crate) fn review_thread_is_collapsed(&self, id: &ThreadId) -> bool {
+        self.review_list.is_thread_folded(id) && !self.review_thread_peeked(id)
+    }
+
     /// `z`: fold or expand the cursor's thread; on a file row, fold the
     /// file to its row or unfold it.
     pub(crate) fn review_fold(&mut self) {
@@ -56,8 +66,10 @@ impl App {
             .iter()
             .map(|entry| entry.id().clone())
             .collect();
+        let any_expanded = listed.iter().any(|id| !self.review_thread_is_collapsed(id));
+        self.release_all_review_thread_peeks();
         let folded = &mut self.review_list.folded_threads;
-        if listed.iter().any(|id| !folded.contains(id)) {
+        if any_expanded {
             folded.extend(listed);
         } else {
             for id in &listed {
@@ -69,7 +81,11 @@ impl App {
 
     /// Fold `id` to one row, or expand it again.
     pub(crate) fn review_toggle_thread(&mut self, id: &ThreadId) {
-        if !self.review_list.folded_threads.remove(id) {
+        let visibly_folded = self.review_thread_is_collapsed(id);
+        self.release_review_thread_peek(id);
+        if visibly_folded {
+            self.review_list.folded_threads.remove(id);
+        } else {
             self.review_list.folded_threads.insert(id.clone());
         }
         self.review_follow_cursor();
@@ -78,7 +94,11 @@ impl App {
     /// Fold `path` to its row, or unfold it, the cursor resting on the
     /// row.
     pub(crate) fn review_toggle_fold(&mut self, path: &Path) {
-        if !self.review_list.folded.remove(path) {
+        let visibly_folded = self.review_file_is_collapsed(path);
+        self.release_review_file_peek(path);
+        if visibly_folded {
+            self.review_list.folded.remove(path);
+        } else {
             self.review_list.folded.insert(path.to_path_buf());
         }
         let rows = self.review_rows(self.column_width());

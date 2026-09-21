@@ -226,6 +226,7 @@ impl App {
         });
         let label = self.label_of(&root);
         self.close_popup();
+        self.dismiss_navigation_peek();
         self.head_transition_prompt = None;
         self.index_transition_prompt = None;
         self.cancel_tree_scan();
@@ -475,6 +476,32 @@ mod tests {
         app.act(Action::WorktreeNext);
         app.settle_background();
         assert_eq!(app.current_path(), Path::new(""), "nothing open");
+        Ok(())
+    }
+
+    #[test]
+    fn paging_invalidates_navigation_owned_thread_visibility() -> anyhow::Result<()> {
+        let (dir, main, feature) = repo("peek")?;
+        let mut app = app_on(&dir, &main)?;
+        app.open(Path::new("a.md"));
+        app.view_mut().goto_source_line(2);
+        app.start_new_comment();
+        app.compose_insert("review");
+        app.compose_submit();
+        let id = app.marks()[0].id().clone();
+        app.fold_thread(&id);
+        app.thread_step_across(1);
+        assert!(app.is_expanded(&id));
+
+        assert!(app.activate_worktree(&feature));
+        app.settle_background();
+        assert!(app.activate_worktree(&main));
+        app.settle_background();
+
+        assert!(
+            !app.is_expanded(&id),
+            "a peek from the prior checkout must not reappear"
+        );
         Ok(())
     }
 

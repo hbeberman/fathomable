@@ -563,6 +563,55 @@ impl Layout {
         self
     }
 
+    /// Insert original-side removed rows at a target-side insertion boundary.
+    ///
+    /// These rows are synthetic with respect to this layout's source text,
+    /// but retain their exact original-side line identity for navigation.
+    #[must_use]
+    pub fn with_old_deletion(
+        mut self,
+        old: &str,
+        old_range: Range<usize>,
+        insertion_line: usize,
+    ) -> Self {
+        let old_index = LineIndex::new(old);
+        let at = self
+            .lines
+            .iter()
+            .position(|line| {
+                line.source
+                    .as_ref()
+                    .is_some_and(|range| self.index.line_of(range.start) >= insertion_line)
+            })
+            .unwrap_or(self.lines.len());
+        let mut removed = Vec::new();
+        for old_line in old_range {
+            let Some(range) = old_index.range_of(old_line + 1) else {
+                continue;
+            };
+            let style = Style {
+                face: Face::DiffRemoved,
+                ..Style::default()
+            };
+            let chunk = Chunk::new(&old[range], style.clone(), None);
+            let content_width = self.width.saturating_sub(1).max(1);
+            for (part, mut line) in wrap_hard(&chunk, content_width).into_iter().enumerate() {
+                line.spans.insert(
+                    0,
+                    Span {
+                        text: if part == 0 { "-" } else { " " }.to_owned(),
+                        style: style.clone(),
+                        source: None,
+                    },
+                );
+                line.old_diff = Some(old_line + 1);
+                removed.push(line);
+            }
+        }
+        self.lines.splice(at..at, removed);
+        self
+    }
+
     /// Insert `count` sourceless rows after the row each anchor names
     /// (ADR 0049), block `i`'s rows carrying `(i, 0..count)`. Blocks
     /// are given in row order; two on one anchor come one after the

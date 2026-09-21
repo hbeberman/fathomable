@@ -210,12 +210,26 @@ impl App {
         self.sidebar.folded.contains(path)
     }
 
+    /// Whether the file group is effectively collapsed in the Thread list.
+    pub(crate) fn threads_pane_file_is_collapsed(&self, path: &Path) -> bool {
+        self.threads_pane_is_folded(path) && !self.pane_file_peeked(path)
+    }
+
     /// The threads the pane lists, in its order, resolved ones only when
     /// the review shows them: this file's by line, or the workspace's by
     /// file and line (ADR 0066).
-    fn threads_pane_ids(&self) -> Vec<ThreadId> {
+    pub(super) fn threads_pane_ids(&self) -> Vec<ThreadId> {
         self.normal_review_entries(self.sidebar.scope == PaneScope::File)
             .into_iter()
+            .map(|entry| entry.id().clone())
+            .collect()
+    }
+
+    /// Open threads admitted by the pane's current scope and lifecycle filter.
+    pub(super) fn threads_pane_open_threads(&self) -> Vec<ThreadId> {
+        self.normal_review_entries(self.sidebar.scope == PaneScope::File)
+            .into_iter()
+            .filter(|entry| matches!(entry.kind(), ThreadState::Active | ThreadState::Proposed))
             .map(|entry| entry.id().clone())
             .collect()
     }
@@ -227,7 +241,7 @@ impl App {
         let mut out = Vec::new();
         for entry in self.normal_review_entries(self.sidebar.scope == PaneScope::File) {
             let folded = self.sidebar.scope == PaneScope::Workspace
-                && self.sidebar.folded.contains(entry.path());
+                && self.threads_pane_file_is_collapsed(entry.path());
             let first_of_file = last_path.as_deref() != Some(entry.path());
             if !folded || first_of_file {
                 out.push(entry.id().clone());
@@ -242,7 +256,7 @@ impl App {
     /// the threads alone.
     pub(crate) fn threads_pane_rows(&self) -> Vec<PaneRow> {
         let grouped = self.sidebar.scope == PaneScope::Workspace;
-        let cursor = self.thread_cursor().thread().cloned();
+        let cursor = self.threads_pane_thread_cursor().thread().cloned();
         let entries = self.normal_review_entries(!grouped);
         let mut out = Vec::new();
         let mut index = 0;
@@ -252,7 +266,7 @@ impl App {
                 .iter()
                 .position(|entry| entry.path() != path)
                 .map_or(entries.len(), |len| index + len);
-            let folded = grouped && self.sidebar.folded.contains(&path);
+            let folded = grouped && self.threads_pane_file_is_collapsed(&path);
             if grouped {
                 let selected = folded
                     && entries[index..group_end]
@@ -338,7 +352,7 @@ impl App {
     /// ones (ADR 0046), `None` when it is not listed.
     pub(crate) fn threads_pane_selected(&self) -> Option<usize> {
         let order = self.threads_pane_ids();
-        let cursor = self.thread_cursor();
+        let cursor = self.threads_pane_thread_cursor();
         let id = cursor.thread()?;
         order.iter().position(|other| other == id)
     }
@@ -347,7 +361,7 @@ impl App {
     pub(crate) fn threads_pane_cursor_thread(
         &self,
     ) -> Option<&fathomable_core::annotations::Thread> {
-        let cursor = self.thread_cursor();
+        let cursor = self.threads_pane_thread_cursor();
         let id = cursor.thread()?;
         let file_only = self.sidebar.scope == PaneScope::File;
         self.normal_review_entries(file_only)
@@ -360,15 +374,55 @@ impl App {
     /// Re-select after a store change removes the pane's cursor entry.
     pub(crate) fn threads_pane_reselect(&mut self, place: Option<usize>) {
         let ids = self.threads_pane_ids();
-        let cursor = self.thread_cursor();
+        let cursor = self.threads_pane_cursor.clone();
         let index = cursor
             .thread()
             .and_then(|id| ids.iter().position(|other| other == id))
             .or_else(|| place.map(|place| place.min(ids.len().saturating_sub(1))));
         if let Some(index) = index.filter(|_| !ids.is_empty()) {
-            self.set_thread_cursor(ids[index].clone());
+            let id = ids[index].clone();
+            self.set_threads_pane_cursor(&id, self.newest_message(&id));
         } else {
-            self.clear_thread_cursor();
+            self.threads_pane_cursor = super::cursor::ThreadCursor::default();
+        }
+    }
+
+    /// Make the sidebar's actionable cursor belong to its current scope.
+    ///
+    /// A file switch can leave the retained sidebar history on another
+    /// file. Prefer the current main surface's admitted seat, then the
+    /// first displayed thread; an empty pane has no action target.
+    pub(crate) fn reconcile_threads_pane_cursor(&mut self) {
+        let ids = self.threads_pane_ids();
+        if let Some(id) = self.threads_pane_cursor.thread().cloned()
+            && ids.contains(&id)
+        {
+            let message = self
+                .threads_pane_cursor
+                .message()
+                .min(self.newest_message(&id));
+            self.set_threads_pane_cursor(&id, message);
+            return;
+        }
+        let candidate = if self.review_list().is_open() {
+            self.review_thread_cursor()
+        } else {
+            self.file_thread_cursor()
+        };
+        let id = candidate
+            .thread()
+            .filter(|id| ids.contains(id))
+            .cloned()
+            .or_else(|| ids.first().cloned());
+        if let Some(id) = id {
+            let message = if candidate.thread() == Some(&id) {
+                candidate.message()
+            } else {
+                self.newest_message(&id)
+            };
+            self.set_threads_pane_cursor(&id, message);
+        } else {
+            self.threads_pane_cursor = super::cursor::ThreadCursor::default();
         }
     }
 
@@ -392,7 +446,7 @@ impl App {
     }
 
     /// Reveal the selected entry after deliberate keyboard or click selection.
-    fn reveal_threads_pane_selection(&mut self) {
+    pub(super) fn reveal_threads_pane_selection(&mut self) {
         let rows = self.threads_pane_rows();
         let lines = pane_lines(&rows);
         let body = self.threads_pane_body_rows().max(1);
@@ -447,14 +501,7 @@ impl App {
     pub(crate) fn focus_threads_pane(&mut self) {
         self.show_threads_pane();
         if self.panes_fit() {
-            let hidden = self
-                .thread_cursor()
-                .thread()
-                .and_then(|id| self.thread(id))
-                .is_some_and(|thread| !self.normal_thread(thread));
-            if hidden {
-                self.clear_thread_cursor();
-            }
+            self.reconcile_threads_pane_cursor();
             self.focus = Focus::ThreadsPane;
             self.reveal_threads_pane_selection();
         }
@@ -471,23 +518,38 @@ impl App {
     /// wrapping, a folded file counting once; the text follows, another
     /// file opening in workspace scope, and the keys stay here.
     pub(crate) fn threads_pane_move(&mut self, delta: isize) {
-        let order = self.threads_pane_stops();
+        let mut order = self.threads_pane_stops();
         if order.is_empty() {
             self.notice(self.empty_pane_notice());
             return;
         }
+        if self.sidebar.scope == PaneScope::Workspace
+            && let Some(selected) = self.threads_pane_thread_cursor().thread().cloned()
+            && !order.contains(&selected)
+            && let Some(path) = self
+                .thread(&selected)
+                .map(|thread| self.thread_path(thread).to_path_buf())
+            && let Some(representative) = order.iter_mut().find(|id| {
+                self.thread(id)
+                    .is_some_and(|thread| self.thread_path(thread) == path)
+            })
+        {
+            *representative = selected;
+        }
         if let Some(id) = self.step_in(&order, delta) {
-            self.land_in_pane(id);
+            self.land_in_pane(&id);
             self.reveal_threads_pane_selection();
         }
     }
 
     /// `s`: list this file, or the whole workspace.
     pub(crate) fn threads_pane_toggle_scope(&mut self) {
+        self.dismiss_navigation_peek();
         self.sidebar.scope = match self.sidebar.scope {
             PaneScope::File => PaneScope::Workspace,
             PaneScope::Workspace => PaneScope::File,
         };
+        self.reconcile_threads_pane_cursor();
         self.reveal_threads_pane_selection();
         self.notice(format!("threads: {}", self.sidebar.scope.word()));
     }
@@ -499,7 +561,7 @@ impl App {
             return;
         }
         let Some(path) = self
-            .thread_cursor()
+            .threads_pane_thread_cursor()
             .thread()
             .and_then(|id| self.thread(id))
             .map(|thread| self.thread_path(thread).to_path_buf())
@@ -521,7 +583,11 @@ impl App {
             .into_iter()
             .map(|entry| entry.path().to_path_buf())
             .collect();
-        if listed.iter().any(|path| self.sidebar.folded.contains(path)) {
+        let any_folded = listed
+            .iter()
+            .any(|path| self.threads_pane_file_is_collapsed(path));
+        self.release_all_pane_file_peeks();
+        if any_folded {
             self.sidebar.folded.clear();
         } else {
             self.sidebar.folded = listed;
@@ -530,7 +596,11 @@ impl App {
     }
 
     fn threads_pane_toggle_fold(&mut self, path: &Path) {
-        if !self.sidebar.folded.remove(path) {
+        let visibly_folded = self.threads_pane_file_is_collapsed(path);
+        self.release_pane_file_peek(path);
+        if visibly_folded {
+            self.sidebar.folded.remove(path);
+        } else {
             self.sidebar.folded.insert(path.to_path_buf());
         }
     }
@@ -553,7 +623,7 @@ impl App {
                 self.reveal_threads_pane_selection();
             }
             Some(PaneRow::Thread(entry)) => {
-                self.land_in_pane(entry.id);
+                self.land_in_pane(&entry.id);
                 self.reveal_threads_pane_selection();
             }
             None => self.threads_pane_focus(),
@@ -570,11 +640,11 @@ impl App {
                     .into_iter()
                     .find(|entry| entry.path() == path)
                     .map(|entry| entry.id().clone())?;
-                self.land_in_pane(first);
+                self.land_in_pane(&first);
                 Some(PanePoint::File(path))
             }
             PaneRow::Thread(entry) => {
-                self.land_in_pane(entry.id);
+                self.land_in_pane(&entry.id);
                 Some(PanePoint::Thread)
             }
         };
@@ -593,7 +663,7 @@ impl App {
     /// Enter: open the file with the cursor's thread expanded and the
     /// keys going to the text (ADR 0049).
     pub(crate) fn threads_pane_open(&mut self) {
-        let Some(id) = self.thread_cursor().thread().cloned() else {
+        let Some(id) = self.threads_pane_thread_cursor().thread().cloned() else {
             return;
         };
         if self.land_on_thread(id.clone()) == Some(ThreadLanding::Source) {
@@ -609,24 +679,97 @@ impl App {
     }
 
     /// Preview `id` from the pane without changing the displayed main view.
-    fn land_in_pane(&mut self, id: ThreadId) {
+    fn land_in_pane(&mut self, id: &ThreadId) {
         let Some(path) = self
-            .thread(&id)
+            .thread(id)
             .map(|thread| self.thread_path(thread).to_path_buf())
         else {
             return;
         };
+        if self.reject_pane_preview(id, path.clone()) {
+            return;
+        }
+        let keep_file_revealed = self.pane_file_peeked(&path);
         let focus = self.focus;
         self.preview_file(&path);
-        if self.thread_source_is_displayable(&id) {
-            self.goto_thread(&id);
+        if self.current_path() != path {
+            return;
+        }
+        self.dismiss_navigation_peek();
+        if self.thread_source_is_displayable(id) {
+            self.goto_thread(id);
         } else {
             self.notice("source unavailable; press Enter for thread evidence");
         }
-        self.set_thread_cursor(id);
-        self.reveal_review_cursor();
+        let newest = self.newest_message(id);
+        self.set_threads_pane_cursor(id, newest);
+        if self.review_list().is_open() {
+            self.land_review_thread(id);
+        } else {
+            self.set_file_thread_cursor(id.clone(), newest);
+        }
+        if keep_file_revealed {
+            self.peek_pane_file(path.clone());
+        }
         self.synchronize_tree_to(&path);
         self.focus = focus;
+    }
+
+    /// Keep an excluded sidebar destination out of the current main Threads
+    /// membership while still moving the sidebar's own selection.
+    fn reject_pane_preview(&mut self, id: &ThreadId, path: PathBuf) -> bool {
+        if !self.review_list().is_open() || self.review_admits(id) {
+            return false;
+        }
+        self.release_all_pane_file_peeks();
+        self.peek_pane_file(path);
+        self.set_threads_pane_cursor(id, self.newest_message(id));
+        self.reveal_threads_pane_selection();
+        self.notice("thread is outside the current Threads view; press Enter to open");
+        self.focus = Focus::ThreadsPane;
+        true
+    }
+
+    /// Preview a Tab-traversal destination while retaining Thread-list focus.
+    pub(super) fn land_thread_step_in_pane(&mut self, id: &ThreadId) {
+        let Some(path) = self
+            .thread(id)
+            .map(|thread| self.thread_path(thread).to_path_buf())
+        else {
+            return;
+        };
+        let newest = self.newest_message(id);
+        self.set_threads_pane_cursor(id, newest);
+        if self.reject_pane_preview(id, path.clone()) {
+            return;
+        }
+        let placed_in_file = if self.review_list().is_open() {
+            if self.land_review_thread(id) {
+                self.peek_pane_file(path);
+            }
+            false
+        } else {
+            self.preview_file(&path);
+            if self.thread_source_is_displayable(id) {
+                self.land_file_thread_jump(id.clone());
+                self.peek_pane_file(path);
+                true
+            } else {
+                self.dismiss_navigation_peek();
+                self.peek_pane_file(path);
+                self.set_threads_pane_cursor(id, newest);
+                self.notice("source unavailable; press Enter for thread evidence");
+                false
+            }
+        };
+        self.reveal_threads_pane_selection();
+        let current = self.current_path().to_path_buf();
+        self.synchronize_tree_to(&current);
+        self.focus = Focus::ThreadsPane;
+        if placed_in_file {
+            self.sync_text_height();
+            self.restore_navigation_placement();
+        }
     }
 
     fn empty_pane_notice(&self) -> &'static str {

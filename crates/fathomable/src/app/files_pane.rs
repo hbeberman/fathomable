@@ -371,6 +371,7 @@ impl App {
                 }
                 None => None,
             };
+            self.dismiss_navigation_peek();
             self.directory = Some(DirectorySelection { path, counts });
             self.relayout();
             return;

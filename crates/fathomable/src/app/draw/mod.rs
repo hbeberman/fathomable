@@ -35,7 +35,9 @@ use crate::app::draw::header::{
     review_header, summary_line,
 };
 use crate::app::draw::info::Info;
-use crate::app::draw::message::{MESSAGE_INDENT, expanded_lines, message_line};
+use crate::app::draw::message::{
+    CAPTURED_CONTEXT_TRUNCATED, MESSAGE_INDENT, ORIGIN_CONTEXT_INDENT, expanded_lines, message_line,
+};
 use crate::app::draw::nest::{NEST, nest_span};
 use crate::app::draw::note::note_cell;
 use crate::app::draw::selection::{Navigation, context_marker};
@@ -2017,7 +2019,7 @@ fn stub_line<'a>(
         return Line::from("");
     };
     let covered = app.threads_at_cursor().contains(thread.id());
-    let marked = covered && app.thread_cursor().thread() == Some(thread.id());
+    let marked = covered && app.file_thread_cursor().thread() == Some(thread.id());
     let content_width = width.saturating_sub(gutter);
     let layout = expanded_header(app, thread, false, content_width);
     let leading = vec![if marked {
@@ -2064,7 +2066,7 @@ fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize)
             // (ADR 0071); a message's bar waits for the text cursor to
             // be on the thread's own rows, so from its lines above no
             // message reads as the one under the cursor.
-            let current = app.thread_cursor().thread() == Some(id);
+            let current = app.file_thread_cursor().thread() == Some(id);
             let selected = app
                 .expanded_row_message(app.view().cursor().row)
                 .filter(|(on, _)| on == id)
@@ -3889,7 +3891,6 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     if rows == 0 {
         return;
     }
-    let list = app.review_list();
     let Rows {
         rows: all, entries, ..
     } = app.review_rows(width);
@@ -3916,8 +3917,8 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         app.pane_has_navigation(Focus::Review),
     )];
     let footer_shown = app.focus() == Focus::Review;
-    let body = rows.saturating_sub(1 + usize::from(footer_shown));
-    let scroll = list.scroll().min(all.len().saturating_sub(body));
+    let body = app.review_body_rows().min(rows.saturating_sub(1));
+    let scroll = app.review_viewport_scroll(all.len());
     for row in all.iter().skip(scroll).take(body) {
         let context = ListRender {
             theme,
@@ -4060,27 +4061,56 @@ fn list_row<'a>(context: &ListRender<'a>, row: &Row) -> Line<'a> {
             }));
             message_line(spans, width, row_style(theme, &list_author(*user)))
         }
-        Row::Evidence {
+        Row::OriginWarning { line, .. } => {
+            let mut style = theme.warning;
+            style.bg = theme.text.bg;
+            let mut spans = vec![Span::raw(" ".repeat(ORIGIN_CONTEXT_INDENT))];
+            spans.extend(
+                line.spans()
+                    .iter()
+                    .map(|span| Span::styled(span.text().to_owned(), style)),
+            );
+            message_line(spans, width, theme.text)
+        }
+        Row::OriginContext {
             line,
-            dim,
             selected,
+            omitted,
             ..
         } => {
+            let surface = if *selected {
+                theme.thread_inline.patch(theme.thread_bracket)
+            } else {
+                theme.thread_inline
+            };
+            let marker = if *selected { "▎" } else { " " };
             let mut spans = vec![
-                navigation.selection(*selected).marker(theme),
-                Span::raw(" ".repeat(BODY_INDENT - 1)),
+                Span::styled(" ".repeat(ORIGIN_CONTEXT_INDENT.saturating_sub(1)), surface),
+                Span::styled(marker, surface.patch(theme.thread_bracket)),
             ];
             spans.extend(line.spans().iter().map(|span| {
-                Span::styled(
-                    span.text().to_owned(),
-                    if *dim {
-                        theme.info
-                    } else {
-                        theme.info.patch(face_style(theme, span.style()))
-                    },
-                )
+                let foreground = if *omitted {
+                    theme.info
+                } else {
+                    face_style(theme, span.style())
+                };
+                let mut style = surface.patch(foreground);
+                style.bg = surface.bg;
+                Span::styled(span.text().to_owned(), style)
             }));
-            message_line(spans, width, theme.info)
+            message_line(spans, width, surface)
+        }
+        Row::OriginTruncation { .. } => {
+            let mut info = theme.thread_inline.patch(theme.info);
+            info.bg = theme.thread_inline.bg;
+            message_line(
+                vec![
+                    Span::styled(" ".repeat(ORIGIN_CONTEXT_INDENT), theme.thread_inline),
+                    Span::styled(CAPTURED_CONTEXT_TRUNCATED, info),
+                ],
+                width,
+                theme.thread_inline,
+            )
         }
         Row::DraftAuthor { author, .. } => {
             let surface = theme
@@ -5318,6 +5348,75 @@ mod tests {
             assert_eq!(line.spans[0].content, "▎");
             assert_eq!(width, 30);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn selected_blank_origin_row_uses_marker_and_existing_tint() -> anyhow::Result<()> {
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        let source = Layout::source("", 12);
+        assert!(source.lines()[0].text().is_empty());
+        let row = Row::OriginContext {
+            entry: 0,
+            line: source.lines()[0].clone(),
+            selected: true,
+            omitted: false,
+        };
+        let context = ListRender {
+            theme: &theme,
+            now: 0,
+            width: 20,
+            navigation: super::Navigation::Active,
+        };
+        let line = list_row(&context, &row);
+        assert_eq!(line.spans[0].content, " ".repeat(3));
+        assert_eq!(line.spans[1].content, "▎");
+        assert_eq!(
+            line.style.bg,
+            theme.thread_inline.patch(theme.thread_bracket).bg
+        );
+        assert!(
+            line.spans
+                .iter()
+                .skip(2)
+                .take(line.spans.len().saturating_sub(3))
+                .all(|span| span.style.bg == line.style.bg)
+        );
+        assert_eq!(
+            line.spans
+                .iter()
+                .map(|span| display_width(&span.content))
+                .sum::<usize>(),
+            20
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn origin_warning_uses_warning_emphasis_without_banner_background() -> anyhow::Result<()> {
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        let warning = Layout::notice("⚠ original src/lib.rs:L4", 30);
+        let row = Row::OriginWarning {
+            entry: 0,
+            line: warning.lines()[0].clone(),
+        };
+        let context = ListRender {
+            theme: &theme,
+            now: 0,
+            width: 34,
+            navigation: super::Navigation::Active,
+        };
+
+        let line = list_row(&context, &row);
+
+        assert_eq!(line.style.bg, theme.text.bg);
+        assert!(
+            line.spans
+                .iter()
+                .any(|span| span.content.contains("original") && span.style.fg == theme.warning.fg)
+        );
         Ok(())
     }
 

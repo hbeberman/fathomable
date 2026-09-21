@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: One thread cursor
-description: The thread pane, the file-threads pane, and the thread list show and move one cursor, a thread and a message, that rides the text cursor while both are closed; lowercase thread motions step within the file and uppercase ones across the workspace, o resolves, and paging is Ctrl-d and Ctrl-u everywhere with no PgUp or PgDn.
+description: Thread actions share one contract while each visible surface retains the logical thread and message it owns.
 resource: crates/fathomable/src/app/threads/cursor.rs
 tags:
   - decision
@@ -18,6 +18,12 @@ Workspace traversal amended 2026-09-18 by
 cycle active and resolution-proposed threads from every normal pane.
 Resolved and archived threads are excluded. File-local and workspace
 bracket traversal retire; list-local `j`/`k` movement remains.
+
+Surface ownership amended 2026-09-20 by
+[0090](0090-direct-workspace-navigation.md): File, main Threads, and Thread
+list retain separate logical thread/message seats. Shared actions still use
+one implementation, but resolve their target from the surface that dispatched
+them.
 
 ## Context
 
@@ -63,6 +69,26 @@ selects a line in the text, one focus away.
   are methods on `App` that act on the cursor. The binding table maps
   the same `Action` from every thread surface to them; the per-surface
   copies are gone.
+- **The owning surface chooses the cursor (2026-09-20 amendment).** File
+  actions use the thread/message seated in File, main Threads actions use its
+  retained selection or temporary reveal, and Thread-list actions use its
+  independent sidebar selection. A retained Thread-list seat is actionable
+  only while its thread belongs to the pane's current file/workspace scope and
+  lifecycle filter. File, scope, and filter changes reconcile it to an
+  admitted displayed thread, or to no target when the pane is empty; focusing
+  the pane and dispatching any action repeat that check. A focus-only
+  transition does not otherwise copy one surface's cursor over another.
+  Keyboard, context-menu, app-menu, footer, mouse, lifecycle,
+  reply/edit/delete, navigation-history, and permission routes all resolve
+  through that same ownership rule.
+- **File inference is not a traversal seat (2026-09-20 amendment).** A pinned
+  File cursor or a cursor physically resting in an expanded message is an
+  explicit thread selection. Ordinary source can still infer a nearby thread
+  for actions, but `Tab`/`Shift-Tab` use the source position as an insertion
+  point: forward reaches the first thread at or after it and backward reaches
+  the last thread before it. Passive File resize, rewrap, and delayed syntax
+  completion restore only File's logical message seat; they never update main
+  Threads or Thread-list cursors even when one of those surfaces owns focus.
 - **Lowercase steps in the file, uppercase across the workspace.**
   `]c` / `[c` in the text and `l` / `h` in the thread pane step to the
   next or previous thread of this file, wrapping. `]C` / `[C` and
@@ -95,10 +121,11 @@ selects a line in the text, one focus away.
 
 ## Consequences
 
-- A step from any surface moves the same cursor, and every surface's
-  highlight agrees, which the tests assert directly.
-- The thread list no longer remembers a selection of its own; it opens
-  where the reader is. The list's `h` / `l` still walk
+- On first focus a surface may inherit the currently visible logical seat;
+  after deliberate selection it retains its own. Previewing a thread can
+  deliberately synchronize the destination surface without making unrelated
+  focus changes overwrite either selection.
+- The list's `h` / `l` still walk
   the list's own order (open before resolved, then by file), which is
   not the workspace order `L` / `H` walk in the pane.
 - A reply sent from any surface moves the cursor to the new message,

@@ -24,6 +24,7 @@ pub(crate) mod list;
 pub(crate) mod list_fold;
 pub(crate) mod open;
 pub(crate) mod pane;
+pub(crate) mod peek;
 pub(crate) mod proposed;
 pub(crate) mod stubs;
 pub(crate) mod summary;
@@ -259,10 +260,15 @@ impl App {
 
     /// Whether at least one open thread is available for direct traversal.
     pub(crate) fn has_open_threads(&self) -> bool {
-        self.store
-            .iter()
-            .flat_map(Store::threads)
-            .any(|thread| thread.status() == Status::Open && self.normal_thread(thread))
+        match self.focus {
+            super::Focus::Review => !self.review_open_threads().is_empty(),
+            super::Focus::ThreadsPane => !self.threads_pane_open_threads().is_empty(),
+            super::Focus::View | super::Focus::Tree => self
+                .store
+                .iter()
+                .flat_map(Store::threads)
+                .any(|thread| thread.status() == Status::Open && self.normal_thread(thread)),
+        }
     }
 
     /// The store, or a status-line notice explaining why there is none.
@@ -542,7 +548,7 @@ impl App {
     /// `(current, total)`, 1-based, of the cursor's thread among the
     /// file's, for the pane header.
     pub(crate) fn thread_position(&self) -> Option<(usize, usize)> {
-        let cursor = self.thread_cursor();
+        let cursor = self.file_thread_cursor();
         let id = cursor.thread()?;
         let order = self.file_threads();
         let index = order.iter().position(|other| other == id)?;

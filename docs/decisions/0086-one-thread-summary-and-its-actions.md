@@ -45,6 +45,24 @@ superseded.
 Amended 2026-09-19: thread workflows move from `Space c` to `Space t`; all
 suffixes and direct pane key behavior below are unchanged.
 
+Amended 2026-09-20: every full inline File and main Threads header or stub
+adds `@` plus seven characters of the commit reference captured with its
+origin, immediately after location. Commit origins use their commit, Working
+Tree and Index use observed `HEAD`, and review points use their baseline;
+origins without one omit it. The neutral token does not assert byte equality.
+It survives narrow widths ahead of age, reply count, optional context, and
+textual lifecycle status. Compact Thread-list cards remain unchanged.
+
+Expanded entries in the main Threads surface now put bounded,
+syntax-highlighted immutable origin context between the header and opening
+message. The block is stored-only, hard-wrapped, unnumbered, four cells
+indented, and uses `thread.inline`; selected origin rows add a slim marker and
+`thread.bracket` tint. Preparation retains at most 16 KiB and 256 logical
+source rows, preserves selected-range head and tail around an omission row,
+and reports capture or preparation truncation explicitly. File-wide and
+folded entries omit the block. Only moved, detached, historical, or
+source-unavailable evidence adds a restrained original-location warning.
+
 Builds on [0085](0085-thread-lifecycle-and-auto-resolve.md) and supersedes
 the state words and counts of [0032](0032-placement-and-state.md),
 [0066](0066-one-circle-language.md), and
@@ -73,6 +91,7 @@ A `ThreadSummary` supplies:
 
 - lifecycle glyph and style;
 - placement and optional worktree or historical-commit context;
+- an optional neutral captured commit reference for full headers;
 - latest message author and first body line;
 - reply count, excluding the opening comment;
 - compact thread modification age;
@@ -86,7 +105,7 @@ The factual grammar is:
 
 ```text
 <glyph> <disclosure> [latest author + preview]
-    [status] [context] <file|Lx-y|Lx-y?> [reply count] <modified>
+    [status] [context] <file|Lx-y|Lx-y?> [@commit] [reply count] <modified>
 ```
 
 Collapsed headers include latest author and an ellipsized first body line.
@@ -100,6 +119,8 @@ carries glyph, place, latest author, replies, and modification time; the
 second carries the latest-message preview. It consumes the same summary but
 does not draw a thread disclosure control or expand messages inside the
 sidebar. Enter continues to open the selected conversation in the text.
+It intentionally does not render the captured commit reference or immutable
+origin-context block.
 
 ### Header status and pane actions
 

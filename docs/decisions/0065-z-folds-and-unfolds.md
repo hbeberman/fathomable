@@ -29,6 +29,10 @@ rests on its expanded header or folded stub, without adding a hint.
 Amended 2026-09-19: pane-independent thread workflows use `Space t`;
 the explicit new-thread and reply routes are `Space t c` and `Space t r`.
 
+Amended 2026-09-20: navigation may temporarily reveal a selected folded
+thread without changing these persistent fold choices. Any explicit fold
+action takes ownership of the effective visible state.
+
 ## Context
 
 [0049](0049-inline-threads-and-the-rail.md) made `c` the key that
@@ -82,6 +86,13 @@ thread here, and every thread in the file.
   Under [0064](0064-hints-you-can-press.md) the hint is the key that
   does only that.
 - The review list keeps its `z`; the two surfaces agree on the letter.
+- **Navigation peeks are not folds.** A direct thread landing may reveal the
+  selected File thread despite its persistent fold, and may override hidden
+  stubs only for that selected thread. Local reading and focus changes keep
+  the peek. A successful destination change dismisses it; a failed or
+  no-target action does not. `z`, `Z`, Enter, chevrons, double-click, and
+  menu folding first release the peek and then apply the requested effective
+  state, so later navigation cannot undo that explicit choice.
 
 ## Consequences
 

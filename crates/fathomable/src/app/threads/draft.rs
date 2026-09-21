@@ -13,6 +13,9 @@
 //! parks its draft in the document; showing that document again
 //! restores it.
 
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use fathomable_core::annotations::{
     Author, ComparisonFacts, ContentIdentity, Draft, FullFileDigest, IndexFacts, IndexState,
     LineRange, MessageTarget, OriginSide, OriginVersion, Provenance, ReviewPointFacts, ThreadId,
@@ -22,7 +25,6 @@ use fathomable_core::clock::now;
 use fathomable_core::content::Content;
 use fathomable_core::editor::{Buffer, Cell, Edit};
 
-use crate::app::diff::{DiffBody, Text};
 use crate::app::draw::message::MESSAGE_INDENT;
 use crate::app::threads::list::ReviewView;
 use crate::app::{App, Popup};
@@ -74,6 +76,8 @@ impl ComposeTarget {
 #[derive(Debug)]
 pub(crate) struct Compose {
     target: ComposeTarget,
+    /// Immutable displayed evidence captured when a new annotation opens.
+    annotation: Option<Arc<AnnotationEvidence>>,
     buffer: Buffer,
     /// The text the draft opened with, empty for a new comment or reply.
     original: String,
@@ -83,6 +87,15 @@ pub(crate) struct Compose {
     confirm_reopen: Option<UserSubmit>,
     /// The review view that was showing when the draft opened.
     from_review: Option<ReviewView>,
+}
+
+#[derive(Debug, Clone)]
+struct AnnotationEvidence {
+    path: PathBuf,
+    range: Option<LineRange>,
+    text: String,
+    side: OriginSide,
+    provenance: Provenance,
 }
 
 impl Compose {
@@ -103,6 +116,12 @@ impl Compose {
     /// Whether Enter will atomically reopen and submit this intact draft.
     pub(crate) fn confirming_reopen(&self) -> bool {
         self.confirm_reopen.is_some()
+    }
+
+    pub(in crate::app) fn rename_annotation_path(&mut self, path: &std::path::Path) {
+        if let Some(evidence) = self.annotation.as_mut() {
+            Arc::make_mut(evidence).path = path.to_path_buf();
+        }
     }
 }
 
@@ -192,16 +211,12 @@ impl App {
         }
         let view = self.view();
         if let Some(selection) = view.selection()
-            && view.diff_view()
             && mixed_diff_selection(view, selection)
         {
             self.notice("select one diff side before commenting");
             return;
         }
-        if view.diff_view()
-            && cursor_on_removed_diff_line(view)
-            && displayed_diff_side_and_range(view).is_none()
-        {
+        if cursor_on_removed_diff_line(view) && displayed_diff_side_and_range(view).is_none() {
             self.notice("cannot determine the removed line's source evidence");
             return;
         }
@@ -259,6 +274,15 @@ impl App {
                 String::new()
             }
         };
+        let annotation = match &target {
+            ComposeTarget::New(range) => self.annotation_evidence(Some(*range)).map(Arc::new),
+            ComposeTarget::OnFile => self.annotation_evidence(None).map(Arc::new),
+            ComposeTarget::Reply(_) | ComposeTarget::Edit { .. } => None,
+        };
+        if matches!(target, ComposeTarget::New(_) | ComposeTarget::OnFile) && annotation.is_none() {
+            self.notice("no open file");
+            return;
+        }
         let from_review = self.review_list.is_open().then_some(self.review.view);
         if from_review.is_some() {
             self.close_review();
@@ -291,6 +315,7 @@ impl App {
         let buffer = Buffer::from_text(&original);
         self.popup = Some(Popup::Compose(Compose {
             target,
+            annotation,
             buffer,
             original,
             confirm_discard: false,
@@ -463,12 +488,18 @@ impl App {
             return;
         }
         let target = compose.target.clone();
+        let annotation = compose.annotation.clone();
         let from_review = compose.from_review;
         let submission = compose.confirm_reopen.unwrap_or(requested);
         let reopen = compose.confirm_reopen.is_some();
         let result = match target {
-            ComposeTarget::New(range) => self.submit_annotation(Some(range), text, submission),
-            ComposeTarget::OnFile => self.submit_annotation(None, text, submission),
+            ComposeTarget::New(_) | ComposeTarget::OnFile => {
+                let Some(evidence) = annotation else {
+                    self.error("annotation evidence is unavailable");
+                    return;
+                };
+                self.submit_annotation(&evidence, text, submission)
+            }
             ComposeTarget::Reply(id) => self.submit_reply(&id, text, submission, reopen),
             ComposeTarget::Edit { thread, message } => {
                 self.submit_message_edit(&thread, message, text, submission, reopen)
@@ -609,32 +640,27 @@ impl App {
     /// whole with no range (ADR 0063).
     fn submit_annotation(
         &mut self,
-        range: Option<LineRange>,
+        evidence: &AnnotationEvidence,
         comment: String,
         submission: UserSubmit,
     ) -> Result<SubmitResult, String> {
         if !self.annotation_projection_matches_selection() {
             return Err("comparison projection changed; keeping the annotation draft".to_owned());
         }
-        let Some(index) = self.current else {
-            return Err("no open file".to_owned());
-        };
-        let path = self.docs[index].relative.clone();
-        let displayed_text = self.docs[index].view.text().to_owned();
-        let (text, side) = self.annotation_source(range, &displayed_text);
-        let provenance = self.user_provenance(&path, range, &text, side);
+        let path = &evidence.path;
+        let range = evidence.range;
         // The thread belongs to the work it was written against (ADR 0024).
         let draft = match range {
-            Some(range) => Draft::new(Author::User, &path, range, comment),
-            None => Draft::on_file(Author::User, &path, comment),
+            Some(range) => Draft::new(Author::User, path, range, comment),
+            None => Draft::on_file(Author::User, path, comment),
         }
-        .at_source(provenance.version().clone(), side)
-        .with_provenance(provenance);
+        .at_source(evidence.provenance.version().clone(), evidence.side)
+        .with_provenance(evidence.provenance.clone());
         let where_at = range.map_or_else(|| "the file".to_owned(), |range| format!("L{range}"));
         let Some(store) = self.store_mut() else {
             return Err(self.thread_store_unavailable());
         };
-        let result = store.annotate_user(draft, &text, now(), submission);
+        let result = store.annotate_user(draft, &evidence.text, now(), submission);
         self.refresh_after_thread_store_change();
         match result {
             Ok(id) => {
@@ -714,34 +740,42 @@ impl App {
 }
 
 impl App {
+    fn annotation_evidence(&self, range: Option<LineRange>) -> Option<AnnotationEvidence> {
+        let index = self.current?;
+        let path = self.docs[index].relative.clone();
+        let displayed_text = self.docs[index].view.text();
+        let (text, side) = self.annotation_source(range, displayed_text);
+        let provenance = self.user_provenance(&path, range, &text, side);
+        Some(AnnotationEvidence {
+            path,
+            range,
+            text,
+            side,
+            provenance,
+        })
+    }
+
     fn annotation_source(
         &self,
         range: Option<LineRange>,
         displayed_text: &str,
     ) -> (String, OriginSide) {
-        if !self.view().diff_view() {
-            return (displayed_text.to_owned(), self.displayed_source_side());
-        }
         let Some(range) = range else {
             return (displayed_text.to_owned(), self.displayed_source_side());
         };
         let Some((side, source_range)) = displayed_diff_side_and_range(self.view()) else {
-            return (displayed_text.to_owned(), OriginSide::Unspecified);
+            return (displayed_text.to_owned(), self.displayed_source_side());
         };
         if side != OriginSide::Base {
             return (displayed_text.to_owned(), side);
         }
-        let Some(DiffBody::Diff {
-            base: Text::Owned(base),
-            ..
-        }) = self.view().diff().map(|diff| &diff.body)
-        else {
+        let Some(base) = self.view().comparison_base_text() else {
             return (displayed_text.to_owned(), side);
         };
         if source_range != range {
             return (displayed_text.to_owned(), OriginSide::Base);
         }
-        (base.clone(), side)
+        (base.to_owned(), side)
     }
 
     fn user_provenance(
@@ -916,9 +950,6 @@ fn cursor_on_removed_diff_line(view: &crate::app::view::View) -> bool {
 }
 
 fn displayed_diff_range(view: &crate::app::view::View) -> Option<LineRange> {
-    if !view.diff_view() {
-        return None;
-    }
     displayed_diff_side_and_range(view).map(|(_, range)| range)
 }
 
@@ -954,6 +985,15 @@ fn diff_rows(
         match (line.diff_old_line(), line.diff_new_line()) {
             (Some(old), None) => extend_range(&mut found.base, old),
             (_, Some(new)) => extend_range(&mut found.target, new),
+            (None, None) if view.projects_normal_deletion() => {
+                if let Some(source) = line.source() {
+                    let index = view.layout().index();
+                    let start = index.line_of(source.start);
+                    let end = index.line_of(source.end.max(source.start + 1) - 1);
+                    extend_range(&mut found.target, start);
+                    extend_range(&mut found.target, end);
+                }
+            }
             (None, None) => {}
         }
     }

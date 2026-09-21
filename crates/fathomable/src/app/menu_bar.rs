@@ -571,32 +571,32 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             Row::Item(Item::action(
                 app,
                 Action::ChangeNext,
-                "Next comparison change",
+                "Next comparison change · top third",
             )),
             Row::Item(Item::action(
                 app,
                 Action::ChangePrev,
-                "Previous comparison change",
+                "Previous comparison change · top third",
             )),
             Row::Item(Item::action(
                 app,
                 Action::ChangeFileNext,
-                "Next changed file",
+                "Next changed file · first change",
             )),
             Row::Item(Item::action(
                 app,
                 Action::ChangeFilePrev,
-                "Previous changed file",
+                "Previous changed file · first change",
             )),
             Row::Item(Item::action(
                 app,
                 Action::OpenThreadNext,
-                "Next open review thread",
+                "Next open thread in current scope",
             )),
             Row::Item(Item::action(
                 app,
                 Action::OpenThreadPrev,
-                "Previous open review thread",
+                "Previous open thread in current scope",
             )),
             Row::Separator,
             Row::Item(Item::action(app, Action::JumpBack, "Back")),

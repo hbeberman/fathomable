@@ -46,6 +46,16 @@ pub struct Context {
     after: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     truncated: bool,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    selected_omitted: usize,
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if requires a predicate over &T."
+)]
+const fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 impl Context {
@@ -57,6 +67,9 @@ impl Context {
     }
 
     /// Capture a context window with an explicit byte bound.
+    ///
+    /// If line separators alone exceed the bound, selected-line head and tail
+    /// are retained and [`map_context`] subsequently declines placement.
     #[must_use]
     pub fn capture_bounded(text: &str, range: LineRange, max_bytes: usize) -> Option<Self> {
         let lines: Vec<&str> = text.lines().collect();
@@ -70,36 +83,69 @@ impl Context {
             lines: owned(&lines[start..range.end()]),
             after: owned(&lines[range.end()..(range.end() + CONTEXT_LINES).min(lines.len())]),
             truncated: false,
+            selected_omitted: 0,
         };
         context.bound_to(max_bytes);
         Some(context)
     }
 
     fn bound_to(&mut self, max_bytes: usize) {
-        while self.text().len() > max_bytes && !self.before.is_empty() {
-            self.before.remove(0);
+        if max_bytes == 0 {
+            self.before.clear();
+            self.selected_omitted += self.lines.len();
+            self.lines.clear();
+            self.after.clear();
             self.truncated = true;
-        }
-        while self.text().len() > max_bytes && !self.after.is_empty() {
-            self.after.pop();
-            self.truncated = true;
-        }
-        if self.text().len() <= max_bytes {
             return;
         }
+        let mut bytes = context_bytes(&self.before, &self.lines, &self.after);
+        while bytes > max_bytes && !self.before.is_empty() {
+            let removed = self.before.remove(0);
+            bytes = bytes.saturating_sub(removed.len() + 1);
+            self.truncated = true;
+        }
+        while bytes > max_bytes && !self.after.is_empty() {
+            if let Some(removed) = self.after.pop() {
+                bytes = bytes.saturating_sub(removed.len() + 1);
+            }
+            self.truncated = true;
+        }
+        let total_lines = self.before.len() + self.lines.len() + self.after.len();
+        if total_lines > max_bytes && self.lines.len() > 1 {
+            let keep = max_bytes
+                .saturating_sub(self.before.len() + self.after.len())
+                .max(1);
+            let remove = self.lines.len().saturating_sub(keep);
+            let head = keep.div_ceil(2);
+            let tail = keep - head;
+            let mut retained = Vec::with_capacity(keep);
+            retained.extend(self.lines[..head].iter().cloned());
+            retained.extend(
+                self.lines[self.lines.len().saturating_sub(tail)..]
+                    .iter()
+                    .cloned(),
+            );
+            self.lines = retained;
+            self.selected_omitted += remove;
+            self.truncated = true;
+        }
+        bytes = context_bytes(&self.before, &self.lines, &self.after);
+        if bytes <= max_bytes {
+            return;
+        }
+
         let mut remaining = max_bytes;
-        for line in self
+        let total_lines = self.before.len() + self.lines.len() + self.after.len();
+        for (index, line) in self
             .before
             .iter_mut()
             .chain(self.lines.iter_mut())
             .chain(self.after.iter_mut())
+            .enumerate()
         {
-            if remaining == 0 {
-                line.clear();
-                self.truncated = true;
-                continue;
-            }
-            let budget = remaining.saturating_sub(1);
+            let rows_left = total_lines - index;
+            let content_budget = remaining.saturating_sub(rows_left);
+            let budget = content_budget / rows_left.max(1);
             if line.len() > budget {
                 let mut end = budget.min(line.len());
                 while end > 0 && !line.is_char_boundary(end) {
@@ -123,17 +169,41 @@ impl Context {
         text
     }
 
-    /// Where the annotated lines sit within [`Self::text`].
+    /// Where the retained annotated lines sit within [`Self::text`].
     #[must_use]
     pub fn range(&self) -> LineRange {
         let start = self.before.len() + 1;
         LineRange::new(start, start + self.lines.len().max(1) - 1)
     }
 
-    /// The annotated lines, without the trailing newline.
+    /// The retained annotated lines, without the trailing newline.
     #[must_use]
     pub fn snippet(&self) -> String {
         self.lines.join("\n")
+    }
+
+    /// Source lines captured before the selected range.
+    #[must_use]
+    pub fn before_lines(&self) -> &[String] {
+        &self.before
+    }
+
+    /// Source lines retained from the selected range.
+    #[must_use]
+    pub fn selected_lines(&self) -> &[String] {
+        &self.lines
+    }
+
+    /// Number of selected source lines omitted by the capture byte bound.
+    #[must_use]
+    pub fn omitted_selected_lines(&self) -> usize {
+        self.selected_omitted
+    }
+
+    /// Source lines captured after the selected range.
+    #[must_use]
+    pub fn after_lines(&self) -> &[String] {
+        &self.after
     }
 
     /// Whether the context was shortened to satisfy its byte bound.
@@ -141,6 +211,15 @@ impl Context {
     pub fn is_truncated(&self) -> bool {
         self.truncated
     }
+}
+
+fn context_bytes(before: &[String], lines: &[String], after: &[String]) -> usize {
+    before
+        .iter()
+        .chain(lines)
+        .chain(after)
+        .map(|line| line.len().saturating_add(1))
+        .fold(0, usize::saturating_add)
 }
 
 /// Follow the annotated lines of `context` into `current` (ADR 0038).
@@ -154,6 +233,9 @@ impl Context {
 /// rewrite of the surroundings: `Mapping::Removed`.
 #[must_use]
 pub fn map_context(context: &Context, current: &str, hint: LineRange) -> Mapping {
+    if context.selected_omitted > 0 {
+        return Mapping::Removed;
+    }
     let hashes: Vec<String> = current.lines().map(line_hash).collect();
     let outer_before = &context.before[..context.before.len().saturating_sub(LOCAL_CONTEXT)];
     let outer_after = &context.after[LOCAL_CONTEXT.min(context.after.len())..];
@@ -331,6 +413,20 @@ mod tests {
         assert!(context.is_truncated());
         assert!(context.text().len() <= 12);
         assert_eq!(context.range().len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_capture_counts_empty_line_separators() -> Result {
+        let text = "\n".repeat(20_000);
+        let context = Context::capture_bounded(&text, LineRange::new(1, 20_000), 16 * 1024)
+            .ok_or("range in text")?;
+
+        assert!(context.is_truncated());
+        assert!(context.text().len() <= 16 * 1024);
+        assert_eq!(context.selected_lines().first(), Some(&String::new()));
+        assert_eq!(context.selected_lines().last(), Some(&String::new()));
+        assert!(context.omitted_selected_lines() > 0);
         Ok(())
     }
 }

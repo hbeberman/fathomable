@@ -4,8 +4,8 @@ use std::path::Path;
 use anyhow::Context as _;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fathomable_core::annotations::{
-    Author, AutoResolve, Draft, Lifecycle, LineRange, MessageTarget, OriginSide, OriginVersion,
-    Store, Thread,
+    Author, AutoResolve, ComparisonFacts, ContentIdentity, Draft, Lifecycle, LineRange,
+    MessageTarget, OriginSide, OriginVersion, Provenance, Store, Thread,
 };
 use fathomable_core::editor::{Edit, Motion};
 use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Workspace};
@@ -653,6 +653,197 @@ fn duplicate_removed_lines_keep_the_selected_base_range_in_origin() -> anyhow::R
     assert_eq!(thread.origin().range(), Some(LineRange::new(4, 4)));
     assert_eq!(thread.origin().snippet(), "remove");
     assert_eq!(thread.origin_version(), &OriginVersion::commit(first));
+    Ok(())
+}
+
+#[test]
+fn normal_deletion_jump_comments_on_exact_base_evidence() -> anyhow::Result<()> {
+    let dir = TempDir::new("normal-deletion-origin")?;
+    git::init(&dir.0)?;
+    let base = "keep before\nremoved one\nremoved two\nremoved three\nkeep after\n";
+    let target = "keep before\nkeep after\n";
+    git::commit_and_stage(&dir.0, &[("a.txt", base)])?;
+    let first = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("base commit")?;
+    fs::write(dir.0.join("a.txt"), target)?;
+    let store = Store::open(dir.0.join("threads.jsonl"))?;
+    let mut app = testing::AppBuilder::at(&dir.0)
+        .source_view()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+
+    app.hunk_next();
+    let hunk = app
+        .view()
+        .hunks()
+        .into_iter()
+        .next()
+        .context("deletion hunk")?;
+    let rows = app
+        .view()
+        .hunk_rows(&hunk, false)
+        .context("projected deletion rows")?;
+    app.view_mut().goto_row(rows.start + 1);
+    assert_eq!(
+        app.view().layout().lines()[app.view().cursor().row].diff_old_line(),
+        Some(3),
+        "the cursor is on the interior projected deletion row"
+    );
+    app.view_mut().select_lines();
+    app.view_mut().goto_row(rows.end);
+    let selection = app
+        .view()
+        .selection()
+        .context("mixed projected selection")?;
+    assert!(
+        mixed_diff_selection(app.view(), selection),
+        "projected Base rows and surviving Target rows must remain distinct: selection={selection:?}, rows={:?}",
+        app.view()
+            .layout()
+            .lines()
+            .iter()
+            .map(|line| (
+                line.text(),
+                line.source_line(),
+                line.diff_old_line(),
+                line.diff_new_line()
+            ))
+            .collect::<Vec<_>>()
+    );
+    app.start_new_comment();
+    assert_eq!(
+        app.message(),
+        Some("select one diff side before commenting"),
+        "a projected Base-to-Target selection is rejected"
+    );
+    app.view_mut().clear_selection();
+    app.view_mut().goto_row(rows.start + 1);
+    app.start_new_comment();
+    press(&mut app, "base finding");
+    app.compose_submit();
+
+    let thread = app
+        .store
+        .as_ref()
+        .and_then(|store| store.threads().first())
+        .context("projected deletion thread")?;
+    assert_eq!(thread.origin().range(), Some(LineRange::new(3, 3)));
+    assert_eq!(thread.origin().snippet(), "removed two");
+    assert_eq!(thread.origin_side(), OriginSide::Base);
+    assert_eq!(thread.origin_version(), &OriginVersion::commit(&first));
+    let expected = Provenance::new(OriginVersion::commit(&first), OriginSide::Base)
+        .with_comparison(ComparisonFacts::at_checkout(
+            OriginVersion::commit(&first),
+            OriginVersion::working_tree(Some(first)),
+            app.workspace.identity(),
+        ))
+        .with_content(ContentIdentity::from_text("removed two"));
+    assert_eq!(thread.origin().provenance(), &expected);
+    Ok(())
+}
+
+#[test]
+fn resized_normal_deletion_draft_keeps_its_original_base_evidence() -> anyhow::Result<()> {
+    let dir = TempDir::new("resized-normal-deletion-origin")?;
+    git::init(&dir.0)?;
+    let removed =
+        "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-long-deletion-evidence";
+    let base = format!("keep before\n{removed}\nkeep after\n");
+    let target = "keep before\nkeep after\n";
+    git::commit_and_stage(&dir.0, &[("a.txt", &base)])?;
+    let first = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("base commit")?;
+    fs::write(dir.0.join("a.txt"), target)?;
+    let store = Store::open(dir.0.join("threads.jsonl"))?;
+    let mut app = testing::AppBuilder::at(&dir.0)
+        .source_view()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.resize(120, 24);
+    press(&mut app, "J");
+    assert_eq!(
+        app.view().layout().lines()[app.view().cursor().row].diff_old_line(),
+        Some(2)
+    );
+    press(&mut app, &"l".repeat(48));
+    let logical_cell = app.view().cursor().col.saturating_sub(1);
+    assert!(
+        logical_cell > 24,
+        "the selected cell must cross the future wrap boundary"
+    );
+    app.resize(24, 12);
+    let cursor = app.view().cursor();
+    assert_eq!(
+        app.view().layout().lines()[cursor.row].diff_old_line(),
+        Some(2),
+        "the resized cursor remains on the selected old-side line"
+    );
+    let restored_cell = app.view().layout().lines()[..cursor.row]
+        .iter()
+        .filter(|line| line.diff_old_line() == Some(2))
+        .map(|line| line.width().saturating_sub(1))
+        .sum::<usize>()
+        + cursor.col.saturating_sub(1);
+    assert_eq!(
+        restored_cell, logical_cell,
+        "resize preserves the exact logical old-side cell"
+    );
+    assert_eq!(
+        app.view().layout().lines()[cursor.row]
+            .text()
+            .chars()
+            .nth(cursor.col),
+        removed.chars().nth(logical_cell),
+        "the cursor remains on the intended immutable character"
+    );
+    let first_old_row = app
+        .view()
+        .layout()
+        .lines()
+        .iter()
+        .position(|line| line.diff_old_line() == Some(2))
+        .context("first wrapped old-side row")?;
+    assert!(
+        cursor.row > first_old_row,
+        "the selected cell must remain past the first wrapped row"
+    );
+    press(&mut app, "k");
+    assert_eq!(app.view().cursor().col, cursor.col);
+    press(&mut app, "j");
+    assert_eq!(
+        app.view().cursor(),
+        cursor,
+        "wrapped old-side vertical movement keeps the restored visual column"
+    );
+    press(&mut app, "c");
+    assert!(matches!(app.popup(), Some(crate::app::Popup::Compose(_))));
+    press(&mut app, "base finding after resize");
+    press_key(&mut app, KeyCode::Enter);
+    let thread = app
+        .store
+        .as_ref()
+        .and_then(|store| store.threads().first())
+        .context("projected deletion thread")?;
+    assert_eq!(thread.origin_side(), OriginSide::Base);
+    assert_eq!(thread.origin().range(), Some(LineRange::new(2, 2)));
+    assert_eq!(thread.origin().snippet(), removed);
+    assert_eq!(thread.origin_version(), &OriginVersion::commit(&first));
+    let expected = Provenance::new(OriginVersion::commit(&first), OriginSide::Base)
+        .with_comparison(ComparisonFacts::at_checkout(
+            OriginVersion::commit(&first),
+            OriginVersion::working_tree(Some(first)),
+            app.workspace.identity(),
+        ))
+        .with_content(ContentIdentity::from_text(removed));
+    assert_eq!(thread.origin().provenance(), &expected);
     Ok(())
 }
 

@@ -14,7 +14,7 @@ impl App {
     /// rows (ADR 0049). False when the thread is detached: its last known
     /// range is not its lines, and the gutter already says so.
     pub(crate) fn open_thread_in(&self, lines: LineRange) -> bool {
-        let cursor = self.thread_cursor();
+        let cursor = self.file_thread_cursor();
         let Some(shown) = cursor.thread() else {
             return false;
         };

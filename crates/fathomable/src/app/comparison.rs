@@ -1858,6 +1858,7 @@ impl App {
     /// Build selected-comparison facts once for the current generation.
     pub(crate) fn rebuild_comparison_status(&mut self) {
         self.change_stop = None;
+        self.change_placement = None;
         self.comparison_status = self.compute_comparison_status();
     }
 

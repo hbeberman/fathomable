@@ -47,31 +47,12 @@ pub(crate) enum ReviewView {
     Archived,
 }
 
-fn origin_evidence(thread: &Thread) -> String {
-    let side = match thread.origin_side() {
-        fathomable_core::annotations::OriginSide::Base => "source",
-        fathomable_core::annotations::OriginSide::Target => "target",
-        fathomable_core::annotations::OriginSide::Unspecified => "unspecified",
-    };
-    let version = origin_label(thread).unwrap_or_else(|| "origin unknown".to_owned());
+fn original_location(thread: &Thread) -> String {
     let location = thread
         .origin()
         .range()
         .map_or_else(|| "file".to_owned(), |range| format!("L{range}"));
-    let excerpt = if thread.origin().snippet().is_empty() {
-        "[file-wide]".to_owned()
-    } else {
-        thread.origin().snippet().to_owned()
-    };
-    let context = thread
-        .origin()
-        .context()
-        .map(|context| format!("\ncontext: {}", context.text().trim_end()))
-        .unwrap_or_default();
-    format!(
-        "origin: {version} · {side} · {}:{location}\nexcerpt: {excerpt}{context}",
-        thread.origin().path().display()
-    )
+    format!("⚠ original {}:{location}", thread.origin().path().display())
 }
 
 impl ReviewView {
@@ -194,9 +175,8 @@ pub(crate) struct Entry {
     /// The commit a past thread was resolved at, short, when no
     /// checkout shows it (ADR 0072).
     commit: Option<String>,
-    /// Original evidence shown when current placement is historical or
-    /// unavailable.
-    evidence: Option<String>,
+    /// Original coordinates shown only when current placement is not ordinary.
+    origin_warning: Option<String>,
     summary: ThreadSummary,
 }
 
@@ -273,12 +253,21 @@ pub(crate) enum Row {
         inside: bool,
         selected: bool,
     },
-    /// Immutable origin evidence shown for archived/history entries.
-    Evidence {
+    /// A restrained original-coordinate warning.
+    OriginWarning {
         entry: usize,
         line: Line,
-        dim: bool,
+    },
+    /// One wrapped row of stored immutable origin source.
+    OriginContext {
+        entry: usize,
+        line: Line,
         selected: bool,
+        omitted: bool,
+    },
+    /// Explicit notice that capture or preparation omitted origin source.
+    OriginTruncation {
+        entry: usize,
     },
     /// An expanded entry's shared one-row summary.
     Header {
@@ -360,6 +349,26 @@ impl Rows {
         })
     }
 
+    /// Rows occupied by immutable origin context for an expanded entry.
+    pub(crate) fn origin_context_range(&self, entry: usize) -> Option<std::ops::Range<usize>> {
+        let start = self
+            .rows
+            .iter()
+            .position(|row| matches!(row, Row::OriginContext { entry: e, .. } if *e == entry))?;
+        let len = self.rows[start..]
+            .iter()
+            .take_while(|row| {
+                matches!(
+                    row,
+                    Row::OriginContext { entry: e, .. }
+                        | Row::OriginTruncation { entry: e }
+                        if *e == entry
+                )
+            })
+            .count();
+        Some(start..start + len)
+    }
+
     /// The row index of the file row over `entry`.
     pub(crate) fn file_row_of(&self, entry: usize) -> Option<usize> {
         let path = self.entries.get(entry)?.path.as_path();
@@ -392,14 +401,21 @@ impl Rows {
             Row::Message { entry, message, .. } | Row::Body { entry, message, .. } => {
                 Some(Landing::Message(*entry, *message))
             }
-            Row::Evidence { .. } | Row::DraftAuthor { .. } | Row::DraftBody { .. } | Row::Blank => {
-                None
-            }
+            Row::OriginWarning { .. }
+            | Row::OriginContext { .. }
+            | Row::OriginTruncation { .. }
+            | Row::DraftAuthor { .. }
+            | Row::DraftBody { .. }
+            | Row::Blank => None,
         }
     }
 
     /// The row range occupied by one message.
-    fn message_range(&self, entry: usize, message: usize) -> Option<std::ops::Range<usize>> {
+    pub(crate) fn message_range(
+        &self,
+        entry: usize,
+        message: usize,
+    ) -> Option<std::ops::Range<usize>> {
         let start = self.rows.iter().position(
             |row| matches!(row, Row::Message { entry: e, message: m, .. } if *e == entry && *m == message),
         )?;
@@ -446,7 +462,9 @@ impl Rows {
                 Row::Header { entry, .. } | Row::Stub { entry, .. } => Some(Stop::Entry(*entry)),
                 Row::Message { .. }
                 | Row::Body { .. }
-                | Row::Evidence { .. }
+                | Row::OriginWarning { .. }
+                | Row::OriginContext { .. }
+                | Row::OriginTruncation { .. }
                 | Row::DraftAuthor { .. }
                 | Row::DraftBody { .. }
                 | Row::Blank => None,
@@ -499,11 +517,21 @@ impl App {
             self.store_mut();
             return;
         }
+        if !self.review_list.open || self.review.view != view {
+            self.dismiss_navigation_peek();
+        }
+        let destination = evidence.as_ref().map_or_else(
+            || {
+                let cursor = self.thread_cursor();
+                cursor.thread().cloned().map(|id| (id, cursor.message()))
+            },
+            |id| Some((id.clone(), self.newest_message(id))),
+        );
         self.review_list.evidence = evidence;
-        // The cursor the text was on becomes the list's.
-        let cursor = self.thread_cursor();
-        if let Some(id) = cursor.thread().cloned() {
-            self.set_thread_cursor_message(id, cursor.message());
+        // Explicit immutable-evidence destinations outrank the cursor retained
+        // by the previously focused surface.
+        if let Some((id, message)) = destination {
+            self.set_review_thread_cursor(id, message);
         }
         self.review.view = view;
         if view != ReviewView::Board {
@@ -536,13 +564,14 @@ impl App {
         } else {
             ReviewView::Board
         };
+        self.dismiss_navigation_peek();
         self.review.view = view;
         self.review.resolved = resolved;
         self.review.file_only = false;
         self.review_list.folded.remove(&path);
         self.review_list.folded_threads.remove(id);
         self.review_list.on_file = false;
-        self.set_thread_cursor(id.clone());
+        self.set_review_thread_cursor(id.clone(), self.newest_message(id));
         self.open_review_view_with_evidence(view, Some(id.clone()));
         self.review_follow_cursor();
         true
@@ -571,6 +600,69 @@ impl App {
     /// `file_only`; files in the files pane's order, threads by line.
     pub(crate) fn review_entries(&self, file_only: bool) -> Vec<Entry> {
         self.review_entries_for(self.review.view, file_only, self.review.resolved, true)
+    }
+
+    /// Open threads admitted by the current main Threads view and filters.
+    pub(super) fn review_open_threads(&self) -> Vec<ThreadId> {
+        self.review_entries(self.review.file_only)
+            .into_iter()
+            .filter(|entry| is_open(entry.kind()))
+            .map(|entry| entry.id)
+            .collect()
+    }
+
+    /// Whether the current main Threads view admits `id`.
+    pub(super) fn review_admits(&self, id: &ThreadId) -> bool {
+        self.review_entries(self.review.file_only)
+            .iter()
+            .any(|entry| entry.id() == id)
+    }
+
+    /// Temporarily reveal and contextually place `id` in main Threads.
+    pub(super) fn land_review_thread(&mut self, id: &ThreadId) -> bool {
+        let Some(path) = self
+            .review_entries(self.review.file_only)
+            .into_iter()
+            .find(|entry| entry.id() == id)
+            .map(|entry| entry.path)
+        else {
+            return false;
+        };
+        let newest = self.newest_message(id);
+        self.peek_review_thread(id.clone(), path);
+        self.review_list.on_file = false;
+        self.set_review_thread_cursor(id.clone(), newest);
+        self.place_review_thread(id)
+    }
+
+    /// Replace the main surface with the thread's evidence view and reveal it.
+    pub(crate) fn land_thread_evidence(&mut self, id: &ThreadId) -> bool {
+        let Some((path, view, resolved)) = self.thread(id).map(|thread| {
+            (
+                self.thread_path(thread).to_path_buf(),
+                if thread.is_archived() {
+                    ReviewView::Archived
+                } else {
+                    ReviewView::Board
+                },
+                thread.status() == Status::Resolved,
+            )
+        }) else {
+            return false;
+        };
+        self.dismiss_navigation_peek();
+        self.review.view = view;
+        self.review.resolved = resolved;
+        self.review.file_only = false;
+        self.review_list.evidence = Some(id.clone());
+        self.review_list.open = true;
+        self.focus = Focus::Review;
+        let newest = self.newest_message(id);
+        self.peek_review_thread(id.clone(), path);
+        self.review_list.on_file = false;
+        self.set_review_thread_cursor(id.clone(), newest);
+        self.relayout();
+        self.place_review_thread(id)
     }
 
     /// Normal-board entries for sidebar and file-list surfaces, independent
@@ -635,25 +727,30 @@ impl App {
                     .or(origin_context.as_deref());
                 let summary =
                     ThreadSummary::new(thread, Some(placement), self.user_name(), context);
-                let evidence = (view != ReviewView::Board
+                let source_unavailable = self.review_list.evidence.as_ref() == Some(thread.id());
+                let path = if view == ReviewView::Archived {
+                    thread.origin().path().to_path_buf()
+                } else {
+                    self.thread_path(thread).to_path_buf()
+                };
+                let moved =
+                    path != thread.origin().path() || placement.range() != thread.origin().range();
+                let origin_warning = (view != ReviewView::Board
                     || worktree.is_some()
                     || commit.is_some()
                     || placement.is_detached()
-                    || self.review_list.evidence.as_ref() == Some(thread.id()))
-                .then(|| origin_evidence(thread));
+                    || source_unavailable
+                    || moved)
+                    .then(|| original_location(thread));
                 Some(Entry {
                     id: thread.id().clone(),
-                    path: if view == ReviewView::Archived {
-                        thread.origin().path().to_path_buf()
-                    } else {
-                        self.thread_path(thread).to_path_buf()
-                    },
+                    path,
                     range,
                     words,
                     updated: thread.modified(),
                     worktree,
                     commit,
-                    evidence,
+                    origin_warning,
                     summary,
                 })
             })
@@ -765,26 +862,13 @@ impl App {
 
     /// Show the current file surface and give it focus.
     pub(crate) fn open_file_view(&mut self) {
+        if self.review_list.open {
+            self.dismiss_navigation_peek();
+        }
         self.close_review();
         self.focus = Focus::View;
         self.relayout();
         self.resume_draft();
-    }
-
-    /// Reveal the exact cursor thread without changing filters, folds, or focus.
-    pub(super) fn reveal_review_cursor(&mut self) {
-        if !self.review_list.open {
-            return;
-        }
-        let rows = self.review_rows(self.column_width());
-        let index = self
-            .thread_cursor()
-            .thread()
-            .and_then(|id| rows.entries.iter().position(|entry| entry.id() == id));
-        if let Some(index) = index {
-            self.review_list.on_file = false;
-            self.scroll_to_selection(&rows, index);
-        }
     }
 
     /// Columns the list has: the text column without the tree.
@@ -799,7 +883,7 @@ impl App {
     pub(crate) fn review_rows(&self, width: usize) -> Rows {
         let mut out = Rows::default();
         let body_width = width.saturating_sub(BODY_INDENT).max(1);
-        let cursor = self.thread_cursor();
+        let cursor = self.review_thread_cursor();
         let entries = self.review_entries(self.review.file_only);
         let grouped = !self.review.file_only;
         // The cursor rests on its file's row (ADR 0076) while the list
@@ -816,7 +900,7 @@ impl App {
                 .iter()
                 .position(|entry| entry.path != path)
                 .map_or(entries.len(), |len| index + len);
-            let folded = grouped && self.review_list.folded.contains(&path);
+            let folded = grouped && self.review_file_is_collapsed(&path);
             let cursor_inside = cursor_path.as_deref() == Some(path.as_path());
             if grouped {
                 out.rows.push(Row::File {
@@ -831,7 +915,9 @@ impl App {
             for entry in &entries[index..group_end] {
                 let entry_index = out.entries.len();
                 if !folded {
-                    let selected = !on_file && cursor.thread() == Some(&entry.id);
+                    let selected = !on_file
+                        && (cursor.thread() == Some(&entry.id)
+                            || self.review_thread_peeked(&entry.id));
                     self.push_entry(
                         &mut out,
                         entry,
@@ -908,6 +994,47 @@ impl App {
         (placement, Words::of(Some(placement), thread))
     }
 
+    fn push_origin_evidence(
+        &self,
+        out: &mut Rows,
+        entry: &Entry,
+        index: usize,
+        thread: &Thread,
+        body_width: usize,
+    ) {
+        if let Some(warning) = &entry.origin_warning {
+            let width = body_width
+                .saturating_add(BODY_INDENT)
+                .saturating_sub(crate::app::draw::message::ORIGIN_CONTEXT_INDENT)
+                .max(1);
+            out.rows
+                .extend(Layout::notice(warning, width).lines().iter().map(|line| {
+                    Row::OriginWarning {
+                        entry: index,
+                        line: line.clone(),
+                    }
+                }));
+        }
+        if thread.origin().range().is_some()
+            && let Some(layout) = self.origin_context_cache.layout(
+                thread,
+                body_width.saturating_add(BODY_INDENT),
+                self.highlighter(),
+            )
+        {
+            out.rows
+                .extend(layout.rows().iter().map(|row| Row::OriginContext {
+                    entry: index,
+                    line: row.line.clone(),
+                    selected: row.selected,
+                    omitted: row.omitted,
+                }));
+            if layout.is_truncated() {
+                out.rows.push(Row::OriginTruncation { entry: index });
+            }
+        }
+    }
+
     fn push_entry(
         &self,
         out: &mut Rows,
@@ -923,7 +1050,7 @@ impl App {
         let user = self.user_name();
         // A folded thread is one row, the stub's form, with no blank row
         // after it (ADR 0076).
-        if self.review_list.folded_threads.contains(&entry.id) {
+        if self.review_thread_is_collapsed(&entry.id) {
             out.rows.push(Row::Stub {
                 entry: index,
                 summary: entry.summary.clone(),
@@ -938,8 +1065,12 @@ impl App {
             selected,
             dim,
         });
-        let selected_message =
-            selected.then(|| self.thread_cursor().message().min(thread.replies().len()));
+        self.push_origin_evidence(out, entry, index, thread, body_width);
+        let selected_message = selected.then(|| {
+            self.review_peek_message(&entry.id)
+                .unwrap_or_else(|| self.review_thread_cursor().message())
+                .min(thread.replies().len())
+        });
         let compose = self
             .draft()
             .filter(|compose| compose.target().thread() == Some(&entry.id));
@@ -992,16 +1123,6 @@ impl App {
         {
             Self::push_review_draft(out, index, user, compose, body_width);
         }
-        if let Some(evidence) = &entry.evidence {
-            for line in Layout::render_message(evidence, body_width, self.highlighter()).lines() {
-                out.rows.push(Row::Evidence {
-                    entry: index,
-                    line: line.clone(),
-                    dim: false,
-                    selected: false,
-                });
-            }
-        }
         out.rows.push(Row::Blank);
     }
 
@@ -1027,10 +1148,16 @@ impl App {
         }
     }
 
-    /// Rows the list has for its entries: the column minus its header
-    /// and its key bar (ADR 0059).
+    /// Usable main Threads body rows after its header and active footer.
+    pub(crate) fn review_body_rows(&self) -> usize {
+        self.text_rows()
+            .saturating_sub(1 + usize::from(self.focus == Focus::Review))
+            .max(1)
+    }
+
+    /// Rows the list has for its entries.
     fn list_rows(&self) -> usize {
-        self.text_rows().saturating_sub(2).max(1)
+        self.review_body_rows()
     }
 
     fn push_review_draft(
@@ -1066,20 +1193,47 @@ impl App {
     /// The cursor's entry, or the first entry when the cursor's thread
     /// is not listed.
     pub(super) fn selected_index(&self, rows: &Rows) -> Option<usize> {
-        let cursor = self.thread_cursor();
+        let by_peek = rows
+            .entries
+            .iter()
+            .position(|entry| self.review_thread_peeked(&entry.id));
+        let cursor = self.review_thread_cursor();
         let by_id = cursor
             .thread()
             .and_then(|id| rows.entries.iter().position(|entry| &entry.id == id));
-        by_id.or_else(|| (!rows.entries.is_empty()).then_some(0))
+        by_peek
+            .or(by_id)
+            .or_else(|| (!rows.entries.is_empty()).then_some(0))
     }
 
     /// Put the cursor on entry `index`, a new thread at its newest message.
     fn select_entry(&mut self, rows: &Rows, index: usize) {
-        let Some(entry) = rows.entries.get(index) else {
+        let Some(id) = rows.entries.get(index).map(|entry| entry.id.clone()) else {
             return;
         };
+        let same_thread = self.review_thread_cursor().thread() == Some(&id);
+        let retained_message = self.review_peek_message(&id);
+        if !same_thread && !self.review_thread_peeked(&id) {
+            self.dismiss_navigation_peek();
+            let rows = self.review_rows(self.column_width());
+            let Some(index) = rows.entries.iter().position(|entry| entry.id == id) else {
+                return;
+            };
+            self.review_list.on_file = false;
+            let newest = self.newest_message(&id);
+            self.set_review_thread_cursor(id, newest);
+            self.scroll_to_selection(&rows, index);
+            return;
+        }
         self.review_list.on_file = false;
-        self.set_thread_cursor(entry.id.clone());
+        if same_thread {
+            self.set_review_thread_cursor(id, self.review_thread_cursor().message());
+        } else if let Some(message) = retained_message {
+            self.set_review_thread_cursor(id, message);
+        } else {
+            let newest = self.newest_message(&id);
+            self.set_review_thread_cursor(id, newest);
+        }
         self.scroll_to_selection(rows, index);
     }
 
@@ -1087,8 +1241,22 @@ impl App {
         let Some(id) = rows.entries.get(entry).map(|entry| entry.id.clone()) else {
             return;
         };
+        if self.review_thread_cursor().thread() != Some(&id) && !self.review_thread_peeked(&id) {
+            self.dismiss_navigation_peek();
+            let rows = self.review_rows(self.column_width());
+            let Some(entry) = rows.entries.iter().position(|entry| entry.id == id) else {
+                return;
+            };
+            self.review_list.on_file = false;
+            self.set_review_thread_cursor(id, message);
+            let id = rows.entries[entry].id.clone();
+            self.update_review_peek_message(&id, message);
+            self.scroll_to_selection(&rows, entry);
+            return;
+        }
         self.review_list.on_file = false;
-        self.set_thread_cursor_message(id, message);
+        self.set_review_thread_cursor(id.clone(), message);
+        self.update_review_peek_message(&id, message);
         self.scroll_to_selection(rows, entry);
     }
 
@@ -1096,12 +1264,21 @@ impl App {
     /// cursor goes to the file's first thread and the row is kept on
     /// screen.
     pub(super) fn rest_on_file(&mut self, rows: &Rows, path: &Path) {
+        if rows.first_entry_of(path).is_none() {
+            return;
+        }
+        self.dismiss_navigation_peek();
+        let rows = self.review_rows(self.column_width());
         let Some(entry) = rows.first_entry_of(path) else {
             return;
         };
-        self.select_entry(rows, entry);
+        let Some(id) = rows.entries.get(entry).map(|entry| entry.id.clone()) else {
+            return;
+        };
+        let newest = self.newest_message(&id);
+        self.set_review_thread_cursor(id, newest);
         self.review_list.on_file = true;
-        self.scroll_to_selection(rows, entry);
+        self.scroll_to_selection(&rows, entry);
     }
 
     /// Land on `stop`: a file row, or a thread.
@@ -1139,9 +1316,8 @@ impl App {
         match self.cursor_stop(&rows, index) {
             Stop::File(_) => true,
             Stop::Entry(entry) => rows
-                .entries
-                .get(entry)
-                .is_some_and(|entry| self.review_list.folded_threads.contains(&entry.id)),
+                .entry_row(entry)
+                .is_some_and(|row| matches!(rows.rows.get(row), Some(Row::Stub { .. }))),
         }
     }
 
@@ -1158,10 +1334,15 @@ impl App {
     /// `l` / `h`: the next or previous message of the cursor's thread,
     /// when its messages are shown.
     pub(crate) fn review_message_step(&mut self, delta: isize) {
+        self.activate_review_peek_cursor();
         if self.review_cursor_folded() {
             return;
         }
         self.message_step(delta);
+        let cursor = self.review_thread_cursor();
+        if let Some(id) = cursor.thread().cloned() {
+            self.update_review_peek_message(&id, cursor.message());
+        }
     }
 
     /// Scroll enough to keep the cursor's message, or a folded file's
@@ -1173,13 +1354,38 @@ impl App {
         }
     }
 
+    /// Center a traversed entry's immutable context through its newest reply.
+    pub(crate) fn place_review_thread_at(&mut self, id: &ThreadId, message: usize) -> bool {
+        let rows = self.review_rows(self.column_width());
+        let Some(entry) = rows.entries.iter().position(|entry| entry.id() == id) else {
+            return false;
+        };
+        let Some(priority) = rows.message_range(entry, message) else {
+            return false;
+        };
+        let start = rows.origin_context_range(entry).map_or_else(
+            || rows.entry_row(entry).unwrap_or(priority.start),
+            |range| range.start,
+        );
+        let span = start..priority.end;
+        let max = rows.rows.len().saturating_sub(self.review_body_rows());
+        self.review_list.scroll =
+            crate::app::placement::center_span(span, priority, self.review_body_rows(), max);
+        true
+    }
+
+    /// Place a traversed entry with the newest reply as its priority.
+    pub(crate) fn place_review_thread(&mut self, id: &ThreadId) -> bool {
+        self.place_review_thread_at(id, self.newest_message(id))
+    }
+
     /// Scroll enough to keep the selected message, or the folded file's
     /// row, visible.
     fn scroll_to_selection(&mut self, rows: &Rows, entry: usize) {
         let range = match self.cursor_stop(rows, entry) {
             Stop::File(_) => rows.file_row_of(entry).map(|row| row..row + 1),
             Stop::Entry(_) => rows
-                .message_range(entry, self.thread_cursor().message())
+                .message_range(entry, self.review_thread_cursor().message())
                 .or_else(|| rows.entry_row(entry).map(|row| row..row + 1)),
         };
         let Some(range) = range else {
@@ -1227,7 +1433,7 @@ impl App {
         let Some(start) = (match self.cursor_stop(&rows, entry) {
             Stop::File(_) => rows.file_row_of(entry),
             Stop::Entry(_) => rows
-                .message_range(entry, self.thread_cursor().message())
+                .message_range(entry, self.review_thread_cursor().message())
                 .map(|range| range.start)
                 .or_else(|| rows.entry_row(entry)),
         }) else {
@@ -1276,12 +1482,19 @@ impl App {
             .min(max);
     }
 
+    /// The origin shared by drawing and pointer hit testing.
+    pub(crate) fn review_viewport_scroll(&self, total_rows: usize) -> usize {
+        self.review_list
+            .scroll
+            .min(total_rows.saturating_sub(self.review_body_rows()))
+    }
+
     /// A click on list row `row` (below the header) selects its message
     /// or its thread; on a file row it folds or unfolds the file and
     /// rests the cursor on the row (ADR 0066, ADR 0076).
     pub(crate) fn review_click(&mut self, row: usize) {
         let rows = self.review_rows(self.column_width());
-        let at = self.review_list.scroll + row;
+        let at = self.review_viewport_scroll(rows.rows.len()) + row;
         match rows.landing_at(at) {
             Some(Landing::Stop(Stop::File(path))) => self.review_toggle_fold(&path),
             Some(Landing::Stop(Stop::Entry(entry))) => self.select_entry(&rows, entry),
@@ -1296,7 +1509,7 @@ impl App {
     /// menu; elsewhere the click selects as a left one.
     pub(crate) fn review_point(&mut self, row: usize) -> Option<PathBuf> {
         let rows = self.review_rows(self.column_width());
-        let at = self.review_list.scroll + row;
+        let at = self.review_viewport_scroll(rows.rows.len()) + row;
         let path = rows.file_at(at).map(Path::to_path_buf)?;
         self.rest_on_file(&rows, &path);
         self.focus = Focus::Review;
@@ -1319,6 +1532,8 @@ impl App {
             return;
         }
         self.review.resolved = !self.review.resolved;
+        self.reconcile_threads_pane_cursor();
+        self.reveal_threads_pane_selection();
         self.notice(if self.review.resolved {
             "resolved shown"
         } else {
@@ -1330,6 +1545,7 @@ impl App {
     /// The rows changed under the list: keep the cursor's entry in view,
     /// or say why the list is empty.
     pub(super) fn reshow_review(&mut self) {
+        self.dismiss_navigation_peek();
         if !self.review_list.is_open() {
             return;
         }
@@ -1358,7 +1574,7 @@ impl App {
             return;
         }
         let rows = self.review_rows(self.column_width());
-        let cursor = self.thread_cursor();
+        let cursor = self.review_thread_cursor();
         let index = self
             .selected_index(&rows)
             .filter(|_| {

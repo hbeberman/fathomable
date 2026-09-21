@@ -5,8 +5,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use fathomable_core::annotations::{
-    AgentReplyCommand, ContentIdentity, Draft, FullFileDigest, LineRange, MessageTarget,
-    OriginSide, OriginVersion, Status, Store, Thread, WorkingTreeFacts, WorkingTreeState,
+    AgentReplyCommand, AutoResolve, ContentIdentity, Draft, FullFileDigest, LineRange,
+    MessageTarget, OriginSide, OriginVersion, Status, Store, Thread, WorkingTreeFacts,
+    WorkingTreeState,
 };
 
 use fathomable_core::annotations::Author;
@@ -26,6 +27,7 @@ use super::{ComposeTarget, ThreadState};
 use crate::app::draw::message::MESSAGE_INDENT;
 use crate::app::threads::draft::DraftRow;
 use crate::app::threads::list::{BODY_INDENT, ReviewView, Row};
+use crate::app::threads::pane::PaneRow;
 use crate::app::threads::stubs::Subject;
 use crate::app::{App, Popup};
 use fathomable_core::layout::{Face, Line};
@@ -79,6 +81,22 @@ fn board_history_views_archive_restore_and_recent_resolution() -> anyhow::Result
     app.open_review_view(ReviewView::Archived);
     assert_eq!(app.review_entries(false).len(), 1);
     assert!(app.thread(&id).is_some_and(Thread::is_archived));
+    let rows = app.review_rows(80);
+    assert_eq!(
+        rows.rows
+            .iter()
+            .filter(|row| matches!(row, Row::OriginWarning { .. }))
+            .count(),
+        1
+    );
+    assert!(
+        !rows.rows.iter().any(|row| matches!(
+            row,
+            Row::OriginWarning { line, .. }
+                if line.spans().iter().any(|span| span.text().contains("excerpt:"))
+        )),
+        "history uses one coordinate warning rather than duplicate evidence text"
+    );
 
     app.restore_thread(&id);
     assert!(app.review_entries(false).is_empty());
@@ -133,7 +151,7 @@ fn normal_sidebar_stays_independent_while_history_changes() -> anyhow::Result<()
     restore_app.show_threads_pane();
     restore_app.window_threads();
     restore_app.set_thread_cursor(restore_ids[1].clone());
-    assert_eq!(restore_app.review_selected_index(), Some(1));
+    assert_eq!(restore_app.review_selected_index(), Some(0));
     assert_eq!(restore_app.threads_pane_selected(), None);
 
     restore_app.restore_thread(&restore_ids[1]);
@@ -142,7 +160,7 @@ fn normal_sidebar_stays_independent_while_history_changes() -> anyhow::Result<()
     assert_ne!(
         restore_app.thread_cursor().thread(),
         Some(&restore_ids[1]),
-        "the restored entry is removed from archived history"
+        "an entry absent from the normal sidebar cannot remain selected"
     );
     assert_eq!(restore_app.threads_pane_selected(), None);
 
@@ -154,7 +172,7 @@ fn normal_sidebar_stays_independent_while_history_changes() -> anyhow::Result<()
     archive_app.show_threads_pane();
     archive_app.window_threads();
     archive_app.set_thread_cursor(archive_ids[1].clone());
-    assert_eq!(archive_app.review_selected_index(), Some(1));
+    assert_eq!(archive_app.review_selected_index(), Some(0));
     assert_eq!(archive_app.threads_pane_selected(), Some(1));
 
     archive_app.archive_thread(&archive_ids[1]);
@@ -165,7 +183,7 @@ fn normal_sidebar_stays_independent_while_history_changes() -> anyhow::Result<()
         Some(&archive_ids[2]),
         "archiving the middle resolved entry reseats to its next neighbor"
     );
-    assert_eq!(archive_app.review_selected_index(), Some(1));
+    assert_eq!(archive_app.review_selected_index(), Some(0));
     assert_eq!(archive_app.threads_pane_selected(), Some(1));
     Ok(())
 }
@@ -414,6 +432,1292 @@ fn annotate(app: &mut App, comment: &str) -> anyhow::Result<()> {
     type_in(app, comment);
     app.compose_submit();
     anyhow::ensure!(app.thread_counts().1 == 1, "thread not created");
+    Ok(())
+}
+
+#[test]
+fn passive_file_relayout_does_not_retarget_the_thread_list() -> anyhow::Result<()> {
+    let text = (1..=12)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let dir = testing::workspace("passive-file-seat", &text)?;
+    let root = testing::root(&dir);
+    let mut store = Store::open(testing::store_path(&dir))?;
+    let file_thread = store.annotate(
+        testing::at_working_tree(
+            &root,
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(5, 5),
+                "File owns A",
+            ),
+            &text,
+        )?,
+        &text,
+        1,
+    )?;
+    let pane_thread = store.annotate(
+        testing::at_working_tree(
+            &root,
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(9, 9),
+                "sidebar owns B",
+            ),
+            &text,
+        )?,
+        &text,
+        2,
+    )?;
+    let syntax_engine = Arc::new(Highlighter::new("base16-ocean.dark")?);
+    let mut app = testing::AppBuilder::new(&dir)
+        .source_view()
+        .options(move |mut options| {
+            options.highlighter = syntax_engine;
+            options
+        })
+        .build()?;
+    assert!(app.view_mut().reload(format!("{text}\nline 13\n")));
+    let current = app.current.context("open document")?;
+    app.queue_highlight(current);
+    let highlighted = app
+        .take_highlight_jobs()
+        .pop()
+        .context("pending source highlight")?
+        .complete();
+    app.land_file_thread_jump(file_thread.clone());
+    app.show_threads_pane();
+    app.set_threads_pane_cursor(&pane_thread, 0);
+    app.focus_threads_pane();
+
+    app.resize(66, 16);
+    assert_eq!(
+        app.threads_pane_thread_cursor().thread(),
+        Some(&pane_thread)
+    );
+    assert_eq!(app.file_thread_cursor().thread(), Some(&file_thread));
+
+    assert!(app.apply_highlight(highlighted));
+    assert_eq!(
+        app.threads_pane_thread_cursor().thread(),
+        Some(&pane_thread),
+        "delayed File highlighting must not mutate the sidebar cursor"
+    );
+    assert_eq!(
+        app.file_thread_cursor().thread(),
+        Some(&file_thread),
+        "passive File completion restores File's own logical seat"
+    );
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+    Ok(())
+}
+
+#[test]
+fn unavailable_enter_fallback_keeps_the_explicit_review_destination() -> anyhow::Result<()> {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let dir = testing::workspace("review-enter-evidence-precedence", testing::README)?;
+    let root = testing::root(&dir);
+    let mut store = Store::open(testing::store_path(&dir))?;
+    let file_thread = store.annotate(
+        testing::at_working_tree(
+            &root,
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(3, 3),
+                "File A",
+            ),
+            testing::README,
+        )?,
+        testing::README,
+        1,
+    )?;
+    let destination = store.annotate(
+        testing::at_working_tree(
+            &root,
+            Draft::new(
+                Author::User,
+                Path::new("missing.md"),
+                LineRange::new(1, 1),
+                "evidence B",
+            ),
+            "gone\n",
+        )?,
+        "gone\n",
+        2,
+    )?;
+    let mut app = app(&dir)?;
+    app.land_file_thread_jump(file_thread.clone());
+    app.open_review();
+    app.set_review_thread_cursor(destination.clone(), 0);
+
+    crate::app::input::keys::handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    );
+
+    assert!(app.review_list().is_open());
+    assert_eq!(app.review_thread_cursor().thread(), Some(&destination));
+    assert_eq!(app.thread_cursor().thread(), Some(&destination));
+    assert_eq!(app.file_thread_cursor().thread(), Some(&file_thread));
+    app.thread_reply();
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::Compose(compose))
+            if compose.target() == &ComposeTarget::Reply(destination)
+    ));
+    Ok(())
+}
+
+#[test]
+fn file_tab_uses_source_insertion_until_a_thread_is_seated() -> anyhow::Result<()> {
+    let text = (1..=12)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let dir = testing::workspace("file-tab-source-insertion", &text)?;
+    let root = testing::root(&dir);
+    let mut store = Store::open(testing::store_path(&dir))?;
+    let line_five = store.annotate(
+        testing::at_working_tree(
+            &root,
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(5, 5),
+                "L5",
+            ),
+            &text,
+        )?,
+        &text,
+        1,
+    )?;
+    let line_nine = store.annotate(
+        testing::at_working_tree(
+            &root,
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(9, 9),
+                "L9",
+            ),
+            &text,
+        )?,
+        &text,
+        2,
+    )?;
+    let mut app = testing::source_app(&dir)?;
+
+    app.view_mut().goto_source_line(1);
+    app.thread_step_across(1);
+    assert_eq!(app.file_thread_cursor().thread(), Some(&line_five));
+
+    app.view_mut().goto_source_line(6);
+    assert_eq!(app.view().cursor_source_line(), Some(6));
+    assert!(app.expanded_row_message(app.view().cursor().row).is_none());
+    app.thread_step_across(-1);
+    assert_eq!(app.file_thread_cursor().thread(), Some(&line_five));
+
+    app.view_mut().goto_source_line(6);
+    app.thread_step_across(1);
+    assert_eq!(app.file_thread_cursor().thread(), Some(&line_nine));
+
+    app.clear_message();
+    app.thread_step_across(1);
+    assert_eq!(app.file_thread_cursor().thread(), Some(&line_five));
+    assert_eq!(app.message(), Some("wrapped to first thread"));
+
+    app.clear_message();
+    app.thread_step_across(-1);
+    assert_eq!(app.file_thread_cursor().thread(), Some(&line_nine));
+    assert_eq!(app.message(), Some("wrapped to last thread"));
+    Ok(())
+}
+
+#[test]
+fn main_threads_tab_peeks_folded_entry_and_explicit_fold_takes_over() -> anyhow::Result<()> {
+    let dir = testing::workspace("review-tab-peek", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "opening")?;
+    let id = app.marks()[0].id().clone();
+    app.thread_reply();
+    type_in(&mut app, "newest");
+    app.compose_submit();
+    app.open_review();
+    app.review_toggle_fold(Path::new("README.md"));
+    app.review_toggle_thread(&id);
+    assert!(app.review_list().is_folded(Path::new("README.md")));
+    assert!(app.review_list().is_thread_folded(&id));
+
+    app.thread_step_across(1);
+
+    assert_eq!(app.focus(), Focus::Review);
+    assert_eq!(app.thread_cursor().thread(), Some(&id));
+    assert_eq!(app.thread_cursor().message(), 1);
+    let rows = app.review_rows(app.column_width());
+    let entry = app
+        .review_selected_index()
+        .ok_or_else(|| anyhow::anyhow!("entry"))?;
+    let row = rows
+        .entry_row(entry)
+        .ok_or_else(|| anyhow::anyhow!("row"))?;
+    assert!(matches!(rows.rows[row], Row::Header { .. }));
+    assert!(
+        app.review_list().is_thread_folded(&id),
+        "temporary reveal preserves the persistent fold"
+    );
+    assert!(
+        app.review_list().is_folded(Path::new("README.md")),
+        "temporary reveal preserves the persistent file fold"
+    );
+
+    app.resize(72, 18);
+    let rows = app.review_rows(app.column_width());
+    let entry = app
+        .review_selected_index()
+        .ok_or_else(|| anyhow::anyhow!("resized entry"))?;
+    let priority = rows
+        .message_range(entry, 1)
+        .ok_or_else(|| anyhow::anyhow!("resized message"))?;
+    let start = rows.origin_context_range(entry).map_or_else(
+        || rows.entry_row(entry).unwrap_or(priority.start),
+        |range| range.start,
+    );
+    let max = rows.rows.len().saturating_sub(app.review_body_rows());
+    assert_eq!(
+        app.review_list().scroll(),
+        crate::app::placement::center_span(
+            start..priority.end,
+            priority,
+            app.review_body_rows(),
+            max,
+        )
+    );
+
+    app.review_toggle_thread(&id);
+    let rows = app.review_rows(app.column_width());
+    let row = rows
+        .entry_row(entry)
+        .ok_or_else(|| anyhow::anyhow!("row"))?;
+    assert!(matches!(rows.rows[row], Row::Stub { .. }));
+    assert!(app.review_list().is_thread_folded(&id));
+    app.review_toggle_fold(Path::new("README.md"));
+    assert!(app.review_list().is_folded(Path::new("README.md")));
+    Ok(())
+}
+
+#[test]
+fn pane_tab_reveal_keeps_both_folded_siblings_as_local_stops() -> anyhow::Result<()> {
+    let dir = testing::workspace("pane-tab-folded-siblings", testing::README)?;
+    let mut app = app(&dir)?;
+    app.view_mut().goto_bottom();
+    app.start_comment();
+    type_in(&mut app, "bottom");
+    app.compose_submit();
+    app.view_mut().goto_top();
+    app.start_comment();
+    type_in(&mut app, "top");
+    app.compose_submit();
+    let threads = app.file_threads();
+    let [top, bottom] = threads.as_slice() else {
+        anyhow::bail!("fixture must have exactly two threads");
+    };
+    let top = top.clone();
+    let bottom = bottom.clone();
+
+    app.show_threads_pane();
+    app.focus_threads_pane();
+    app.threads_pane_toggle_scope();
+    app.set_thread_cursor(top.clone());
+    app.threads_pane_fold();
+    assert!(app.threads_pane_is_folded(Path::new("README.md")));
+    assert_eq!(
+        app.threads_pane_rows()
+            .iter()
+            .filter(|row| matches!(row, PaneRow::Thread(_)))
+            .count(),
+        0
+    );
+
+    app.set_thread_cursor(bottom.clone());
+    app.thread_step_across(1);
+    assert_eq!(app.thread_cursor().thread(), Some(&top));
+    assert!(app.pane_file_peeked(Path::new("README.md")));
+    assert_eq!(
+        app.threads_pane_rows()
+            .iter()
+            .filter(|row| matches!(row, PaneRow::Thread(_)))
+            .count(),
+        2
+    );
+
+    app.clear_message();
+    app.threads_pane_move(1);
+    assert_eq!(app.thread_cursor().thread(), Some(&bottom));
+    assert_eq!(app.message(), None, "the visible sibling is not skipped");
+    app.threads_pane_move(1);
+    assert_eq!(app.thread_cursor().thread(), Some(&top));
+    assert_eq!(app.message(), Some("wrapped to first thread"));
+
+    app.threads_pane_fold();
+    assert!(!app.pane_file_peeked(Path::new("README.md")));
+    assert!(app.threads_pane_is_folded(Path::new("README.md")));
+    assert_eq!(
+        app.threads_pane_rows()
+            .iter()
+            .filter(|row| matches!(row, PaneRow::Thread(_)))
+            .count(),
+        0,
+        "an explicit fold takes ownership from the temporary reveal"
+    );
+
+    app.thread_step_across(-1);
+    assert_eq!(app.thread_cursor().thread(), Some(&bottom));
+    assert!(app.pane_file_peeked(Path::new("README.md")));
+    app.clear_message();
+    app.threads_pane_move(-1);
+    assert_eq!(app.thread_cursor().thread(), Some(&top));
+    assert_eq!(
+        app.message(),
+        None,
+        "reverse motion reaches the visible sibling"
+    );
+    app.threads_pane_move(-1);
+    assert_eq!(app.thread_cursor().thread(), Some(&bottom));
+    assert_eq!(app.message(), Some("wrapped to last thread"));
+
+    app.threads_pane_fold();
+    assert!(!app.pane_file_peeked(Path::new("README.md")));
+    assert!(app.threads_pane_is_folded(Path::new("README.md")));
+    Ok(())
+}
+
+#[test]
+fn threads_body_gives_hidden_footer_row_back_to_content() -> anyhow::Result<()> {
+    let dir = testing::workspace("review-body-footer", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "thread")?;
+    app.open_review();
+    let focused = app.review_body_rows();
+    app.show_threads_pane();
+    app.focus_threads_pane();
+    assert_eq!(app.review_body_rows(), focused + 1);
+    Ok(())
+}
+
+#[test]
+fn file_thread_jump_reapplies_contextual_placement_after_resize() -> anyhow::Result<()> {
+    let dir = testing::workspace("file-thread-resize", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "opening")?;
+    let id = app.marks()[0].id().clone();
+    app.thread_reply();
+    type_in(&mut app, "newest reply");
+    app.compose_submit();
+    app.thread_step_across(1);
+
+    app.resize(70, 18);
+
+    let newest = app.newest_message(&id);
+    let (span, priority) = app
+        .file_thread_jump_span(&id, newest)
+        .ok_or_else(|| anyhow::anyhow!("jump span"))?;
+    let max = app
+        .view()
+        .layout()
+        .lines()
+        .len()
+        .saturating_sub(app.view().body_height());
+    assert_eq!(
+        app.view().scroll(),
+        crate::app::placement::center_span(span, priority, app.view().body_height(), max,)
+    );
+    assert_eq!(app.thread_cursor().message(), newest);
+    assert_eq!(
+        app.expanded_row_message(app.view().cursor().row),
+        Some((id, newest))
+    );
+    Ok(())
+}
+
+#[test]
+fn file_rewrap_reseats_the_newest_message_by_logical_identity() -> anyhow::Result<()> {
+    let dir = testing::workspace("file-thread-rewrap-message", testing::README)?;
+    let mut app = app(&dir)?;
+    let opening = "opening comment ".repeat(30);
+    annotate(&mut app, &opening)?;
+    let id = app.marks()[0].id().clone();
+    app.thread_reply();
+    type_in(&mut app, "newest");
+    app.compose_submit();
+    app.resize(120, 18);
+    app.thread_step_across(1);
+    let wide_opening = app.file_message_range(&id, 0).context("wide opening")?;
+
+    app.resize(32, 18);
+
+    let narrow_opening = app.file_message_range(&id, 0).context("narrow opening")?;
+    assert!(narrow_opening.len() > wide_opening.len());
+    assert_eq!(app.thread_cursor().message(), 1);
+    assert_eq!(
+        app.expanded_row_message(app.view().cursor().row),
+        Some((id, 1)),
+        "rewrapping must not reinterpret the old rendered-row index as a message"
+    );
+    Ok(())
+}
+
+#[test]
+fn file_rewrap_preserves_an_older_message_selected_after_tab() -> anyhow::Result<()> {
+    let dir = testing::workspace("file-thread-rewrap-older-message", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, &"opening comment ".repeat(20))?;
+    let id = app.marks()[0].id().clone();
+    for reply in ["middle reply", "newest reply"] {
+        app.thread_reply();
+        type_in(&mut app, reply);
+        app.compose_submit();
+    }
+    app.resize(120, 18);
+    app.thread_step_across(1);
+    let older = app.file_message_range(&id, 1).context("older message")?;
+    app.view_mut().goto_row(older.start);
+    assert_eq!(app.thread_cursor().message(), 1);
+
+    app.resize(32, 18);
+
+    assert_eq!(app.thread_cursor().message(), 1);
+    assert_eq!(
+        app.expanded_row_message(app.view().cursor().row),
+        Some((id, 1)),
+        "resize preserves the locally selected logical message"
+    );
+    Ok(())
+}
+
+#[test]
+fn file_rewrap_preserves_source_motion_after_tab() -> anyhow::Result<()> {
+    let dir = testing::workspace("file-thread-rewrap-source", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, &"opening comment ".repeat(20))?;
+    let id = app.marks()[0].id().clone();
+    app.thread_reply();
+    type_in(&mut app, "newest reply");
+    app.compose_submit();
+    app.resize(120, 18);
+    app.thread_step_across(1);
+    assert!(app.file_thread_peeked(&id));
+    app.view_mut().goto_source_line(1);
+
+    app.resize(32, 18);
+
+    assert_eq!(app.view().cursor_source_line(), Some(1));
+    assert!(
+        app.expanded_row_message(app.view().cursor().row).is_none(),
+        "resize must not restore the stale newest-message seat"
+    );
+    assert!(
+        app.file_thread_peeked(&id),
+        "source motion does not take ownership of the temporary expansion"
+    );
+    Ok(())
+}
+
+#[test]
+fn leaving_a_long_review_peek_relocates_the_destination_before_scrolling() -> anyhow::Result<()> {
+    let text = "line\n".repeat(30);
+    let dir = testing::workspace("review-peek-relocate", &text)?;
+    let root = testing::root(&dir);
+    let mut store = Store::open(testing::store_path(&dir))?;
+    let first = store.annotate(
+        testing::at_working_tree(
+            &root,
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(2, 2),
+                "long opening ".repeat(70),
+            ),
+            &text,
+        )?,
+        &text,
+        1,
+    )?;
+    let destination = store.annotate(
+        testing::at_working_tree(
+            &root,
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(25, 25),
+                "destination",
+            ),
+            &text,
+        )?,
+        &text,
+        2,
+    )?;
+    let mut app = app(&dir)?;
+    app.open_review();
+    app.resize(46, 10);
+    app.review_toggle_thread(&first);
+    app.set_thread_cursor(destination.clone());
+    app.thread_step_across(-1);
+    assert!(app.review_thread_peeked(&first));
+
+    app.review_step(1);
+
+    assert!(!app.review_thread_peeked(&first));
+    assert_eq!(app.thread_cursor().thread(), Some(&destination));
+    let rows = app.review_rows(app.column_width());
+    let entry = rows
+        .entries
+        .iter()
+        .position(|entry| entry.id() == &destination)
+        .context("destination entry")?;
+    let selected = rows
+        .message_range(entry, app.thread_cursor().message())
+        .context("destination message")?;
+    let origin = app.review_viewport_scroll(rows.rows.len());
+    assert!(
+        selected.start >= origin && selected.start < origin + app.review_body_rows(),
+        "destination must be visible after the peek above it collapses"
+    );
+    Ok(())
+}
+
+#[test]
+fn no_target_navigation_preserves_the_current_file_peek() -> anyhow::Result<()> {
+    let dir = testing::workspace("file-thread-no-target", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "only thread")?;
+    let id = app.marks()[0].id().clone();
+    app.thread_step_across(1);
+    assert!(app.file_thread_peeked(&id));
+    app.toggle_resolved(&id);
+
+    app.thread_step_across(1);
+
+    assert_eq!(app.message(), Some("no open threads in the workspace"));
+    assert!(app.file_thread_peeked(&id));
+    Ok(())
+}
+
+#[test]
+fn thread_list_tab_does_not_inject_target_into_history_view() -> anyhow::Result<()> {
+    let dir = testing::workspace("pane-tab-history-mismatch", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "open")?;
+    let id = app.marks()[0].id().clone();
+    app.open_review_view(ReviewView::Archived);
+    app.show_threads_pane();
+    app.focus_threads_pane();
+
+    app.thread_step_across(1);
+
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+    assert_eq!(app.review().view, ReviewView::Archived);
+    assert!(app.review_entries(false).is_empty());
+    assert_eq!(app.thread_cursor().thread(), Some(&id));
+    assert_eq!(
+        app.message(),
+        Some("thread is outside the current Threads view; press Enter to open")
+    );
+    Ok(())
+}
+
+#[test]
+fn rejected_sidebar_preview_preserves_archived_main_peek_and_viewport() -> anyhow::Result<()> {
+    let dir = testing::workspace("pane-tab-preserves-history-peek", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "archived")?;
+    let archived = app.marks()[0].id().clone();
+    app.toggle_resolved(&archived);
+    app.archive_thread(&archived);
+    app.view_mut().goto_source_line(7);
+    app.start_new_comment();
+    app.compose_insert("active sidebar target");
+    app.compose_submit();
+    let active = app.marks()[0].id().clone();
+    app.open_review_view(ReviewView::Archived);
+    app.review_toggle_thread(&archived);
+    app.peek_review_thread(archived.clone(), PathBuf::from("README.md"));
+    app.place_review_thread(&archived);
+    app.review_scroll(isize::MAX);
+    let scroll = app.review_list().scroll();
+    app.show_threads_pane();
+    app.focus_threads_pane();
+    app.set_thread_cursor_message(archived.clone(), 0);
+
+    app.thread_step_across(1);
+
+    assert_eq!(app.thread_cursor().thread(), Some(&active));
+    assert!(app.review_thread_peeked(&archived));
+    assert!(app.review_list().is_thread_folded(&archived));
+    assert_eq!(app.review_list().scroll(), scroll);
+    assert_eq!(app.review().view, ReviewView::Archived);
+
+    let rows = app.review_rows(app.column_width());
+    let origin = app.review_viewport_scroll(rows.rows.len());
+    let (header_row, summary) = rows
+        .rows
+        .iter()
+        .enumerate()
+        .find_map(|(row, item)| match item {
+            Row::Header { entry, summary, .. } if rows.entries[*entry].id() == &archived => {
+                Some((row, summary))
+            }
+            _ => None,
+        })
+        .context("visible archived header")?;
+    let header = crate::app::draw::header::entry_header(
+        summary,
+        fathomable_core::clock::now(),
+        true,
+        app.column_width(),
+    );
+    let disclosure = (0..app.column_width())
+        .find(|column| header.disclosure_at(*column))
+        .context("archived disclosure")?;
+    let header_click = (
+        app.sidebar_width() + disclosure,
+        app.pane_top() + 1 + header_row - origin,
+    );
+    testing::click(&mut app, header_click.0, header_click.1);
+
+    assert!(!app.review_thread_peeked(&archived));
+    assert!(
+        app.review_list().is_thread_folded(&archived),
+        "the visible expansion collapses and leaves the persistent fold in place"
+    );
+    assert_eq!(app.thread_cursor().thread(), Some(&archived));
+
+    app.peek_review_thread(archived.clone(), PathBuf::from("README.md"));
+    app.place_review_thread(&archived);
+    app.show_threads_pane();
+    app.focus_threads_pane();
+    app.set_thread_cursor_message(archived.clone(), 0);
+    app.thread_step_across(1);
+    assert_eq!(app.thread_cursor().thread(), Some(&active));
+    assert!(app.review_thread_peeked(&archived));
+
+    let rows = app.review_rows(app.column_width());
+    let origin = app.review_viewport_scroll(rows.rows.len());
+    let message_row = rows
+        .rows
+        .iter()
+        .enumerate()
+        .find_map(|(row, item)| match item {
+            Row::Message {
+                entry, message: 0, ..
+            } if rows.entries[*entry].id() == &archived => Some(row),
+            _ => None,
+        })
+        .context("visible archived message")?;
+    let message_click = (
+        app.sidebar_width() + BODY_INDENT,
+        app.pane_top() + 1 + message_row - origin,
+    );
+    testing::click(&mut app, message_click.0, message_click.1);
+
+    assert_eq!(app.thread_cursor().thread(), Some(&archived));
+    assert_eq!(app.thread_cursor().message(), 0);
+    assert!(app.review_thread_peeked(&archived));
+    assert!(app.review_list().is_thread_folded(&archived));
+    let visible = app.review_rows(app.column_width());
+    assert!(visible.rows.iter().any(|row| matches!(
+        row,
+        Row::Message {
+            entry,
+            message: 0,
+            ..
+        } if visible.entries[*entry].id() == &archived
+    )));
+    Ok(())
+}
+
+#[test]
+fn rejected_sidebar_movement_preserves_back_restored_archived_view() -> anyhow::Result<()> {
+    let dir = testing::workspace("pane-move-preserves-back-history", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "archived")?;
+    let archived = app.marks()[0].id().clone();
+    app.toggle_resolved(&archived);
+    app.archive_thread(&archived);
+    app.view_mut().goto_source_line(7);
+    app.start_new_comment();
+    app.compose_insert("active sidebar target");
+    app.compose_submit();
+    let active = app.marks()[0].id().clone();
+    app.open_review_view(ReviewView::Archived);
+    app.review_toggle_thread(&archived);
+    app.set_thread_cursor_message(archived.clone(), 0);
+    let origin = app.jump_origin().ok_or_else(|| anyhow::anyhow!("origin"))?;
+    app.record_jump(origin);
+    app.open_file_view();
+    app.jump_back();
+    app.review_scroll(isize::MAX);
+    app.show_threads_pane();
+    app.focus_threads_pane();
+    let scroll = app.review_list().scroll();
+
+    app.threads_pane_move(1);
+
+    assert_eq!(app.thread_cursor().thread(), Some(&active));
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+    assert_eq!(app.review().view, ReviewView::Archived);
+    assert!(app.review_thread_peeked(&archived));
+    assert!(app.review_list().is_thread_folded(&archived));
+    assert_eq!(app.review_list().scroll(), scroll);
+    assert_eq!(
+        app.message(),
+        Some("thread is outside the current Threads view; press Enter to open")
+    );
+    Ok(())
+}
+
+#[test]
+fn rejected_sidebar_pointer_routes_preserve_back_restored_archived_view() -> anyhow::Result<()> {
+    let dir = testing::workspace("pane-pointer-preserves-back-history", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "archived")?;
+    let archived = app.marks()[0].id().clone();
+    app.toggle_resolved(&archived);
+    app.archive_thread(&archived);
+    app.view_mut().goto_source_line(7);
+    app.start_new_comment();
+    app.compose_insert("active sidebar target");
+    app.compose_submit();
+    let active = app.marks()[0].id().clone();
+    app.open_review_view(ReviewView::Archived);
+    app.review_toggle_thread(&archived);
+    app.set_thread_cursor_message(archived.clone(), 0);
+    let origin = app.jump_origin().ok_or_else(|| anyhow::anyhow!("origin"))?;
+    app.record_jump(origin);
+    app.open_file_view();
+    app.jump_back();
+    app.review_scroll(isize::MAX);
+    app.show_threads_pane();
+    app.focus_threads_pane();
+    let scroll = app.review_list().scroll();
+
+    app.threads_pane_click(0);
+    assert_eq!(app.thread_cursor().thread(), Some(&active));
+    assert!(app.review_thread_peeked(&archived));
+    assert!(app.review_list().is_thread_folded(&archived));
+    assert_eq!(app.review_list().scroll(), scroll);
+    assert_eq!(
+        app.message(),
+        Some("thread is outside the current Threads view; press Enter to open")
+    );
+
+    assert!(app.threads_pane_point(1).is_some());
+    assert_eq!(app.thread_cursor().thread(), Some(&active));
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+    assert_eq!(app.review().view, ReviewView::Archived);
+    assert!(app.review_thread_peeked(&archived));
+    assert!(app.review_list().is_thread_folded(&archived));
+    assert_eq!(app.review_list().scroll(), scroll);
+    assert_eq!(
+        app.message(),
+        Some("thread is outside the current Threads view; press Enter to open")
+    );
+    Ok(())
+}
+
+#[test]
+fn sidebar_tab_places_a_span_that_only_fits_without_the_file_footer() -> anyhow::Result<()> {
+    let text = (1..=40)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    let dir = testing::workspace("pane-tab-final-file-geometry", &text)?;
+    let mut app = app(&dir)?;
+    app.view_mut().goto_source_line(20);
+    app.view_mut().select_lines();
+    app.view_mut().move_down(2);
+    app.start_new_comment();
+    type_in(&mut app, "opening");
+    app.compose_submit();
+    let id = app.marks()[0].id().clone();
+    app.thread_reply();
+    type_in(&mut app, "newest");
+    app.compose_submit();
+    app.show_threads_pane();
+    app.focus_threads_pane();
+    app.expand_thread(id.clone());
+    app.goto_message(id.clone(), 1);
+    let span_len = app
+        .file_thread_jump_span(&id, 1)
+        .context("expanded span")?
+        .0
+        .len();
+    app.fold_thread(&id);
+    let height = (4..=40)
+        .find(|height| {
+            app.resize(100, *height);
+            app.text_rows() == span_len
+        })
+        .context("window height matching the expanded span")?;
+    app.resize(100, height);
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+
+    app.thread_step_across(1);
+
+    let (span, priority) = app
+        .file_thread_jump_span(&id, 1)
+        .context("traversed span")?;
+    assert_eq!(span.len(), app.view().body_height());
+    let max = app
+        .view()
+        .layout()
+        .lines()
+        .len()
+        .saturating_sub(app.view().body_height());
+    assert_eq!(
+        app.view().scroll(),
+        crate::app::placement::center_span(span.clone(), priority, app.view().body_height(), max)
+    );
+    assert_eq!(
+        app.view().scroll(),
+        span.start.min(max),
+        "the whole span fits and takes the fit/center path"
+    );
+    Ok(())
+}
+
+#[test]
+fn hidden_footer_click_uses_the_same_bottom_origin_as_drawing() -> anyhow::Result<()> {
+    let text = "line\n".repeat(40);
+    let dir = testing::workspace("review-hidden-footer-hit", &text)?;
+    let mut store = Store::open(testing::store_path(&dir))?;
+    for created in 1..=6 {
+        store.annotate(
+            testing::at_working_tree(
+                &testing::root(&dir),
+                Draft::on_file(Author::User, Path::new("README.md"), "thread"),
+                &text,
+            )?,
+            &text,
+            created,
+        )?;
+    }
+    let mut app = app(&dir)?;
+    app.open_review();
+    app.resize(60, 10);
+    app.review_scroll(isize::MAX);
+    let stored = app.review_list().scroll();
+    app.show_threads_pane();
+    app.focus_threads_pane();
+    let rows = app.review_rows(app.column_width());
+    let origin = app.review_viewport_scroll(rows.rows.len());
+    assert!(
+        origin < stored,
+        "hiding the footer clamps the effective origin"
+    );
+    let (at, id, summary) = rows
+        .rows
+        .iter()
+        .enumerate()
+        .skip(origin)
+        .take(app.review_body_rows())
+        .find_map(|(at, row)| match row {
+            Row::Header { summary, .. } => Some((at, summary.id().clone(), summary)),
+            _ => None,
+        })
+        .context("visible thread header")?;
+    let layout = crate::app::draw::header::entry_header(
+        summary,
+        fathomable_core::clock::now(),
+        true,
+        app.column_width(),
+    );
+    let local = (0..app.column_width())
+        .find(|column| layout.disclosure_at(*column))
+        .context("disclosure")?;
+    let screen_row = app.pane_top() + 1 + at - origin;
+    let screen_column = app.sidebar_width() + local;
+
+    testing::click(&mut app, screen_column, screen_row);
+
+    assert!(app.review_list().is_thread_folded(&id));
+    for other in rows
+        .entries
+        .iter()
+        .map(super::list::Entry::id)
+        .filter(|other| *other != &id)
+    {
+        assert!(
+            !app.review_list().is_thread_folded(other),
+            "the click must fold only the drawn thread"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn jumplist_restores_exact_message_through_a_persistent_fold() -> anyhow::Result<()> {
+    let dir = testing::workspace("jumplist-message-fold", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "opening")?;
+    let id = app.marks()[0].id().clone();
+    for reply in ["middle", "newest"] {
+        app.thread_reply();
+        type_in(&mut app, reply);
+        app.compose_submit();
+    }
+    app.open_review();
+    app.review_toggle_thread(&id);
+    app.goto_message(id.clone(), 1);
+    let origin = app.jump_origin().ok_or_else(|| anyhow::anyhow!("origin"))?;
+    app.record_jump(origin);
+    app.goto_message(id.clone(), 2);
+
+    app.jump_back();
+
+    assert_eq!(app.focus(), Focus::Review);
+    assert_eq!(app.thread_cursor().thread(), Some(&id));
+    assert_eq!(app.thread_cursor().message(), 1);
+    assert!(app.review_list().is_thread_folded(&id));
+    let rows = app.review_rows(app.column_width());
+    let entry = app
+        .review_selected_index()
+        .ok_or_else(|| anyhow::anyhow!("entry"))?;
+    let row = rows
+        .entry_row(entry)
+        .ok_or_else(|| anyhow::anyhow!("row"))?;
+    assert!(matches!(rows.rows[row], Row::Header { .. }));
+    Ok(())
+}
+
+#[test]
+fn jumplist_restores_archived_message_through_a_persistent_fold() -> anyhow::Result<()> {
+    let dir = testing::workspace("jumplist-archived-message", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "opening")?;
+    let id = app.marks()[0].id().clone();
+    app.thread_reply();
+    type_in(&mut app, "newest");
+    app.compose_submit();
+    app.toggle_resolved(&id);
+    app.archive_thread(&id);
+    app.open_review_view(ReviewView::Archived);
+    app.review_toggle_thread(&id);
+    app.set_thread_cursor_message(id.clone(), 0);
+    let origin = app.jump_origin().ok_or_else(|| anyhow::anyhow!("origin"))?;
+    app.record_jump(origin);
+    app.open_file_view();
+
+    app.jump_back();
+
+    assert_eq!(app.focus(), Focus::Review);
+    assert_eq!(app.review().view, ReviewView::Archived);
+    assert_eq!(app.thread_cursor().thread(), Some(&id));
+    assert_eq!(app.thread_cursor().message(), 0);
+    assert!(
+        app.review_list().is_thread_folded(&id),
+        "history restoration must not overwrite the persistent fold"
+    );
+    let rows = app.review_rows(app.column_width());
+    assert!(
+        rows.rows
+            .iter()
+            .any(|row| matches!(row, Row::Header { summary, .. } if summary.id() == &id))
+    );
+    Ok(())
+}
+
+fn assert_review_actions_ignore_rejected_sidebar_preview(
+    app: &mut App,
+    archived: &fathomable_core::annotations::ThreadId,
+    active: &fathomable_core::annotations::ThreadId,
+) -> anyhow::Result<()> {
+    testing::press(app, "t");
+    assert_eq!(app.focus(), Focus::Review);
+    assert_eq!(app.thread_cursor().thread(), Some(archived));
+    assert_eq!(app.thread_cursor().message(), 1);
+    app.act(crate::app::input::bindings::Action::ToggleAutoResolve);
+    assert_eq!(
+        app.message(),
+        Some("auto-resolve is unavailable on a resolved thread")
+    );
+    assert_eq!(
+        app.thread(active).context("active thread")?.auto_resolve(),
+        AutoResolve::Disabled,
+        "the permission action must not target the sidebar cursor"
+    );
+    assert_eq!(app.review_peek_message(archived), Some(1));
+    testing::press(app, "l");
+    assert_eq!(app.thread_cursor().thread(), Some(archived));
+    assert_eq!(app.thread_cursor().message(), 2);
+    assert_eq!(app.review_peek_message(archived), Some(2));
+
+    let recorded = app.jump_origin().context("review position")?;
+    assert!(matches!(
+        &recorded,
+        crate::app::jumplist::Position::Review { thread, message }
+            if thread == archived && *message == 2
+    ));
+    app.record_jump(recorded);
+    app.open_file_view();
+    app.jump_back();
+    assert_eq!(app.focus(), Focus::Review);
+    assert_eq!(app.thread_cursor().thread(), Some(archived));
+    assert_eq!(app.thread_cursor().message(), 2);
+
+    testing::press(app, "T");
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+    assert_eq!(
+        app.thread_cursor().thread(),
+        Some(active),
+        "returning focus must restore the sidebar's independent selection"
+    );
+    Ok(())
+}
+
+#[test]
+fn back_restored_archived_message_survives_rejected_preview_and_resize() -> anyhow::Result<()> {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let dir = testing::workspace("jumplist-archived-message-preview", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "opening")?;
+    let archived = app.marks()[0].id().clone();
+    for reply in ["older reply", "middle reply", "newest reply"] {
+        app.thread_reply();
+        type_in(&mut app, reply);
+        app.compose_submit();
+    }
+    app.toggle_resolved(&archived);
+    app.archive_thread(&archived);
+    app.view_mut().goto_source_line(7);
+    app.start_new_comment();
+    app.compose_insert("active sidebar target");
+    app.compose_submit();
+    let active = app.marks()[0].id().clone();
+
+    app.open_review_view(ReviewView::Archived);
+    app.set_thread_cursor_message(archived.clone(), 1);
+    app.review_toggle_thread(&archived);
+    let origin = app.jump_origin().ok_or_else(|| anyhow::anyhow!("origin"))?;
+    app.record_jump(origin);
+    app.open_file_view();
+
+    crate::app::input::keys::handle_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::ALT));
+    assert_eq!(app.review_peek_message(&archived), Some(1));
+    assert!(app.review_list().is_thread_folded(&archived));
+
+    app.show_threads_pane();
+    app.focus_threads_pane();
+    app.threads_pane_move(1);
+    assert_eq!(app.thread_cursor().thread(), Some(&active));
+    assert_eq!(
+        app.message(),
+        Some("thread is outside the current Threads view; press Enter to open")
+    );
+
+    app.resize(68, 14);
+    let rows = app.review_rows(app.column_width());
+    let entry = rows
+        .entries
+        .iter()
+        .position(|entry| entry.id() == &archived)
+        .context("archived entry")?;
+    let priority = rows
+        .message_range(entry, 1)
+        .context("older archived message")?;
+    assert!(rows.rows.iter().any(|row| matches!(
+        row,
+        Row::Message {
+            entry: row_entry,
+            message: 1,
+            selected: true,
+            ..
+        } if *row_entry == entry
+    )));
+    assert!(!rows.rows.iter().any(|row| matches!(
+        row,
+        Row::Message {
+            entry: row_entry,
+            message,
+            selected: true,
+            ..
+        } if *row_entry == entry && *message != 1
+    )));
+    let start = rows.origin_context_range(entry).map_or_else(
+        || rows.entry_row(entry).unwrap_or(priority.start),
+        |range| range.start,
+    );
+    let max = rows.rows.len().saturating_sub(app.review_body_rows());
+    assert_eq!(
+        app.review_list().scroll(),
+        crate::app::placement::center_span(
+            start..priority.end,
+            priority,
+            app.review_body_rows(),
+            max,
+        )
+    );
+    assert_eq!(app.review_peek_message(&archived), Some(1));
+    assert_eq!(app.thread_cursor().thread(), Some(&active));
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+
+    assert_review_actions_ignore_rejected_sidebar_preview(&mut app, &archived, &active)
+}
+
+#[test]
+fn changing_threads_filters_dismisses_a_navigation_peek() -> anyhow::Result<()> {
+    let dir = testing::workspace("review-filter-dismisses-peek", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "opening")?;
+    let id = app.marks()[0].id().clone();
+    app.open_review();
+    app.review_toggle_thread(&id);
+    app.thread_step_across(1);
+    assert!(app.review_thread_peeked(&id));
+
+    app.review_toggle_resolved();
+
+    assert!(!app.review_thread_peeked(&id));
+    assert!(
+        app.review_rows(app.column_width())
+            .rows
+            .iter()
+            .any(|row| matches!(row, Row::Stub { summary, .. } if summary.id() == &id))
+    );
+    Ok(())
+}
+
+#[test]
+fn expanded_reviews_put_stored_origin_context_before_messages() -> anyhow::Result<()> {
+    let dir = testing::workspace("review-origin-context", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "check context")?;
+    let id = app.marks()[0].id().clone();
+    app.open_review();
+
+    let rows = app.review_rows(60);
+    let header = rows.entry_row(0).ok_or_else(|| anyhow::anyhow!("header"))?;
+    let context = rows
+        .origin_context_range(0)
+        .ok_or_else(|| anyhow::anyhow!("origin context"))?;
+    let message = rows
+        .rows
+        .iter()
+        .position(|row| {
+            matches!(
+                row,
+                Row::Message {
+                    entry: 0,
+                    message: 0,
+                    ..
+                }
+            )
+        })
+        .ok_or_else(|| anyhow::anyhow!("message"))?;
+    assert!(header < context.start && context.end <= message);
+    assert!(
+        rows.rows[context.clone()]
+            .iter()
+            .any(|row| matches!(row, Row::OriginContext { selected: true, .. }))
+    );
+    assert!(rows.rows[context].iter().any(|row| matches!(
+        row,
+        Row::OriginContext {
+            selected: false,
+            ..
+        }
+    )));
+    assert!(
+        !rows
+            .rows
+            .iter()
+            .any(|row| matches!(row, Row::OriginWarning { .. })),
+        "ordinary unchanged placement has no warning"
+    );
+
+    app.review_toggle_thread(&id);
+    let folded = app.review_rows(60);
+    assert!(
+        folded
+            .rows
+            .iter()
+            .any(|row| matches!(row, Row::Stub { .. }))
+    );
+    assert!(!folded.rows.iter().any(|row| matches!(
+        row,
+        Row::OriginContext { .. } | Row::OriginTruncation { .. }
+    )));
+    Ok(())
+}
+
+#[test]
+fn file_wide_reviews_omit_origin_context() -> anyhow::Result<()> {
+    let dir = testing::workspace("review-file-origin", testing::README)?;
+    let mut store = Store::open(testing::store_path(&dir))?;
+    store.annotate(
+        testing::at_working_tree(
+            &testing::root(&dir),
+            Draft::on_file(Author::User, Path::new("README.md"), "whole file"),
+            testing::README,
+        )?,
+        testing::README,
+        1,
+    )?;
+    let mut app = testing::source_app(&dir)?;
+    app.open_review();
+    let rows = app.review_rows(60);
+    assert!(!rows.rows.iter().any(|row| matches!(
+        row,
+        Row::OriginContext { .. } | Row::OriginTruncation { .. }
+    )));
+    Ok(())
+}
+
+#[test]
+fn oversized_review_context_has_omission_and_truncation_rows() -> anyhow::Result<()> {
+    let source = (1..=400)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let dir = testing::workspace("review-bounded-origin", &source)?;
+    let mut store = Store::open(testing::store_path(&dir))?;
+    store.annotate(
+        testing::at_working_tree(
+            &testing::root(&dir),
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(1, 400),
+                "large selection",
+            ),
+            &source,
+        )?,
+        &source,
+        1,
+    )?;
+    let mut app = testing::source_app(&dir)?;
+    app.open_review();
+    let rows = app.review_rows(80);
+    assert_eq!(
+        rows.rows
+            .iter()
+            .filter(|row| matches!(row, Row::OriginContext { omitted: true, .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        rows.rows
+            .iter()
+            .filter(|row| matches!(row, Row::OriginTruncation { .. }))
+            .count(),
+        1
+    );
     Ok(())
 }
 
@@ -834,8 +2138,13 @@ fn an_expanded_thread_replies_resolves_and_reopens() -> anyhow::Result<()> {
         "the thread stays readable while replying"
     );
     app.resize(100, 16);
-    app.compose_scroll(2);
-    assert_eq!(app.view().scroll(), 2, "Alt-Down scrolls the text behind");
+    let scroll = app.view().scroll();
+    app.compose_scroll(-2);
+    assert_eq!(
+        app.view().scroll(),
+        scroll.saturating_sub(2),
+        "Alt-Up scrolls the text behind"
+    );
     app.compose_cancel();
     assert!(app.popup().is_none());
     assert_eq!(app.focus(), Focus::View);
@@ -1290,6 +2599,12 @@ fn annotation_jumps_wrap_and_picker_lists_threads() -> anyhow::Result<()> {
     app.compose_submit();
     let bottom = app.view().cursor_source_line();
     app.view_mut().goto_top();
+    app.thread_step_in_file(1);
+    assert_eq!(
+        app.view().cursor_source_line(),
+        Some(1),
+        "ordinary source at a thread start lands that thread first"
+    );
     app.thread_step_in_file(1);
     assert_eq!(app.view().cursor_source_line(), bottom);
     app.thread_step_in_file(1);

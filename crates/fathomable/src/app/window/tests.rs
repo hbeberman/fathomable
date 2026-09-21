@@ -369,6 +369,7 @@ fn thread_preview_reveals_main_threads_without_changing_folds_or_focus() -> anyh
         );
     }
     let first = app.file_threads()[0].clone();
+    let thirteenth = app.file_threads()[12].clone();
     app.open_review();
     app.set_thread_cursor(first);
     press(&mut app, "ggT");
@@ -393,7 +394,12 @@ fn thread_preview_reveals_main_threads_without_changing_folds_or_focus() -> anyh
     let review = app.review();
     press(&mut app, "j");
     assert!(app.review_list().is_folded(Path::new("README.md")));
-    assert_eq!(app.review_list().scroll(), 0, "reveal the folded file row");
+    assert_eq!(
+        app.review_thread_cursor().thread(),
+        Some(&thirteenth),
+        "preview temporarily reveals the selected thread through the persistent fold"
+    );
+    assert!(app.review_list().scroll() > 0, "preview places the target");
     assert_eq!(app.review(), review, "preview retains filters");
     assert_eq!(app.focus(), Focus::ThreadsPane);
     Ok(())

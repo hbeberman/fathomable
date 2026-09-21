@@ -22,7 +22,7 @@ pub(crate) fn text_bar(app: &App) -> Header {
     let mut hints = Vec::new();
     let mut thread_here = false;
     let mut on_thread_row = false;
-    if let Some(id) = app.thread_cursor().thread()
+    if let Some(id) = app.file_thread_cursor().thread()
         && app.threads_at_cursor().contains(id)
         && let Some(thread) = app.thread(id)
     {

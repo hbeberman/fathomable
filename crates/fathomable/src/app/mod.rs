@@ -30,6 +30,7 @@ mod licenses;
 mod mcp_setup;
 mod menu_bar;
 mod navigation;
+mod placement;
 mod review_points;
 pub(crate) mod run;
 mod sidebar;
@@ -691,8 +692,10 @@ pub(crate) struct App {
     /// Documents by index, most recently shown first (`Space f r`).
     recent: Vec<usize>,
     jumplist: jumplist::Jumplist,
-    /// The exact comparison stop reached by the last `J` or `K`.
+    /// The last logical comparison stop, retained across local File movement.
     change_stop: Option<navigation::ChangeStop>,
+    /// Token granting passive relayout ownership of top-third placement.
+    change_placement: Option<navigation::ChangePlacement>,
     /// Where a search started, recorded on the jumplist when it lands
     /// somewhere else (ADR 0049).
     search_origin: Option<jumplist::Position>,
@@ -713,8 +716,12 @@ pub(crate) struct App {
     expanded_layout_cache: Vec<(ThreadId, draw::message::ExpandedLayout)>,
     /// Rendered thread bodies shared by the File and Reviews surfaces.
     message_layout_cache: draw::message::MessageLayoutCache,
+    /// Stored immutable origin evidence retained independently of replies.
+    origin_context_cache: draw::message::OriginContextCache,
     /// The threads expanded in place this session (ADR 0049).
     expanded: HashSet<ThreadId>,
+    /// Navigation-owned temporary reveals, separate from persistent folds.
+    navigation_peek: threads::peek::NavigationPeek,
     /// What the review shows, shared by the list and the threads pane.
     review: threads::list::ReviewState,
     tree_scroll: usize,
@@ -724,10 +731,12 @@ pub(crate) struct App {
     tree_target: Option<PathBuf>,
     /// Tree width once dragged; the default follows the terminal.
     sidebar_cols: Option<usize>,
-    /// The thread and message the thread surfaces show; authoritative
-    /// while the pane or the list is open, or the text cursor rests
-    /// where `thread_cursor_anchor` says it was set (ADR 0046).
+    /// The thread and message seated in File.
     thread_cursor: ThreadCursor,
+    /// The thread and message selected in main Threads.
+    review_thread_cursor: ThreadCursor,
+    /// The thread and message selected in the sidebar Thread list.
+    threads_pane_cursor: ThreadCursor,
     /// `(document, row)` of the text cursor when the thread cursor was
     /// last set.
     thread_cursor_anchor: Option<(Option<usize>, usize)>,
@@ -896,6 +905,7 @@ impl App {
             recent: Vec::new(),
             jumplist: jumplist::Jumplist::default(),
             change_stop: None,
+            change_placement: None,
             search_origin: None,
             welcome: View::new(String::new(), 1, 1),
             getting_started: None,
@@ -906,13 +916,17 @@ impl App {
             inline_stubs: Vec::new(),
             expanded_layout_cache: Vec::new(),
             message_layout_cache: draw::message::MessageLayoutCache::default(),
+            origin_context_cache: draw::message::OriginContextCache::default(),
             expanded: HashSet::new(),
+            navigation_peek: threads::peek::NavigationPeek::default(),
             review: threads::list::ReviewState::default(),
             tree_scroll: 0,
             threads_pane_scroll: 0,
             tree_target: None,
             sidebar_cols: None,
             thread_cursor: ThreadCursor::default(),
+            review_thread_cursor: ThreadCursor::default(),
+            threads_pane_cursor: ThreadCursor::default(),
             thread_cursor_anchor: None,
             review_list: ReviewList::default(),
             drag: None,
@@ -1631,6 +1645,9 @@ impl App {
             let doc = &mut self.docs[index];
             doc.relative.clone_from(&target);
             doc.document.rename(root.join(&target));
+            if let Some(compose) = doc.draft.as_mut() {
+                compose.rename_annotation_path(&target);
+            }
             doc.deleted = None;
             doc.view.set_worktree_missing(false);
             if self.current == Some(index) {
@@ -1643,6 +1660,9 @@ impl App {
             self.refresh_marks(index);
         }
         if let Some(target) = current_moved {
+            if let Some(Popup::Compose(compose)) = self.popup.as_mut() {
+                compose.rename_annotation_path(&target);
+            }
             self.notice(format!("renamed to {}", target.display()));
         }
     }
@@ -2168,6 +2188,7 @@ impl App {
         if !self.panes_fit() {
             return;
         }
+        self.capture_file_navigation_seat();
         let previous_width = self.view().layout().width();
         let rows = self
             .text_rows()
@@ -2184,6 +2205,7 @@ impl App {
             self.place_stub_rows();
         }
         self.scroll_tree_by(0);
+        self.restore_navigation_placement();
     }
 
     /// The initial source width before a new document becomes `self.current`.
@@ -2448,6 +2470,9 @@ impl App {
 
     fn show(&mut self, index: usize, activation: FileActivation) {
         self.directory = None;
+        if self.current != Some(index) {
+            self.dismiss_navigation_peek();
+        }
         if let Some(previous) = self.current
             && previous != index
         {
@@ -2466,6 +2491,7 @@ impl App {
         // The document's stubs follow the session's toggles (ADR 0049).
         self.place_stub_rows();
         self.relayout();
+        self.reconcile_threads_pane_cursor();
         self.queue_highlight(index);
         if activation == FileActivation::Open {
             self.resume_draft();
@@ -2476,21 +2502,33 @@ impl App {
     /// Where the reader is: an exact Reviews entry or a source line.
     fn position(&self) -> Option<jumplist::Position> {
         if self.review_list().is_open()
-            && let Some(thread) = self.thread_cursor().thread().cloned()
+            && let cursor = self.thread_cursor()
+            && let Some(thread) = cursor.thread().cloned()
         {
-            return Some(jumplist::Position::Review { thread });
+            return Some(jumplist::Position::Review {
+                thread,
+                message: cursor.message(),
+            });
         }
         let path = self.current_path().to_path_buf();
         if path.as_os_str().is_empty() {
             return None;
         }
         let line = self.view().cursor_source_line().unwrap_or(1);
-        let thread = self
-            .thread_cursor()
+        let comparison = self.comparison_history_position();
+        let cursor = self.thread_cursor();
+        let thread = cursor
             .thread()
             .filter(|id| self.threads_at_cursor().contains(*id))
             .cloned();
-        Some(jumplist::Position::File { path, line, thread })
+        let message = thread.as_ref().map(|_| cursor.message());
+        Some(jumplist::Position::File {
+            path,
+            line,
+            thread,
+            message,
+            comparison,
+        })
     }
 
     /// A far move is leaving `from` (ADR 0049).
@@ -2524,7 +2562,13 @@ impl App {
 
     fn go_to_position(&mut self, target: &jumplist::Position) {
         match target {
-            jumplist::Position::File { path, line, thread } => {
+            jumplist::Position::File {
+                path,
+                line,
+                thread,
+                message,
+                comparison,
+            } => {
                 self.open_file_view();
                 self.focus = Focus::View;
                 if self.current_path() != path {
@@ -2533,19 +2577,33 @@ impl App {
                         return;
                     }
                 }
-                self.view_mut().goto_source_line(*line);
+                self.dismiss_navigation_peek();
+                if !comparison
+                    .as_ref()
+                    .is_some_and(|position| self.restore_comparison_history_position(position))
+                {
+                    self.view_mut().clear_normal_deletion();
+                    self.view_mut().goto_source_line(*line);
+                }
                 if let Some(thread) = thread
                     && self.marks().iter().any(|mark| mark.id() == thread)
                 {
-                    self.set_thread_cursor(thread.clone());
+                    let message = message.unwrap_or_else(|| self.newest_message(thread));
+                    self.peek_file_thread(thread.clone());
+                    self.goto_message(thread.clone(), message);
+                    let clamped = self.thread_cursor().message();
+                    if let Some((span, priority)) = self.file_thread_jump_span(thread, clamped) {
+                        self.view_mut().place_jump_span(span, priority);
+                    }
                 }
             }
-            jumplist::Position::Review { thread } => {
-                if self
-                    .thread(thread)
-                    .is_some_and(|candidate| self.normal_thread(candidate))
-                {
-                    self.show_thread_in_review(thread);
+            jumplist::Position::Review { thread, message } => {
+                if self.thread(thread).is_some() {
+                    self.land_thread_evidence(thread);
+                    self.set_thread_cursor_message(thread.clone(), *message);
+                    let restored = self.thread_cursor().message();
+                    self.update_review_peek_message(thread, restored);
+                    self.place_review_thread_at(thread, restored);
                 }
             }
         }

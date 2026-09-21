@@ -26,6 +26,10 @@ bottom action bars only while focused (or File has an active draft), returning
 the row to content instead of showing an inactive focus tip. Temporary
 overlays suppress pane actions without relaying out the pane behind them.
 
+Amended 2026-09-20: `Tab` traversal follows the focused surface's admitted
+open-thread set. File list lands in File; Thread list keeps pane focus and
+previews the current main surface without bypassing a main Threads view.
+
 Supersedes the window-focus contract in
 [0056](0056-the-leader-trimmed.md), amends the pane names in
 [0057](0057-the-sidebar.md) and [0081](0081-the-menu-bar.md), extends the
@@ -61,9 +65,11 @@ changes do not alter selections, content, folds, or scroll positions.
 
 `Esc` first cancels transient UI. From either sidebar pane it returns to the
 current main surface. From main Threads it no longer switches to File; `f`
-does that explicitly. Bare arrows and `h`/`j`/`k`/`l` remain local. `Tab`/`Shift-Tab` retain
-open-thread traversal; shifted arrows and `H`/`J`/`K`/`L` traverse comparison
-changes and changed files; `Alt-Left`/`Alt-Right` retain history traversal.
+does that explicitly. Bare arrows and `h`/`j`/`k`/`l` remain local.
+`Tab`/`Shift-Tab` retain open-thread traversal with surface-specific
+candidates and landing; shifted arrows and `H`/`J`/`K`/`L` traverse
+comparison changes and changed files; `Alt-Left`/`Alt-Right` retain history
+traversal.
 
 In File list, `z` toggles the selected directory or the immediate parent of a
 selected file. Folding a file's parent moves the cursor to that directory, so
@@ -91,6 +97,14 @@ Thread-list selection reveals that same thread or its folded representation
 in main Threads, without changing its filters or folds. A directory preview
 remains displayed across focus changes and cannot act on a retained hidden
 source document.
+
+`Tab` in Thread list uses that pane's file/workspace scope and resolved
+filter, further restricted to open lifecycle, and leaves focus in Thread
+list. It previews File when File is main. When Threads is main, it previews
+only a target already admitted by that Threads view; otherwise the main
+surface is unchanged and the status directs the reader to press Enter.
+Folded pane file groups receive a temporary navigation reveal rather than a
+persistent unfold.
 
 The mouse wheel changes only the pointed viewport. It never changes a file
 or thread cursor, selection, preview, main surface, or focus. Pane-title

@@ -827,6 +827,8 @@ fn off_target_only_holds_across_recent_jumplist_and_review_jumps() -> anyhow::Re
         path: Path::new("gone.md").to_path_buf(),
         line: 1,
         thread: None,
+        message: None,
+        comparison: None,
     });
     app.jump_back();
     assert_target_absent_without_base(&app);

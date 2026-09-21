@@ -9,14 +9,41 @@ use crate::reach::Reach;
 use super::{
     ActivityCursor, AgentReplyCommand, Anchor, ArchiveContext, Author, AutoResolve,
     ComparisonFacts, Draft, Event, FORMAT_VERSION, FullFileDigest, LandingOutcome, Lifecycle,
-    LineHashes, LineRange, MAX_IDEMPOTENCY_KEY_BYTES, MAX_MESSAGE_BYTES, MessageTarget, OriginSide,
-    OriginVersion, Placement, PlacementContext, PlacementEvidence, Provenance, Reply,
+    LineHashes, LineRange, MAX_IDEMPOTENCY_KEY_BYTES, MAX_MESSAGE_BYTES, MessageTarget, Origin,
+    OriginSide, OriginVersion, Placement, PlacementContext, PlacementEvidence, Provenance, Reply,
     ResolutionOutcome, Status, Store, StoreError, Thread, ThreadId, UserSubmit, UserWriteOutcome,
     WorkingTreeFacts, WorkingTreeState, line_hash, start_intent,
 };
+use crate::context::Context;
 use crate::workspace::CheckoutIdentity;
 
 const TEXT: &str = "# Title\n\nalpha\nbeta\ngamma\n\ndelta\n";
+
+#[test]
+fn attaching_provenance_preserves_context_truncation() -> Result<(), &'static str> {
+    let context = Context::capture_bounded(
+        &format!("{}\n", "long".repeat(100)),
+        LineRange::new(1, 1),
+        12,
+    )
+    .ok_or("context")?;
+    assert!(context.is_truncated());
+
+    let origin = Origin::new(
+        Path::new("src/lib.rs"),
+        Some(LineRange::new(1, 1)),
+        "long",
+        None,
+        Some(context),
+    )
+    .with_provenance(Provenance::new(
+        OriginVersion::commit("0123456789abcdef"),
+        OriginSide::Target,
+    ));
+
+    assert!(origin.evidence_truncated());
+    Ok(())
+}
 
 /// A store path two directories deep inside a fresh temp dir, so a
 /// test sees the store create its parents.

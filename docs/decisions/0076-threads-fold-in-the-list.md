@@ -30,6 +30,10 @@ mouse actions; the cursor's folded row may trade preview width for the same
 actions. Reply count, compact modification time, detached `?` suffix, and
 current lifecycle replace the historical packed-row state wording below.
 
+Amended 2026-09-20: a direct navigation target can temporarily reveal its
+main Threads entry and containing file, or its Thread-list file group,
+without mutating the session fold sets. Explicit folding takes ownership.
+
 ## Context
 
 In the text a thread has two states and a full set of controls
@@ -37,7 +41,7 @@ In the text a thread has two states and a full set of controls
 [0065](0065-z-folds-and-unfolds.md), [0073](0073-the-chevron.md)): a
 folded thread is a one-row stub with a bold `▸`, an expanded one shows
 `▾` on its header, and `z`, `Z`, `c`, a click on the chevron, a
-double-click on the row, and the menu's `expand thread` / `fold
+double-click on the row, and the menu's `expand thread` / `collapse
 thread` move between them.
 
 In the review list ([0066](0066-one-circle-language.md)) every thread
@@ -99,7 +103,7 @@ and in the text alike.
   expanded, `Z` folds them all; when every one is folded, it expands
   them all: the case rule of [0065](0065-z-folds-and-unfolds.md) and
   the text's `Z`. `Z` does not touch the file folds, and the list has
-  no fold-all for files: the file menu loses `fold all` / `unfold
+  no fold-all for files: the file menu loses `collapse all` / `expand
   all` in the list and keeps them in the threads pane, where `Z` still
   folds every file, there being no thread fold there.
 - **The key bar.** The list's bar reads `fold z · fold all Z` in file
@@ -116,10 +120,10 @@ and in the text alike.
   message. Opening and closing end the gesture, as in the text.
 - **A file row.** A click folds or unfolds the file and rests the
   cursor on its row. A right-click rests the cursor there and opens
-  the file's menu: `z fold` / `z unfold`, `Enter open file`, and the
+  the file's menu: `z collapse` / `z expand`, `Enter open file`, and the
   resolved toggle.
-- **A thread's menu** in the list gains `z expand thread` / `z fold
-  thread` at the top, as the text's has, and loses `fold file`, which
+- **A thread's menu** in the list gains `z expand thread` / `z collapse
+  thread` at the top and loses `fold file`, which
   `z` no longer does from a thread row; the file row's menu and a
   click on it fold the file.
 
@@ -142,6 +146,23 @@ and in the text alike.
   newest message, and `z` expands it. A relayout keeps a cursor
   on a stub on that stub. The expanded thread's header row stays no
   stop: `j` steps from the line above to the first message.
+
+### Navigation-owned temporary expansion
+
+- Main Threads can temporarily reveal the selected entry and its file group
+  while retaining both persistent folds. Thread list can independently
+  reveal the selected file group while retaining its pane fold.
+- A peek survives local reading and focus-only changes. Only a successful
+  destination change dismisses it; an empty or failed traversal preserves it.
+- Explicit `z`/`Z`, Enter, chevron, double-click, and menu folding releases
+  the applicable peek before applying the effective visible choice.
+- Context-menu labels read the same effective state: a persistently folded
+  entry or file group revealed by navigation says `collapse`, and invoking it
+  consumes the reveal before collapsing; its next menu says `expand`.
+- Main Threads recognizes its own peek independently of the shared thread
+  cursor. Selecting that peek's chevron or a visible message first consumes
+  the state the reader can see, even when Thread list most recently selected
+  an excluded entry.
 
 ## Consequences
 

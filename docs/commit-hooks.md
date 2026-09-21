@@ -8,6 +8,7 @@ related_resources:
   - scripts/check-commit-message.sh
   - scripts/commit-hook-history.py
   - scripts/setup-build-deps.sh
+  - scripts/package.py
   - justfile
   - .github/workflows/ci.yml
 tags:
@@ -219,9 +220,16 @@ unused-dependency analysis across all workspace targets and features.
 `cargo-udeps` is not installed by contributor setup or run by hooks, CI, or `just release`;
 invoke it intentionally [before a release](../CONTRIBUTING.md#release-builds).
 `just install` explicitly runs `cargo +stable install` with locked dependencies.
-`just package` checks the license bundle, locally verifies the two
-publishable crates, and scans their exact `.crate` archives without uploading
-either one. `just release` scans the executable after building it. Neither
+`just package` checks the license bundle, then `scripts/package.py` locally
+verifies the two publishable crates and scans their exact `.crate` archives.
+Each run uses fresh temporary package and build directories, giving Cargo a
+new temporary registry identity without clearing the normal build cache.
+Downloaded dependencies are reused, but verification builds are fresh. This
+prevents same-version packages from reusing older core sources or compiled artifacts.
+Only verified, scanned archives move to the configured target's `package/`
+directory; build or scan failures leave prior successful archives untouched.
+The temporary target is cleaned up on success or failure. No crates are uploaded.
+`just release` scans the executable after building it. Neither
 creates tags or releases. Contributor setup also installs checksum-pinned
 Betterleaks 1.8.1 into the current worktree's `.tmp/tools/`.
 Other recipes run their substantive commands directly; see
@@ -237,6 +245,9 @@ toolchain-helper and secret-scanner regression tests. It installs pinned `just`
 because the profiler regression executes the real recipe; Cargo, perf, and
 script are fixture commands in that test. The license gate includes the
 toolchain-helper tests as well as notice-generation tests.
+The packaging regression uses real Cargo on a dependency-free fixture: it
+changes the core API without changing its version and packages twice, including
+verification that the application's lockfile names the exact core archive hash.
 
 `just test-commit-hooks` exercises real Git commits and prek shims in
 fixture repositories with cheap stand-in checks.

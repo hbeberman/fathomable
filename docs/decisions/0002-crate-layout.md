@@ -89,7 +89,12 @@ support is a path-only dev-dependency, which Cargo omits from the published
 manifests, and `fathomable-testing` remains `publish = false`. Package both
 product crates in one workspace command so Cargo's temporary local registry
 verifies the application against the packaged core before either exists on
-crates.io.
+crates.io. `just package` uses fresh temporary package and build directories:
+Cargo's temporary-registry verification can otherwise reuse core sources or
+compiled artifacts from an earlier package with the same version. The
+normal build cache is left untouched; verification rebuilds dependencies from
+their cached downloads. Verified, scanned archives move
+unchanged to the configured target's `package/` directory.
 
 Actual publication is deliberately not automated. A maintainer publishes
 `fathomable-core` first, waits for that exact version to become available,
@@ -102,5 +107,6 @@ tag and release at the same clean commit.
   ranges" structure that `fathomable` converts to ratatui widgets. That
   conversion is thin and the layout is unit-tested as plain data.
 - A future HTTP MCP transport or a second frontend only touches the binary.
-- `cargo package --workspace --exclude fathomable-testing --locked` is the
-  local source-distribution preflight; it uploads nothing.
+- `just package` is the local source-distribution preflight: it isolates
+  Cargo's temporary registry, runs workspace packaging verification, and
+  scans the resulting archives. It uploads nothing.

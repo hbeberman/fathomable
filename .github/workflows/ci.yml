@@ -39,7 +39,7 @@ jobs:
       - name: Install checksum-pinned Betterleaks
         run: python3 scripts/betterleaks.py install
       - name: Test contributor helpers
-        run: python3 -m unittest scripts/test-demo-repo.py scripts/test-perf-record.py scripts/test-rust-toolchain.py scripts/test-betterleaks.py
+        run: python3 -m unittest scripts/test-demo-repo.py scripts/test-perf-record.py scripts/test-rust-toolchain.py scripts/test-betterleaks.py scripts/test-package.py
       - name: Format
         run: prek run --config prek.toml --all-files fmt
       - name: Test commit hooks

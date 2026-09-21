@@ -89,8 +89,7 @@ install:
 
 package:
     scripts/check-licenses.sh
-    python3 scripts/rust-toolchain.py release cargo package --workspace --exclude fathomable-testing --locked
-    python3 scripts/betterleaks.py artifacts --packages
+    python3 scripts/package.py
 
 release:
     scripts/check-licenses.sh

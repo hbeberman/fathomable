@@ -242,6 +242,7 @@ scripts/perf-record.sh --bin fathomable -- path/to/file.md
 python3 scripts/test-perf-record.py       # helper command/quoting regression test
 python3 scripts/test-demo-repo.py         # demo isolation and argument regressions
 python3 scripts/test-rust-toolchain.py    # compiler selection and setup regressions
+python3 scripts/test-package.py           # same-version package rebuild regression
 ```
 
 `just perf` accepts positional `path` (default `.`) and `bin` (default
@@ -313,9 +314,7 @@ Prepare the two crates.io source packages from a clean release commit:
 just package
 # Without just:
 scripts/check-licenses.sh
-python3 scripts/rust-toolchain.py release cargo package \
-    --workspace --exclude fathomable-testing --locked
-python3 scripts/betterleaks.py artifacts --packages
+python3 scripts/package.py
 ```
 
 This creates and builds `fathomable-core` and `fathomable` together through
@@ -326,6 +325,16 @@ unpublished. The helper scans the exact generated archives (including
 custom Cargo target directories) before returning success.
 Inspect the two `.crate` archives under `target/package/` by default.
 Packaging is local and does not upload, tag, or create a GitHub release.
+
+The helper gives each invocation fresh temporary package and build directories.
+This prevents Cargo's temporary registry from reusing either source or compiled
+core artifacts from an earlier package with the same version. It reuses
+downloaded dependencies, but rebuilds verification artifacts without clearing
+the normal development/release cache. After verification and secret scanning
+succeed, the exact archives move to the selected target directory's `package/`
+folder. Build or scan failures leave the previous successful archives untouched;
+do not publish those as the failed run's output. Temporary package targets are
+cleaned up.
 
 Publishing and tag creation are manual maintainer actions. When the maintainer
 is ready, publish the core first, wait until crates.io serves that exact

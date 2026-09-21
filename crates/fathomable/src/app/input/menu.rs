@@ -342,37 +342,6 @@ impl Grid {
     pub(crate) fn column_width(key_width: usize, label_width: usize) -> usize {
         key_width + 2 + label_width + 3
     }
-
-    /// A centred table in a rounded titled border. Rows that do not fit
-    /// flow into further columns; the box sits a third of the way down.
-    #[must_use]
-    pub(crate) fn centred(
-        rows: &[(String, String)],
-        title: &str,
-        x: usize,
-        y: usize,
-        area_width: usize,
-        area_height: usize,
-    ) -> Self {
-        let (key_width, label_width) = measure(rows.iter().map(|(k, l)| (k.as_str(), l.as_str())));
-        let per_column = area_height.saturating_sub(3).max(1);
-        let columns = rows.len().div_ceil(per_column).max(1);
-        let per_column = rows.len().div_ceil(columns).max(1);
-        let body = columns * Self::column_width(key_width, label_width);
-        let width = (body.max(display_width(title) + 2) + 2).min(area_width);
-        let height = (per_column.min(rows.len()) + 2).min(area_height);
-        Self {
-            x: x + (area_width - width) / 2,
-            y: y + (area_height - height) / 3,
-            width,
-            height,
-            rows: per_column,
-            columns,
-            key_width,
-            label_width,
-            count: rows.len(),
-        }
-    }
 }
 
 /// Preferred body height for a compact which-key card.

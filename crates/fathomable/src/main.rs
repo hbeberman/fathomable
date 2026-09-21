@@ -160,10 +160,11 @@ fn run_tui(
     // The state is keyed by the git common dir, shared by every worktree
     // (ADR 0070).
     let key = workspace.key().to_path_buf();
+    let roots = worktree_roots(&workspace)?;
     let record = Record::new(id, key.clone(), workspace.root().to_path_buf());
     record.write(dirs)?;
     tracing::info!(id = %record.id(), root = %record.root().display(), "viewer recorded");
-    let marker = Marker::new(key.clone(), worktree_roots(&workspace));
+    let marker = Marker::new(key.clone(), roots);
     if let Err(error) = marker.write(dirs) {
         tracing::warn!(%error, "cannot write the workspace marker");
     }
@@ -226,17 +227,17 @@ fn run_tui(
 
 /// Every worktree root of `workspace`, or its root alone outside git
 /// (ADR 0070).
-fn worktree_roots(workspace: &Workspace) -> Vec<PathBuf> {
+fn worktree_roots(workspace: &Workspace) -> anyhow::Result<Vec<PathBuf>> {
     let roots: Vec<PathBuf> = workspace
-        .worktrees()
+        .worktrees()?
         .iter()
         .map(|w| w.root().to_path_buf())
         .collect();
-    if roots.is_empty() {
+    Ok(if roots.is_empty() {
         vec![workspace.root().to_path_buf()]
     } else {
         roots
-    }
+    })
 }
 
 /// `--viewers`: one block per known workspace, its worktrees under it

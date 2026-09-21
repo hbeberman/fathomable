@@ -22,7 +22,7 @@ use crate::app::draw::header;
 use crate::app::threads::draft::DraftRow;
 use crate::app::threads::list::Row;
 use crate::app::view::Effect;
-use crate::app::{doctor_view, licenses, menu_bar};
+use crate::app::{licenses, menu_bar, report};
 
 /// Presses on one cell closer together than this are one gesture.
 const MULTI_CLICK: Duration = Duration::from_millis(400);
@@ -306,10 +306,6 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
             _ if left => Some(help_click(app, column, row)),
             _ => Some(Effect::None),
         },
-        Some(Popup::Status) if left => {
-            app.close_popup();
-            Some(Effect::None)
-        }
         Some(Popup::Picker(picker)) => {
             let layout = draw::picker_layout(app, picker);
             let entry = layout.entry_at(column, row, picker.matched());
@@ -383,9 +379,9 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
             }
             Some(Effect::None)
         }
-        Some(Popup::Doctor(_)) => match kind {
-            MouseEventKind::ScrollDown => Some(doctor_view::wheel(app, WHEEL_LINES)),
-            MouseEventKind::ScrollUp => Some(doctor_view::wheel(app, -WHEEL_LINES)),
+        Some(Popup::Status(_) | Popup::Doctor(_)) => match kind {
+            MouseEventKind::ScrollDown => Some(report::wheel(app, WHEEL_LINES)),
+            MouseEventKind::ScrollUp => Some(report::wheel(app, -WHEEL_LINES)),
             _ if left => {
                 if !inside(draw::report_area(app), column, row) {
                     app.close_popup();
@@ -438,7 +434,7 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
             | Popup::ConfirmBoard { .. }
             | Popup::ConfirmReviewPointDelete { .. },
         ) => Some(confirmation_mouse(app, left, column, row)),
-        Some(Popup::Status | Popup::About) => Some(Effect::None),
+        Some(Popup::About) => Some(Effect::None),
         _ => None,
     }
 }

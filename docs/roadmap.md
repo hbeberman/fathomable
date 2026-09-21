@@ -338,8 +338,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     removed that cycle, mark-seen binding, and transient close behavior.
 61. **One workspace, many worktrees.** A git workspace is keyed by its
     common dir and every worktree of it shares one store; the viewer
-    lists the worktrees itself, `]w` / `[w` page through them, the
-    files pane header names the active one, and a thread from any
+    lists the worktrees itself, Go's worktree picker switches explicitly,
+    the menu bar names the active one with stable repository identity,
+    locks are visible, removed checkouts offer in-session recovery, and a thread from any
     worktree's branch shows everywhere with the branch on its entry;
     the tools and hooks resolve a worktree root as they resolve a root
     ([0070](decisions/0070-one-workspace-many-worktrees.md)).

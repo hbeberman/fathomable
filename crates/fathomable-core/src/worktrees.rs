@@ -9,6 +9,8 @@
 //! or a linked one made by `git worktree add`. The union reach over
 //! worktrees lives on [`Reach`](crate::reach::Reach).
 
+use std::fs;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 /// One checkout of a workspace (ADR 0070).
@@ -18,6 +20,7 @@ pub struct Worktree {
     branch: Option<String>,
     head: Option<String>,
     main: bool,
+    lock_reason: Option<String>,
 }
 
 impl Worktree {
@@ -45,6 +48,12 @@ impl Worktree {
         self.main
     }
 
+    /// The lock reason, or `None` when unlocked; an empty reason still means locked.
+    #[must_use]
+    pub fn lock_reason(&self) -> Option<&str> {
+        self.lock_reason.as_deref()
+    }
+
     /// The word the viewer shows for the checkout: its branch, else its
     /// short commit when detached, else `unborn`.
     #[must_use]
@@ -60,43 +69,63 @@ impl Worktree {
 /// Every worktree of `repo`'s workspace: the main one first when the
 /// repository is not bare, then the linked ones in the order git keeps
 /// them. A linked worktree whose directory is gone is not listed.
-pub(crate) fn list(repo: &gix::Repository) -> Vec<Worktree> {
+pub(crate) fn list(repo: &gix::Repository) -> io::Result<Vec<Worktree>> {
     let mut out = Vec::new();
-    match repo.main_repo() {
-        Ok(main) => {
-            if let Some(root) = main.workdir() {
-                out.push(describe(&main, canonical(root), true));
-            }
-        }
-        Err(error) => tracing::warn!(%error, "cannot open the main worktree"),
+    if let Some(root) = repo.workdir()
+        && directory_available(root)?
+    {
+        out.push(describe(repo, canonical(root), true, None));
     }
-    let linked = match repo.worktrees() {
-        Ok(linked) => linked,
-        Err(error) => {
-            tracing::warn!(%error, "cannot list linked worktrees");
-            return out;
-        }
-    };
+    let linked = repo.worktrees()?;
     for proxy in linked {
-        let Ok(base) = proxy.base() else {
-            continue;
-        };
-        if !base.is_dir() {
+        let base = proxy.base()?;
+        if !directory_available(&base)? {
             continue;
         }
         let root = canonical(&base);
         if out.iter().any(|w| w.root == root) {
             continue;
         }
-        match proxy.into_repo_with_possibly_inaccessible_worktree() {
-            Ok(linked) => out.push(describe(&linked, root, false)),
-            Err(error) => tracing::warn!(%error, root = %root.display(), "cannot open worktree"),
-        }
+        let lock_reason = read_lock_reason(&proxy.git_dir().join("locked"))?;
+        let linked = proxy
+            .into_repo_with_possibly_inaccessible_worktree()
+            .map_err(io::Error::other)?;
+        out.push(describe(&linked, root, false, lock_reason));
     }
-    out
+    Ok(out)
 }
 
-fn describe(repo: &gix::Repository, root: PathBuf, main: bool) -> Worktree {
+fn directory_available(path: &Path) -> io::Result<bool> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.is_dir()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+fn read_lock_reason(path: &Path) -> io::Result<Option<String>> {
+    // Lock reasons are display metadata, not an unbounded source document.
+    const MAX_REASON_BYTES: u16 = 4096;
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut bytes = Vec::new();
+    file.take(u64::from(MAX_REASON_BYTES) + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > usize::from(MAX_REASON_BYTES) {
+        return Err(io::Error::other("worktree lock reason exceeds 4096 bytes"));
+    }
+    Ok(Some(String::from_utf8_lossy(&bytes).trim().to_owned()))
+}
+
+fn describe(
+    repo: &gix::Repository,
+    root: PathBuf,
+    main: bool,
+    lock_reason: Option<String>,
+) -> Worktree {
     let branch = repo
         .head_name()
         .ok()
@@ -108,6 +137,7 @@ fn describe(repo: &gix::Repository, root: PathBuf, main: bool) -> Worktree {
         branch,
         head,
         main,
+        lock_reason,
     }
 }
 
@@ -139,7 +169,7 @@ mod tests {
         fs::create_dir_all(&root)?;
         let workspace = Workspace::discover(&root)?;
         assert_eq!(workspace.key(), workspace.root());
-        assert!(workspace.worktrees().is_empty());
+        assert!(workspace.worktrees()?.is_empty());
         Ok(())
     }
 
@@ -158,8 +188,14 @@ mod tests {
         assert_eq!(host.key(), guest.key(), "one key per repository");
         assert_ne!(host.root(), guest.root());
         assert_ne!(host.key(), host.root(), "git state uses the common-dir key");
+        assert_eq!(host.name(), "main");
+        assert_eq!(
+            guest.name(),
+            host.name(),
+            "repository name is checkout-independent"
+        );
 
-        let listed = host.worktrees();
+        let listed = host.worktrees()?;
         assert_eq!(listed.len(), 2, "{listed:?}");
         assert!(listed[0].is_main());
         assert_eq!(listed[0].root(), host.root());
@@ -172,7 +208,7 @@ mod tests {
             "both at the same commit"
         );
         assert_eq!(
-            guest.worktrees(),
+            guest.worktrees()?,
             listed,
             "the list is the same from either side"
         );
@@ -190,7 +226,79 @@ mod tests {
         git::worktree_add(&main, &linked, "gone")?;
         fs::remove_dir_all(&linked)?;
         let host = Workspace::discover(&main)?;
-        assert_eq!(host.worktrees().len(), 1);
+        assert_eq!(host.worktrees()?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_locks_include_empty_reasons_and_refresh() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = TempDir::new("worktrees-locked")?;
+        let main = dir.0.join("main");
+        fs::create_dir_all(&main)?;
+        git::init(&main)?;
+        git::commit_and_stage(&main, &[("a.md", "one\n")])?;
+        let linked = dir.0.join("feature");
+        git::worktree_add(&main, &linked, "feature")?;
+        let workspace = Workspace::discover(&main)?;
+        let lock = main.join(".git/worktrees/feature/locked");
+        fs::write(&lock, "synthetic lock\n")?;
+        assert_eq!(
+            workspace.worktrees()?[1].lock_reason(),
+            Some("synthetic lock")
+        );
+        fs::write(&lock, "")?;
+        assert_eq!(workspace.worktrees()?[1].lock_reason(), Some(""));
+        fs::remove_file(&lock)?;
+        assert_eq!(workspace.worktrees()?[1].lock_reason(), None);
+        fs::write(&lock, "x".repeat(4097))?;
+        let error = workspace
+            .worktrees()
+            .err()
+            .ok_or("oversized metadata must fail discovery")?;
+        assert!(error.to_string().contains("lock reason exceeds 4096 bytes"));
+        Ok(())
+    }
+
+    #[test]
+    fn removed_active_worktree_still_discovers_surviving_checkouts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("worktrees-active-removed")?;
+        let main = dir.0.join("main");
+        fs::create_dir_all(&main)?;
+        git::init(&main)?;
+        git::commit_and_stage(&main, &[("a.md", "one\n")])?;
+        let linked = dir.0.join("feature");
+        git::worktree_add(&main, &linked, "feature")?;
+        let workspace = Workspace::discover(&linked)?;
+        fs::remove_dir_all(&linked)?;
+        fs::remove_dir_all(main.join(".git/worktrees/feature"))?;
+
+        let listed = workspace.worktrees()?;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].root(), main.canonicalize()?);
+        assert_eq!(workspace.name(), "main");
+        assert!(
+            workspace
+                .worktree_watch_paths()
+                .contains(&main.join(".git").canonicalize()?)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unreadable_worktree_registry_is_not_an_empty_success()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("worktrees-registry-failure")?;
+        git::init(&dir.0)?;
+        git::commit_and_stage(&dir.0, &[("a.md", "one\n")])?;
+        let workspace = Workspace::discover(&dir.0)?;
+        fs::write(dir.0.join(".git/worktrees"), "not a registry directory")?;
+        let error = workspace
+            .worktrees()
+            .err()
+            .ok_or("an unreadable registry must fail discovery")?;
+        assert!(error.to_string().contains("cannot list worktrees"));
         Ok(())
     }
 }

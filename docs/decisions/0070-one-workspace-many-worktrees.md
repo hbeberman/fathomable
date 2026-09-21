@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: One workspace, many worktrees
-description: A git workspace is the repository, keyed by its common dir, and every worktree of it is one checkout of the same threads; the viewer finds the worktrees itself, pages through them with `]w` / `[w`, names the active one in the global menu bar, and shows a thread from any worktree's branch with that branch on the entry; the tools and hooks resolve a worktree the way they resolve a root, and no tool is added.
+description: A Git workspace is keyed by its common directory, with shared discussions and checkout-local comparisons; the viewer discovers linked worktrees, shows stable repository identity and lock metadata, and switches or recovers only through explicit menu navigation.
 resource: crates/fathomable-core/src/worktrees.rs
 related_resources:
   - crates/fathomable-core/src/workspace.rs
@@ -23,6 +23,15 @@ tags:
 Status: accepted (2026-09-07); amended 2026-09-15 (the optional
 `worktrees/` registry is watched only while it exists)
 
+Worktree UX amendment: navigation is menu-only through **Go > Worktrees...**
+or the menu-bar identity picker. The bracket cycle and its actions are
+removed without aliases. Repository naming and discovery use the shared
+repository independently of the active linked checkout. Lock state and reason
+are visible without disabling selection. If the active checkout disappears,
+the viewer retains its identity and offers explicit recovery to a surviving
+checkout; it never switches automatically. Discovery failures retain a
+visibly last-known list, not an empty success or a non-Git label.
+
 Watch discovery amended 2026-09-19: the core supplies only the active Git
 directory, common directory, refs, and existing registry as deduplicated
 anchors. Registry children and nested refs are discovered and watched by
@@ -34,7 +43,7 @@ Thread landing amended 2026-09-18 by
 [0090](0090-direct-workspace-navigation.md): direct thread traversal never
 activates another worktree. It shows projected source in the current
 worktree when available and otherwise shows the exact Reviews evidence.
-Only the explicit `]w`/`[w` cycle and worktree picker switch worktrees.
+Only explicit worktree picker selection switches worktrees.
 
 Amended 2026-09-17: repository and active-worktree identity move from the
 Files header to the global menu bar beside the current filename. Clicking
@@ -148,7 +157,9 @@ in the host, labelled with its branch.
   worktree, then the linked ones in the order git keeps them, each
   with its root, its branch or short commit when detached, and its
   `HEAD`. A linked worktree whose directory is gone is not listed; a
-  locked one is. The worktree the viewer was opened in is the
+  locked one is, with its lock reason (including a reasonless lock). Lock
+  metadata reads are bounded to 4096 bytes; larger or unreadable metadata
+  fails discovery explicitly. The worktree the viewer was opened in is the
   **active** worktree.
 - The viewer watches the common dir for its `HEAD` and index, its
   `refs` for a branch moving, its `worktrees/` registry while that
@@ -165,14 +176,12 @@ in the host, labelled with its branch.
   rejected: a clone is another repository, and a thread cannot follow
   a commit across one.
 
-### Paging
+### Explicit switching and recovery
 
-- `]w` / `[w`, from any pane, make the next or previous worktree
-  active, wrapping; the order is the listing's. With one worktree the
-  key says so. The keys sit in the bracket family with `]g` and `]c`;
-  there is no leader entry, by [0056](0056-the-leader-trimmed.md)'s
-  rule against entries that duplicate a bare key, and `Space ?` names
-  them.
+- **Go > Worktrees...** opens the existing searchable worktree picker.
+  There is no bare, bracket-prefixed, or leader shortcut for switching.
+  The menu remains available for a Git workspace with one checkout so it
+  can be inspected or chosen as a recovery destination.
 - Making a worktree active re-roots the viewer: the files pane walks
   that tree, the watcher and the status walk move to it, and the
   gutter, the diffs, and the placement of threads read its files. The
@@ -181,12 +190,22 @@ in the host, labelled with its branch.
   close, and the jumplist and the recent list are cleared. A viewer is
   one window onto one checkout; two checkouts at once are two viewers.
 - The global menu bar ([0081](0081-the-menu-bar.md)) centers the repository
-  name, then the active worktree's branch or short detached commit whenever
+  name from the main worktree (or common directory), then the active
+  worktree's branch or short detached commit whenever
   there is more than one, then the current filename when one is open. The
   repository/worktree segment uses the menu accent and opens a picker of
-  worktrees on click, with the active one marked. With one worktree the
-  repository name is passive and subdued.
-- `:status` lists the worktrees with the active one marked; the viewer
+  worktrees on click, with the active one marked. With only the active
+  worktree the repository name is passive and subdued.
+- Discovery and shared watcher anchors use the captured common-directory
+  key, even after Git removes the active linked checkout and its admin
+  directory. The missing checkout stays explicitly unavailable; the picker
+  and identity click remain usable with only one surviving destination.
+  Selection revalidates the destination's repository key before clearing
+  documents or switching, and drafts retain their existing protection.
+  Enumeration failures retain the last-known list with an explicit failure
+  notice. No error is relabelled as "not a git repository."
+- `:status` lists one worktree per wrapped row with the active one marked,
+  using the shared scrollable report popup; the viewer
   record names the worktree the viewer is on, `--viewers` groups by
   workspace, then worktree, and `--doctor` counts the worktrees that
   share the state.
@@ -268,12 +287,12 @@ in the host, labelled with its branch.
 ## Consequences
 
 - `fathomable-core/src/worktrees.rs`, which this record backs, lists a
-  workspace's worktrees (`Worktree { root, branch, head, main }`),
+  workspace's worktrees (`Worktree { root, branch, head, main, lock_reason }`),
   computes the common-dir key, and answers the union reach.
 - `Workspace` gains `key()`, `common_dir()`, and `worktrees()`;
   `XdgDirs` takes the key where it took the root, and the marker
   carries `common_dir` and `roots`.
-- `app/worktrees.rs` holds the active worktree, `]w` / `[w`, the
+- `app/worktrees.rs` holds the active worktree, explicit recovery, the
   re-root, and the picker; `app/watch.rs` watches the common dir, its
   refs, its existing `worktrees/` registry, and each linked worktree's
   git dir; `Reach` learns which worktrees reach a thread (`here`,
@@ -281,10 +300,10 @@ in the host, labelled with its branch.
 - `mcp/mod.rs` resolves a worktree; `mcp/tools.rs` lists them and
   names the caller's; `hooks.rs` resolves the cwd the same way and
   carries `worktree` in a delivery.
-- The binding table gains `WorktreeNext` and `WorktreePrev`; the
-  viewer record and `--viewers` name the worktree; `--doctor` counts
+- The Go menu opens the worktree picker without a binding-table action.
+  The viewer record and `--viewers` name the worktree; `--doctor` counts
   worktrees; the socket layout keys by the common dir.
-- The guide's §2 says a worktree is the workspace, §3's key tables
-  gain `]w` / `[w`, §4 the branch on an entry, §8 the key, the marker,
+- The guide's §2 says a worktree is the workspace, §3 documents menu-driven
+  switching and recovery, §4 the branch on an entry, §8 the key, the marker,
   the `workspaces` listing, and the `worktree` field, and §9
   `--viewers` and the one-time move.

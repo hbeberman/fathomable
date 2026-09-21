@@ -1,6 +1,6 @@
 //! The worktrees of the workspace in the viewer (ADR 0070): which one
-//! is active, `]w` / `[w` to page through them, the re-root that makes
-//! another one active, the picker a click on the branch opens, and the
+//! is active, the explicit menu-driven re-root that makes another one
+//! active, the worktree picker, and the
 //! reach and placement of threads another worktree's `HEAD` shows.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -35,19 +35,33 @@ pub(super) struct ReachEntry {
 }
 
 impl App {
-    /// Whether the workspace has more than one worktree, so the viewer
-    /// names the active one and pages.
-    pub(crate) fn has_worktrees(&self) -> bool {
-        self.worktrees.len() > 1
+    /// Whether a different checkout is available, including recovery from a missing root.
+    pub(crate) fn can_switch_worktree(&self) -> bool {
+        self.worktrees
+            .iter()
+            .any(|worktree| worktree.root() != self.workspace.root())
     }
 
     /// The branch (or short commit) the menu bar names while the
     /// workspace has more than one worktree.
     pub(crate) fn worktree_label(&self) -> Option<String> {
-        if !self.has_worktrees() {
+        if self.worktree_issue.is_some() {
+            return Some(self.active_worktree().map_or_else(
+                || "discovery failed".to_owned(),
+                |worktree| format!("{} (stale)", worktree.label()),
+            ));
+        }
+        if !self.can_switch_worktree() && !self.active_worktree_unavailable() {
             return None;
         }
+        if self.active_worktree_unavailable() {
+            return Some("unavailable".to_owned());
+        }
         self.active_worktree().map(Worktree::label)
+    }
+
+    fn active_worktree_unavailable(&self) -> bool {
+        self.workspace.is_git() && self.worktree_issue.is_none() && self.active_worktree().is_none()
     }
 
     /// The worktree the viewer shows, when git lists it.
@@ -89,7 +103,22 @@ impl App {
     /// metadata moves. The marker follows the roots, and the watcher is
     /// told when the paths it watches for the set changed.
     pub(crate) fn refresh_worktrees(&mut self) {
-        let listed = self.workspace.worktrees();
+        let listed = match self.workspace.worktrees() {
+            Ok(listed) => {
+                self.worktree_issue = None;
+                listed
+            }
+            Err(error) => {
+                let issue =
+                    format!("Worktree discovery failed; showing last known worktrees: {error}");
+                tracing::warn!(%error, "cannot refresh worktrees");
+                if self.worktree_issue.as_deref() != Some(&issue) {
+                    self.notice(issue.clone());
+                }
+                self.worktree_issue = Some(issue);
+                return;
+            }
+        };
         let paths = self.workspace.worktree_watch_paths();
         let roots_changed = listed
             .iter()
@@ -111,6 +140,9 @@ impl App {
         if listed != self.worktrees {
             tracing::info!(count = listed.len(), "worktrees listed");
             self.worktrees = listed;
+            if self.active_worktree_unavailable() {
+                self.notice("Active worktree unavailable - choose Go > Worktrees");
+            }
         }
     }
 
@@ -143,25 +175,6 @@ impl App {
         self.worktree_paths.iter().any(|dir| path.starts_with(dir))
     }
 
-    /// `]w` / `[w`: the next or previous worktree, wrapping (ADR 0070).
-    pub(crate) fn worktree_step(&mut self, delta: isize) {
-        if !self.has_worktrees() {
-            self.notice("one worktree");
-            return;
-        }
-        let count = self.worktrees.len();
-        let at = self
-            .worktrees
-            .iter()
-            .position(|w| w.root() == self.workspace.root())
-            .unwrap_or(0);
-        let next = (at.cast_signed() + delta)
-            .rem_euclid(count.cast_signed())
-            .cast_unsigned();
-        let root = self.worktrees[next].root().to_path_buf();
-        self.activate_worktree(&root);
-    }
-
     /// The picker a click on the branch opens: every worktree by its
     /// label and root, the active one marked (ADR 0070).
     pub(crate) fn worktree_choices(&self) -> Vec<String> {
@@ -173,7 +186,16 @@ impl App {
                 } else {
                     "  "
                 };
-                format!("{mark}{}  {}", w.label(), w.root().display())
+                let stale = if self.worktree_issue.is_some() {
+                    " [last known]"
+                } else {
+                    ""
+                };
+                format!(
+                    "{mark}{}{stale}  {}",
+                    worktree_description(w),
+                    w.root().display()
+                )
             })
             .collect()
     }
@@ -245,11 +267,13 @@ impl App {
         self.status_stale = false;
         self.local_thread_paths.clear();
         self.workspace = workspace;
+        self.worktree_issue = None;
         self.comparison.reload(&self.dirs, &self.workspace);
         self.rewatch = Some(Rewatch {
             root: Some(root.clone()),
             extras: self.worktree_paths.clone(),
         });
+        self.refresh_worktrees();
         self.record = self.record.clone().on_worktree(root.clone());
         if let Err(error) = self.record.write(&self.dirs) {
             tracing::warn!(%error, "cannot rewrite the viewer record");
@@ -359,30 +383,56 @@ impl App {
     /// The `worktrees` row of `:status`: each by label and root, the
     /// active one marked.
     pub(crate) fn worktrees_row(&self) -> String {
-        if self.worktrees.is_empty() {
+        if !self.workspace.is_git() {
             return "none (not a git repository)".to_owned();
         }
-        self.worktrees
-            .iter()
-            .map(|w| {
-                let mark = if w.root() == self.workspace.root() {
-                    "*"
-                } else {
-                    ""
-                };
-                format!("{}{mark} {}", w.label(), w.root().display())
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
+        let mut rows = Vec::new();
+        if let Some(issue) = &self.worktree_issue {
+            rows.push(issue.clone());
+        }
+        if self.active_worktree_unavailable() {
+            rows.push(format!(
+                "* unavailable {} - choose Go > Worktrees",
+                self.workspace.root().display()
+            ));
+        }
+        rows.extend(self.worktrees.iter().map(|w| {
+            let mark = if w.root() == self.workspace.root() {
+                "*"
+            } else {
+                ""
+            };
+            format!("{}{mark} {}", worktree_description(w), w.root().display())
+        }));
+        rows.join("\n")
     }
 
     /// A click on the menu bar's repository/worktree identity.
     pub(crate) fn pick_worktree(&mut self) {
-        if !self.has_worktrees() {
-            self.notice("one worktree");
+        self.refresh_worktrees();
+        if self.worktrees.is_empty() {
+            self.notice(self.worktree_issue.clone().unwrap_or_else(|| {
+                if self.workspace.is_git() {
+                    "No available worktrees".to_owned()
+                } else {
+                    "Not a Git repository".to_owned()
+                }
+            }));
             return;
         }
         self.open_picker(PickerKind::Worktree);
+    }
+}
+
+fn worktree_description(worktree: &Worktree) -> String {
+    let label = worktree.label();
+    match worktree.lock_reason() {
+        Some("") => format!("{label} [locked]"),
+        Some(reason) => format!(
+            "{label} [locked: {}]",
+            reason.split_whitespace().collect::<Vec<_>>().join(" ")
+        ),
+        None => label,
     }
 }
 
@@ -396,10 +446,10 @@ mod tests {
     use fathomable_testing::TempDir;
     use fathomable_testing::git;
 
-    use crate::app::input::bindings::Action;
     use crate::app::menu_bar;
     use crate::app::testing::{self, AppBuilder, screen};
     use crate::app::{App, Options, PickerKind, Popup};
+    use crossterm::event::KeyCode;
 
     /// A repository at `main/` with `a.md` committed, and a linked
     /// worktree at `feature/` on branch `feature`.
@@ -431,29 +481,33 @@ mod tests {
             .build()
     }
 
-    /// `]w` makes the next worktree active: the workspace re-roots, the
-    /// open file follows by its relative path, and the menu bar names
-    /// the repository, worktree, and file.
     #[test]
-    fn paging_re_roots_the_viewer_and_keeps_the_file() -> anyhow::Result<()> {
+    fn worktree_menu_re_roots_the_viewer_and_keeps_the_file() -> anyhow::Result<()> {
         let (dir, main, feature) = repo("page")?;
+        for root in [&main, &feature] {
+            fs::write(root.join("a.md"), "one\n\ntwo\n\nthree\n")?;
+        }
         let mut app = app_on(&dir, &main)?;
         assert_eq!(app.worktrees.len(), 2);
         assert_eq!(app.worktree_label().as_deref(), Some("main"));
         app.toggle_menu_bar();
         app.open(Path::new("a.md"));
+        app.view_mut().goto_source_line(3);
         app.show_tree();
         let shown = screen(&app)?;
         assert!(shown[0].contains("main · main"));
         assert!(shown[1].contains("File  a.md"));
+        assert_eq!(app.view().cursor_source_line(), Some(3));
 
-        app.act(Action::WorktreeNext);
-        app.settle_background();
+        app.run_title_target(menu_bar::Target::Worktrees);
+        testing::press(&mut app, "feature");
+        testing::press_key(&mut app, KeyCode::Enter);
         assert_eq!(app.workspace().root(), feature);
         assert_eq!(app.worktree_label().as_deref(), Some("feature"));
         assert_eq!(app.current_path(), Path::new("a.md"), "the file follows");
+        assert_eq!(app.view().cursor_source_line(), Some(3));
         let shown = screen(&app)?;
-        assert!(shown[0].contains("feature · feature"));
+        assert!(shown[0].contains("main · feature"));
         assert!(shown[1].contains("File  a.md"));
         let identity = menu_bar::bar_identity(&app, app.width)
             .ok_or_else(|| anyhow::anyhow!("worktree identity"))?;
@@ -468,19 +522,19 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("no rewatch"))?;
         assert_eq!(rewatch.root.as_deref(), Some(feature.as_path()));
 
-        // `[w` wraps back; a file the worktree lacks closes to the welcome.
+        // A file the destination lacks closes to the welcome.
         fs::remove_file(feature.join("a.md"))?;
-        app.act(Action::WorktreePrev);
+        app.activate_worktree(&main);
         app.settle_background();
         assert_eq!(app.workspace().root(), main);
-        app.act(Action::WorktreeNext);
+        app.activate_worktree(&feature);
         app.settle_background();
         assert_eq!(app.current_path(), Path::new(""), "nothing open");
         Ok(())
     }
 
     #[test]
-    fn paging_invalidates_navigation_owned_thread_visibility() -> anyhow::Result<()> {
+    fn worktree_switch_invalidates_navigation_owned_thread_visibility() -> anyhow::Result<()> {
         let (dir, main, feature) = repo("peek")?;
         let mut app = app_on(&dir, &main)?;
         app.open(Path::new("a.md"));
@@ -657,9 +711,8 @@ mod tests {
         Ok(())
     }
 
-    /// One worktree: no branch in the header, and `]w` says so.
     #[test]
-    fn one_worktree_pages_nowhere() -> anyhow::Result<()> {
+    fn one_worktree_can_be_inspected_in_the_picker() -> anyhow::Result<()> {
         let dir = TempDir::new("worktrees-one")?;
         let main = dir.0.join("main");
         fs::create_dir_all(&main)?;
@@ -667,9 +720,115 @@ mod tests {
         git::commit_and_stage(&main, &[("a.md", "one\n")])?;
         let mut app = app_on(&dir, &main.canonicalize()?)?;
         assert_eq!(app.worktree_label(), None);
-        app.act(Action::WorktreeNext);
+        assert!(!app.can_switch_worktree());
+        app.run_title_target(menu_bar::Target::Worktrees);
+        assert!(
+            matches!(app.popup(), Some(Popup::Picker(picker)) if picker.kind() == PickerKind::Worktree)
+        );
+        testing::press_key(&mut app, KeyCode::Enter);
+        assert_eq!(app.workspace().root(), main);
+        Ok(())
+    }
+
+    #[test]
+    fn locked_worktree_is_labelled_and_still_selectable() -> anyhow::Result<()> {
+        let (dir, main, feature) = repo("lock")?;
+        let mut app = app_on(&dir, &main)?;
+        let lock = main.join(".git/worktrees/feature/locked");
+        fs::write(&lock, "synthetic\nreason")?;
+        app.refresh_worktrees();
+        assert!(
+            app.worktrees_row()
+                .contains("feature [locked: synthetic reason]")
+        );
+        app.run_title_target(menu_bar::Target::Worktrees);
+        testing::press(&mut app, "feature");
+        testing::press_key(&mut app, KeyCode::Enter);
+        assert_eq!(app.workspace().root(), feature);
+        fs::remove_file(lock)?;
+        app.refresh_worktrees();
+        assert!(!app.worktrees_row().contains("locked"));
+        Ok(())
+    }
+
+    #[test]
+    fn removing_active_worktree_allows_explicit_one_survivor_recovery() -> anyhow::Result<()> {
+        let (dir, main, feature) = repo("recover")?;
+        let mut app = app_on(&dir, &feature)?;
+        app.toggle_menu_bar();
+        app.open(Path::new("a.md"));
+        fs::remove_dir_all(&feature)?;
+        fs::remove_dir_all(main.join(".git/worktrees/feature"))?;
+        app.rescan_workspace();
         app.settle_background();
-        assert_eq!(app.message(), Some("one worktree"));
+
+        assert_eq!(
+            app.workspace().root(),
+            feature,
+            "removal must not switch implicitly"
+        );
+        assert_eq!(app.worktrees.len(), 1);
+        assert!(app.can_switch_worktree());
+        assert_eq!(app.worktree_label().as_deref(), Some("unavailable"));
+        assert!(app.worktrees_row().contains("* unavailable"));
+        assert!(!app.worktrees_row().contains("not a git repository"));
+        let identity = menu_bar::bar_identity(&app, app.width)
+            .ok_or_else(|| anyhow::anyhow!("missing recovery identity"))?;
+        assert_eq!(identity.picker, Some(PickerKind::Worktree));
+        app.run_title_target(menu_bar::Target::Worktrees);
+        testing::press_key(&mut app, KeyCode::Enter);
+        assert_eq!(app.workspace().root(), main);
+        assert_eq!(app.current_path(), Path::new("a.md"));
+        assert!(app.worktree_issue.is_none());
+        assert!(!app.worktrees_row().contains("unavailable"));
+        assert_eq!(app.workspace().name(), "main");
+        Ok(())
+    }
+
+    #[test]
+    fn failed_worktree_discovery_retains_last_known_entries_and_reports_failure()
+    -> anyhow::Result<()> {
+        let (dir, main, _) = repo("discovery-error")?;
+        let mut app = app_on(&dir, &main)?;
+        let listed = app.worktrees.clone();
+        let registry = main.join(".git/worktrees");
+        let saved = main.join(".git/saved-worktrees");
+        fs::rename(&registry, &saved)?;
+        fs::write(&registry, "not a registry directory")?;
+        app.refresh_worktrees();
+        assert_eq!(app.worktrees, listed);
+        assert!(app.worktree_issue.is_some());
+        assert!(
+            app.worktree_choices()
+                .iter()
+                .all(|choice| choice.contains("[last known]"))
+        );
+        assert_eq!(app.worktree_label().as_deref(), Some("main (stale)"));
+        assert!(app.worktrees_row().contains("discovery failed"));
+        assert!(!app.worktrees_row().contains("not a git repository"));
+        fs::remove_file(&registry)?;
+        fs::rename(&saved, &registry)?;
+        app.refresh_worktrees();
+        assert!(app.worktree_issue.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn replaced_worktree_is_rejected_before_clearing_current_source() -> anyhow::Result<()> {
+        let (dir, main, feature) = repo("replaced")?;
+        let mut app = app_on(&dir, &main)?;
+        app.open(Path::new("a.md"));
+        let key = app.workspace().key().to_path_buf();
+        fs::remove_file(feature.join(".git"))?;
+        git::init(&feature)?;
+        assert!(!app.activate_worktree(&feature));
+        assert_eq!(app.workspace().root(), main);
+        assert_eq!(app.workspace().key(), key);
+        assert_eq!(app.current_path(), Path::new("a.md"));
+        assert!(
+            app.message()
+                .is_some_and(|message| message.ends_with("is another repository"))
+        );
         Ok(())
     }
 }

@@ -274,8 +274,10 @@ fn workspace_checks(
 
     let (watch_ok, watch) = watch_budget(&mut workspace, &config.watch().ignore);
     report.check(watch_ok, watch);
-    if let Some(line) = worktrees_line(&workspace) {
-        report.check(true, line);
+    match worktrees_line(&workspace) {
+        Ok(Some(line)) => report.check(true, line),
+        Ok(None) => {}
+        Err(error) => report.check(false, format!("worktrees: {error}")),
     }
     let _threads = thread_store(report, dirs, workspace.key());
     let dir = dirs.review_points_dir(workspace.key());
@@ -331,12 +333,14 @@ fn thread_store(report: &mut Report, dirs: &XdgDirs, key: &Path) -> Option<Store
     }
 }
 
-fn worktrees_line(workspace: &Workspace) -> Option<String> {
-    let worktrees = workspace.worktrees();
+fn worktrees_line(
+    workspace: &Workspace,
+) -> Result<Option<String>, fathomable_core::workspace::WorkspaceError> {
+    let worktrees = workspace.worktrees()?;
     if worktrees.len() < 2 {
-        return None;
+        return Ok(None);
     }
-    Some(format!(
+    Ok(Some(format!(
         "{} worktrees share the state keyed by {}: {}",
         worktrees.len(),
         workspace.key().display(),
@@ -345,7 +349,7 @@ fn worktrees_line(workspace: &Workspace) -> Option<String> {
             .map(fathomable_core::worktrees::Worktree::label)
             .collect::<Vec<_>>()
             .join(", ")
-    ))
+    )))
 }
 
 fn watch_budget(workspace: &mut Workspace, extra_ignores: &[String]) -> (bool, String) {

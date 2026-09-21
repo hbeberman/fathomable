@@ -18,7 +18,7 @@ use super::bindings::{Action, Chord, Key, Match, Where, lookup};
 use super::help;
 use crate::app::threads::list::ReviewView;
 use crate::app::view::{Effect, Mode};
-use crate::app::{commands::CompletionDirection, doctor_view, licenses, mcp_setup, menu_bar};
+use crate::app::{commands::CompletionDirection, licenses, mcp_setup, menu_bar, report};
 
 /// Rows a scroll key or wheel notch moves.
 pub(crate) const WHEEL_LINES: isize = 3;
@@ -31,8 +31,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
     effect
 }
 
-/// The surface a key lands on now, or `None` under a popup that any key
-/// closes.
+/// The surface a key lands on now, or `None` under a popup with its own keys.
 #[must_use]
 pub(crate) fn place(app: &App) -> Option<Where> {
     if app.title_menu_open() {
@@ -41,7 +40,7 @@ pub(crate) fn place(app: &App) -> Option<Where> {
     match app.popup() {
         Some(
             Popup::Help(_)
-            | Popup::Status
+            | Popup::Status(_)
             | Popup::Doctor(_)
             | Popup::Licenses(_)
             | Popup::McpSetup(_)
@@ -80,6 +79,9 @@ fn key_event(app: &mut App, key: KeyEvent) -> Effect {
     if app.title_menu_open() {
         return menu_bar::key(app, key);
     }
+    if matches!(app.popup(), Some(Popup::Status(_) | Popup::Doctor(_))) {
+        return report::key(app, key);
+    }
     if !app.panes_fit() {
         if matches!(app.popup(), Some(Popup::ConfirmQuit)) {
             return confirmation_key(app, key);
@@ -117,9 +119,6 @@ fn key_event(app: &mut App, key: KeyEvent) -> Effect {
         )
     ) {
         return confirmation_key(app, key);
-    }
-    if matches!(app.popup(), Some(Popup::Doctor(_))) {
-        return doctor_view::key(app, key);
     }
     if matches!(app.popup(), Some(Popup::Licenses(_))) {
         return licenses::key(app, key);
@@ -450,8 +449,6 @@ impl App {
             Action::ComparisonHeadParent => self.select_head_parent(),
             Action::ComparisonCommitParent => self.pick_commit_parent(),
             Action::ComparisonWhitespace => self.toggle_whitespace(),
-            Action::WorktreeNext => self.worktree_step(1),
-            Action::WorktreePrev => self.worktree_step(-1),
             Action::StubsToggle => self.toggle_stubs(),
             Action::FilesChanged => self.files_toggle(Rule::Changed),
             Action::FilesReviews => self.files_toggle(Rule::Reviews),

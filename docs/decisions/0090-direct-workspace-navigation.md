@@ -121,7 +121,8 @@ wrap.
 Deleted, binary, oversized, or otherwise undisplayable source falls back to
 the exact expanded Threads entry and its immutable evidence. Navigation
 never changes the active worktree or comparison endpoint implicitly.
-`]w` and `[w` remain the explicit worktree cycle.
+Only explicit selection through **Go > Worktrees...** or the menu-bar
+identity picker switches worktrees; there are no bracket-navigation aliases.
 That explicit evidence destination takes precedence over the cursor retained
 by the File surface being replaced, including when Enter first closes main
 Threads to attempt File. The fallback reopens main Threads on the requested

@@ -31,6 +31,7 @@ mod mcp_setup;
 mod menu_bar;
 mod navigation;
 mod placement;
+mod report;
 mod review_points;
 pub(crate) mod run;
 mod sidebar;
@@ -475,7 +476,7 @@ pub(crate) enum Popup {
     /// only in that it takes the keys.
     Compose(Compose),
     /// The `:status` overlay (ADR 0021).
-    Status,
+    Status(report::Scroll),
     /// Shared CLI diagnostics in a scrollable in-app view.
     Doctor(doctor_view::Doctor),
     /// Bundled first- and third-party license notices.
@@ -833,6 +834,7 @@ pub(crate) struct App {
     status: Status,
     /// The workspace's worktrees as last listed (ADR 0070).
     worktrees: Vec<fathomable_core::worktrees::Worktree>,
+    worktree_issue: Option<String>,
     /// The git paths watched for the other worktrees (ADR 0070).
     worktree_paths: Vec<PathBuf>,
     /// What the other worktrees' `HEAD`s reached last time (ADR 0070).
@@ -982,6 +984,7 @@ impl App {
             walks: status_walk::Walks::new(),
             status: Status::default(),
             worktrees: Vec::new(),
+            worktree_issue: None,
             worktree_paths: Vec::new(),
             reach_cache: HashMap::new(),
             elsewhere: HashMap::new(),
@@ -2178,7 +2181,7 @@ impl App {
         self.height = height;
         self.relayout();
         input::help::resize(self);
-        doctor_view::resize(self);
+        report::resize(self);
         licenses::resize(self);
         mcp_setup::resize(self);
         menu_bar::resize(self);
@@ -2745,7 +2748,7 @@ impl App {
     /// `:status`: the overlay of session facts (ADR 0021).
     pub(crate) fn open_status(&mut self) {
         self.park_draft();
-        self.popup = Some(Popup::Status);
+        self.popup = Some(Popup::Status(report::Scroll::new()));
     }
 
     /// Open the confirmation required by bare `q`.

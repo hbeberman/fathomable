@@ -53,6 +53,7 @@ use crate::app::input::help;
 use crate::app::input::keys::place;
 use crate::app::input::menu::{Grid, HintCell, HintGrid, Menu};
 use crate::app::menu_bar::{self, Focused, MenuLayout, Row as MenuRow};
+use crate::app::report;
 use crate::app::{App, Focus, MAX_TOASTS, NoticeTone, PickerState, Popup, Toast, ToastKind};
 
 /// Ratatui styles for the chrome and Markdown faces.
@@ -301,18 +302,7 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         Some(Popup::Help(_)) => {
             draw_help(frame, app, theme);
         }
-        Some(Popup::Status) => {
-            let rows = app.status_lines();
-            let grid = Grid::centred(
-                &rows,
-                STATUS_TITLE,
-                0,
-                app.pane_top(),
-                app.size().0,
-                app.pane_rows(),
-            );
-            draw_table(frame, theme, grid, STATUS_TITLE, &rows, None);
-        }
+        Some(Popup::Status(scroll)) => draw_status(frame, app, theme, scroll),
         Some(Popup::Doctor(doctor)) => draw_doctor(frame, app, theme, doctor),
         Some(Popup::Licenses(licenses)) => draw_licenses(frame, app, theme, licenses),
         Some(Popup::McpSetup(setup)) => draw_mcp_setup(frame, app, theme, setup),
@@ -547,36 +537,47 @@ fn draw_title_menus(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     );
 }
 
+fn draw_status(frame: &mut Frame<'_>, app: &App, theme: &Theme, scroll: &report::Scroll) {
+    let (width, _) = report::content_size(app);
+    let lines = report::status_lines(app, width)
+        .into_iter()
+        .map(|(label, value)| {
+            Line::from(vec![
+                Span::styled(label, on_surface(theme.popup, theme.popup_key)),
+                Span::raw(value),
+            ])
+        })
+        .collect();
+    draw_report(
+        frame,
+        app,
+        theme,
+        " Status · j/k/↑↓/wheel scroll · Esc close ".to_owned(),
+        lines,
+        scroll,
+    );
+}
+
 fn draw_doctor(
     frame: &mut Frame<'_>,
     app: &App,
     theme: &Theme,
     doctor: &crate::app::doctor_view::Doctor,
 ) {
-    let area = report_area(app);
-    if area.width < 2 || area.height < 2 {
-        return;
-    }
-    let block = rounded_block(
-        theme,
-        format!(
-            " Doctor · {} · r rerun · j/k scroll · Esc close ",
-            if !doctor.report().passed() {
-                "failures"
-            } else if doctor.report().has_warnings() {
-                "warnings"
-            } else {
-                "ok"
-            }
-        ),
-        theme.popup,
+    let title = format!(
+        " Doctor · {} · r rerun · j/k scroll · Esc close ",
+        if !doctor.report().passed() {
+            "failures"
+        } else if doctor.report().has_warnings() {
+            "warnings"
+        } else {
+            "ok"
+        }
     );
-    let inner = block.inner(area);
-    let lines = doctor.visual_lines(usize::from(inner.width));
-    let shown = lines
+    let (width, _) = report::content_size(app);
+    let lines = doctor
+        .visual_lines(width)
         .into_iter()
-        .skip(doctor.scroll())
-        .take(usize::from(inner.height))
         .map(|(kind, text)| {
             let style = match kind {
                 crate::doctor::Kind::Section => theme.popup_key.add_modifier(Modifier::BOLD),
@@ -587,6 +588,43 @@ fn draw_doctor(
             };
             Line::from(Span::styled(text, on_surface(theme.popup, style)))
         })
+        .collect::<Vec<_>>();
+    draw_report(frame, app, theme, title, lines, &doctor.scroll);
+}
+
+fn draw_report(
+    frame: &mut Frame<'_>,
+    app: &App,
+    theme: &Theme,
+    title: String,
+    lines: Vec<Line<'_>>,
+    scroll: &report::Scroll,
+) {
+    let area = report_area(app);
+    if area.width < 2 || area.height < 2 {
+        return;
+    }
+    let mut block = rounded_block(theme, title, theme.popup);
+    let inner = block.inner(area);
+    let height = usize::from(inner.height);
+    let total = lines.len();
+    let start = scroll.position(total, height);
+    if total > height {
+        let end = (start + height).min(total);
+        let above = if start > 0 { "↑ " } else { "" };
+        let below = if end < total { " ↓" } else { "" };
+        block = block.title_bottom(
+            Line::from(Span::styled(
+                format!(" {above}{}-{end}/{total}{below} ", start + 1),
+                on_surface(theme.popup, theme.popup_key),
+            ))
+            .right_aligned(),
+        );
+    }
+    let shown = lines
+        .into_iter()
+        .skip(start)
+        .take(height)
         .collect::<Vec<_>>();
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
@@ -2412,8 +2450,6 @@ pub(crate) fn which_key_grid(app: &App, sections: &[bindings::MenuSection]) -> H
     )
 }
 
-const STATUS_TITLE: &str = " Status · any key closes ";
-
 /// A key menu in a rounded border titled by its prefix or context;
 /// `hover` is the entry under the pointer.
 fn draw_menu(
@@ -2877,52 +2913,6 @@ fn on_surface(surface: Style, accent: Style) -> Style {
     let mut style = surface.patch(accent);
     style.bg = surface.bg;
     style
-}
-
-/// A centred popup with a rounded titled border.
-fn draw_table(
-    frame: &mut Frame<'_>,
-    theme: &Theme,
-    grid: Grid,
-    title: &str,
-    rows: &[(String, String)],
-    hover: Option<usize>,
-) {
-    let key_width = grid.key_width;
-    let label_width = grid.label_width;
-    // Rows that do not fit flow into further columns.
-    let mut lines: Vec<Line<'_>> = Vec::new();
-    for r in 0..grid.rows.min(rows.len()) {
-        let mut spans = Vec::new();
-        for col in 0..grid.columns {
-            let index = col * grid.rows + r;
-            let Some((key, label)) = rows.get(index) else {
-                break;
-            };
-            let row_style = if hover == Some(index) {
-                theme.list_hover
-            } else {
-                Style::default()
-            };
-            let gap = if col == 0 { " " } else { "   " };
-            spans.push(Span::styled(
-                format!("{gap}{key:<key_width$}"),
-                theme.popup_key.patch(row_style),
-            ));
-            spans.push(Span::styled(format!("  {label:<label_width$}"), row_style));
-        }
-        lines.push(Line::from(spans));
-    }
-    let popup = grid_rect(grid);
-    let block = rounded_block(
-        theme,
-        Span::styled(title.to_owned(), theme.info),
-        theme.popup,
-    );
-    let inner = block.inner(popup);
-    frame.render_widget(Clear, popup);
-    frame.render_widget(block, popup);
-    frame.render_widget(Paragraph::new(lines).style(theme.popup), inner);
 }
 
 type PickerCells = Vec<(char, Option<u32>, bool)>;

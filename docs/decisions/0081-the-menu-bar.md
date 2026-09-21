@@ -6,6 +6,7 @@ resource: crates/fathomable/src/app/menu_bar.rs
 related_resources:
   - crates/fathomable/src/app/doctor_view.rs
   - crates/fathomable/src/app/mcp_setup.rs
+  - crates/fathomable/src/app/report.rs
 tags:
   - configuration
   - decision
@@ -17,6 +18,13 @@ tags:
 # 0081 The persistent menu bar
 
 Status: accepted (2026-09-15)
+
+Worktree and status UX amendment: **Go > Worktrees...** is the keyboard-
+and mouse-accessible route to the existing picker; bracket worktree cycling
+is removed. Repository identity stays stable across checkouts, and the
+identity picker can recover a missing active checkout even if only one
+destination remains. Status reuses the scrollable report popup rather than
+an independently rendered one-row table.
 
 Terminology amended 2026-09-19: the mode row is **Normal diff**
 (`Space d n`), and the endpoint rows are **Pick source...** (`Space d s`) and
@@ -130,7 +138,8 @@ content they affect.
   reserves one row; it never paints over pane headers or content.
 - Its left side is `☰  Layout  Go  Review  Diff`, with no down-arrow glyphs.
   A label takes `ui.list.hover` while hovered or open.
-- The repository directory name is centered against the whole terminal.
+- The shared repository's name, derived from its main worktree or common
+  directory rather than the active root basename, is centered against the whole terminal.
   With several worktrees, ` · <branch>` or the short detached commit follows
   it. The current filename belongs to the File surface header. If space is
   too narrow, repository identity truncates and then disappears before
@@ -176,7 +185,9 @@ content they affect.
   the embedded first- and third-party notices offline. About (`:about`) is a
   compact project/version, license, and repository view with directions to the
   full notices.
-- **Go** contains the file pickers and jumplist Back/Forward.
+- **Go** contains the file pickers, direct change/file/thread navigation,
+  jumplist Back/Forward, and **Worktrees...**. The latter has no shortcut
+  label; it opens the existing worktree picker.
   **Review** contains the review view and filters plus
   non-destructive thread creation/reply/edit/resolve actions. **Diff**
   begins with bold-`▌`, mutually exclusive **Normal diff**, **Unified diff**,
@@ -186,8 +197,7 @@ content they affect.
   whitespace**. Ignore whitespace remains checked but dim while Off. The
   removed Comparison controls popup, Start comparison at current HEAD, typed
   commit batches, and `:diff` have no menu rows or compatibility aliases. The
-  bracket-pair navigation commands are intentionally not copied into these
-  menus.
+  retired bracket-pair navigation commands have no compatibility aliases.
 - Menu order is stable. Unavailable actions remain present and dim. Checked
   rows use stable state labels and expose current state only through the
   checkmark. Action labels are left-aligned in the normal menu face and
@@ -210,7 +220,9 @@ content they affect.
   region.
 - With several worktrees, the centered repository/worktree segment uses the
   same accent and hover background; clicking it opens the worktree picker.
-  With one worktree the repository identity is subdued and inert.
+  With only the active worktree the repository identity is subdued and
+  inert. When the active worktree is unavailable, the label says so and
+  remains clickable if any other checkout survives.
 - A submenu opens on hover, click, `l`/Right, or Enter. Its top border aligns
   with its parent row and touches the parent box. `h`/Left returns to the
   parent. Nesting stops at one level.
@@ -244,6 +256,11 @@ content they affect.
   Doctor, and About use the same rounded frame on `ui.popup`.
 - Picker rows take `ui.list.hover` under the pointer. A left click chooses the
   pointed row, and the wheel moves the picker selection and viewport.
+- Status, Doctor, and MCP Setup share report scrolling and wrapping.
+  Status preserves embedded newlines, puts each worktree on its own row,
+  and exposes overflow with a visible scroll indicator. `j`/`k`, Down/Up,
+  and the wheel scroll without moving the underlying pane; `Esc` and an
+  outside click dismiss it, while an inside click keeps it open.
 - Menu shortcut columns and borders use the subdued
   `ui.statusline.info` face. Surfaces remain `ui.menu` or `ui.popup`;
   `ui.list.hover` remains the hover treatment. No theme key is added.

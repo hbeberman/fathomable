@@ -81,6 +81,7 @@ pub(crate) enum Target {
     McpSetup,
     Licenses,
     Status,
+    Worktrees,
     About,
     Quit,
     Submenu(Submenu),
@@ -396,10 +397,7 @@ fn identity_within(
         .saturating_add(1)
         .saturating_sub(width);
     let max_width = left_room.min(right_room);
-    let repo = app.workspace().root().file_name().map_or_else(
-        || "/".to_owned(),
-        |name| name.to_string_lossy().into_owned(),
-    );
+    let repo = app.workspace().name().to_owned();
     let worktree = app.worktree_label();
     let repo = worktree
         .as_ref()
@@ -415,7 +413,7 @@ fn identity_within(
         repo: fitted_repo,
         x: width.saturating_sub(identity_width) / 2,
         width: identity_width,
-        picker: worktree.map(|_| PickerKind::Worktree),
+        picker: app.can_switch_worktree().then_some(PickerKind::Worktree),
     })
 }
 
@@ -601,6 +599,11 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             Row::Separator,
             Row::Item(Item::action(app, Action::JumpBack, "Back")),
             Row::Item(Item::action(app, Action::JumpForward, "Forward")),
+            Row::Separator,
+            Row::Item(Item {
+                enabled: app.panes_fit() && app.workspace().is_git(),
+                ..Item::command(app, "Worktrees…", Target::Worktrees)
+            }),
         ],
         Root::Review => vec![
             Row::Item(Item::action(app, Action::Review, "Threads")),
@@ -918,6 +921,10 @@ impl App {
                 self.open_status();
                 Effect::None
             }
+            Target::Worktrees => {
+                self.pick_worktree();
+                Effect::None
+            }
             Target::About => {
                 self.open_about();
                 Effect::None
@@ -979,7 +986,7 @@ fn target_keys(target: Target) -> Option<&'static [Chord]> {
         Target::Status => Some(&STATUS_KEYS),
         Target::About => Some(&ABOUT_KEYS),
         Target::Quit => Some(&QUIT_KEYS),
-        Target::Licenses | Target::Submenu(_) => None,
+        Target::Licenses | Target::Worktrees | Target::Submenu(_) => None,
     }
 }
 
@@ -1467,7 +1474,7 @@ mod tests {
         let app = testing::app(&dir)?;
         assert_eq!(rows(&app, Root::App).len(), 5);
         assert_eq!(rows(&app, Root::Layout).len(), 6);
-        assert_eq!(rows(&app, Root::Go).len(), 13);
+        assert_eq!(rows(&app, Root::Go).len(), 15);
         assert_eq!(rows(&app, Root::Review).len(), 16);
         let diff_rows = rows(&app, Root::Diff);
         assert_eq!(diff_rows.len(), 14);
@@ -1507,6 +1514,19 @@ mod tests {
         );
         assert_eq!(submenu_rows(&app, super::Submenu::Help).len(), 5);
         let go = rows(&app, Root::Go);
+        let worktrees = go
+            .last()
+            .and_then(super::Row::item)
+            .ok_or_else(|| anyhow::anyhow!("missing worktree menu"))?;
+        assert_eq!(worktrees.target, super::Target::Worktrees);
+        assert!(
+            worktrees.hint.is_empty(),
+            "worktree navigation is menu-only"
+        );
+        assert!(
+            !worktrees.enabled,
+            "plain directories do not have Git worktrees"
+        );
         assert_eq!(go[0].item().map(|item| item.hint.as_str()), Some("Sp f f"));
         assert_eq!(go[1].item().map(|item| item.hint.as_str()), Some("Sp f i"));
         assert!(

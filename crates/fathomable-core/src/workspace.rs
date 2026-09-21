@@ -792,6 +792,7 @@ fn commit_time(repo: &gix::Repository, hex: &str) -> Option<gix::date::SecondsSi
 /// A workspace root with git ignore evaluation.
 pub struct Workspace {
     root: PathBuf,
+    name: String,
     /// What the state directory is keyed by (ADR 0070): the canonical
     /// git common dir, or the root outside git.
     key: PathBuf,
@@ -811,10 +812,18 @@ struct Ignore {
     diff_attr: gix::attrs::search::Outcome,
 }
 
+fn workspace_name(path: &Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
 impl fmt::Debug for Workspace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Workspace")
             .field("root", &self.root)
+            .field("name", &self.name)
             .field("limits", &self.limits)
             .field("key", &self.key)
             .field("git", &self.ignore.is_some())
@@ -858,9 +867,15 @@ impl Workspace {
                         message,
                     })?;
                     let key = crate::worktrees::canonical(repo.common_dir());
+                    let main = repo.main_repo().map_err(|error| WorkspaceError {
+                        path: key.clone(),
+                        message: format!("cannot open shared repository: {error}"),
+                    })?;
+                    let name = workspace_name(main.workdir().unwrap_or(main.common_dir()));
                     tracing::info!(root = %root.display(), key = %key.display(), "workspace is a git work tree");
                     Ok(Self {
                         root,
+                        name,
                         key,
                         ignore: Some(ignore),
                         limits: crate::config::LimitsConfig::default(),
@@ -882,6 +897,7 @@ impl Workspace {
     fn plain(root: PathBuf) -> Self {
         tracing::info!(root = %root.display(), "workspace is a plain directory");
         Self {
+            name: workspace_name(&root),
             key: root.clone(),
             root,
             ignore: None,
@@ -988,6 +1004,12 @@ impl Workspace {
         &self.root
     }
 
+    /// The shared repository's display name, or the directory name outside Git.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     /// What the workspace's state is keyed by (ADR 0070): the canonical
     /// git common dir, shared by every worktree of the repository, or
     /// the root itself outside git. Pass it where [`XdgDirs`] asks for a
@@ -1007,12 +1029,25 @@ impl Workspace {
 
     /// Every worktree of the repository (ADR 0070): the main one first,
     /// then the linked ones as git keeps them, or nothing outside git.
-    #[must_use]
-    pub fn worktrees(&self) -> Vec<crate::worktrees::Worktree> {
-        self.ignore
-            .as_ref()
-            .map(|git| crate::worktrees::list(&git.repo))
-            .unwrap_or_default()
+    ///
+    /// Discovery opens the established common directory independently of this
+    /// checkout, so removing the active linked worktree does not lose its peers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] if the repository, registry, or worktree
+    /// metadata cannot be read, including lock reasons larger than 4096 bytes.
+    pub fn worktrees(&self) -> Result<Vec<crate::worktrees::Worktree>, WorkspaceError> {
+        if !self.is_git() {
+            return Ok(Vec::new());
+        }
+        let repo = gix::open_opts(&self.key, open_options())
+            .map_err(|error| self.scan_error(format!("cannot open shared repository: {error}")))?;
+        if crate::worktrees::canonical(repo.common_dir()) != self.key {
+            return Err(self.scan_error("shared repository identity changed"));
+        }
+        crate::worktrees::list(&repo)
+            .map_err(|error| self.scan_error(format!("cannot list worktrees: {error}")))
     }
 
     /// The paths a viewer watches for the worktree set and the other
@@ -1024,7 +1059,7 @@ impl Workspace {
         let Some(git) = self.ignore.as_ref() else {
             return Vec::new();
         };
-        let common = crate::worktrees::canonical(git.repo.common_dir());
+        let common = self.key.clone();
         let registry = crate::worktrees::registry(&common);
         let mut out = Vec::with_capacity(4);
         for path in [

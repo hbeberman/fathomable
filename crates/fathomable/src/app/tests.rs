@@ -1946,7 +1946,7 @@ fn ignore_rules_filter_toasts_but_not_reloads() -> anyhow::Result<()> {
     assert!(app.toasts().is_empty(), "toast 0 disables toasts");
 
     app.command("status");
-    assert!(matches!(app.popup(), Some(Popup::Status)));
+    assert!(matches!(app.popup(), Some(Popup::Status(_))));
     app.close_popup();
     app.command("help");
     assert!(app.getting_started());

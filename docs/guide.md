@@ -224,7 +224,6 @@ the table below is a quick reference, not the full list.
 | `Shift-Right` `L` / `Shift-Left` `H` | next / previous changed file, with its first change at the top third |
 | `Tab` `Shift-Tab` | next / previous open thread in the focused surface's scope |
 | `Alt-Left` `Alt-Right` | back / forward through logical navigation positions |
-| `]w` `[w` | next / previous worktree |
 | `c` `Space t f` | line comment or reply / file comment |
 | `r` `R` | resolve or reopen / toggle one-shot auto-resolve |
 | `z` `Z` | fold/unfold the nearest directory / toggle File-list auto-unfold; threads elsewhere |
@@ -254,12 +253,38 @@ selected command shows a brief description and its accepted arguments.
 
 All current named commands take no arguments.
 
+`:status` uses the same scrollable report popup as Doctor and MCP Setup.
+Long values wrap, and each worktree has its own row. Scroll with `j`/`k`,
+Down/Up, or the mouse wheel; the popup shows when more rows are available.
+`Esc` or a click outside closes it. Clicking inside keeps it open, and
+scrolling does not move the document underneath.
+
 `Ctrl-e` uses a fresh owner-only temporary directory containing an owner-only
 draft file. Editor replacements and backups placed beside the draft stay
 private, and Fathomable removes this scratch directory on return, including
 error returns. A forced termination may leave private scratch files behind.
 Unsafe temporary-directory ancestors are refused before the draft is written.
 Files the editor is configured to write elsewhere are outside this protection.
+
+### Switch worktrees
+
+Choose **Go > Worktrees...**, or click the repository/worktree identity in
+the menu bar when another checkout is available. `Alt-Space` exposes the
+menus even when the bar is hidden. Worktree navigation is menu-only; the
+old bracket shortcuts have no aliases.
+
+The repository name stays the same across checkouts. The active branch or
+short detached commit identifies the checkout; the picker and `:status`
+also show Git's lock state and reason. A lock prevents Git pruning, not
+viewing or selecting that worktree.
+
+Switching preserves the open relative path and line when present in the
+destination. A missing file closes rather than showing the previous
+checkout's source as current. If Git removes the active worktree, it is
+shown as unavailable without switching automatically. Use **Go >
+Worktrees...** to select a surviving checkout, even when only one remains.
+Discovery failures explicitly label the last-known list rather than claiming
+the workspace is not Git.
 
 ### Compare versions
 
@@ -435,7 +460,8 @@ Fathomable selects the expanded Threads entry and its stored evidence.
 File list follows the destination path without taking focus from File or
 Threads. Active File list filters still apply: an excluded destination is not
 fabricated, and its reveal waits until the listing admits it.
-This navigation never switches worktrees: use `]w` and `[w` explicitly.
+This navigation never switches worktrees: choose **Go > Worktrees...**
+explicitly.
 
 The File footer keeps the core loop visible as
 `comment c · diffs ⇧arrows/HJKL · threads (⇧)Tab`, omitting unavailable

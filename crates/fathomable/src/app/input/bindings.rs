@@ -173,7 +173,7 @@ const fn k(key: Key) -> Chord {
 /// A key sequence: one chord, or a prefix and what follows it.
 pub(crate) type Keys = &'static [Chord];
 
-/// How a sequence is written: bare characters run together (`gg`, `]w`),
+/// How a sequence is written: bare characters run together (`gg`, `gf`),
 /// anything else is space-separated (`Space d n`, `Ctrl-d`).
 #[must_use]
 pub(crate) fn spell(keys: &[Chord]) -> String {
@@ -302,10 +302,6 @@ actions! {
     ComparisonHeadParent,
     /// `Space d c`: choose a commit and compare its first parent to it.
     ComparisonCommitParent,
-    /// `]w`: the next worktree (ADR 0070).
-    WorktreeNext,
-    /// `[w`: the previous worktree (ADR 0070).
-    WorktreePrev,
     ComparisonWhitespace,
     StubsToggle,
     /// `Space F c`: only changed files in the files pane (ADR 0068).
@@ -987,20 +983,6 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "Space menu",
         "diff: ignore whitespace",
         3,
-    ),
-    bind(
-        W::Any,
-        &[&[c(']'), c('w')]],
-        A::WorktreeNext,
-        "Worktrees",
-        "next worktree",
-    ),
-    bind(
-        W::Any,
-        &[&[c('['), c('w')]],
-        A::WorktreePrev,
-        "Worktrees",
-        "previous worktree",
     ),
     bind(
         W::Any,
@@ -2073,6 +2055,10 @@ mod tests {
         assert_eq!(lookup(Where::View, &[c(' '), c('j')]), Match::Miss);
         assert_eq!(lookup(Where::View, &[c(']'), c('f')]), Match::Miss);
         assert_eq!(lookup(Where::View, &[c('['), c('f')]), Match::Miss);
+        for prefix in ['[', ']'] {
+            assert_eq!(lookup(Where::View, &[c(prefix)]), Match::Miss);
+            assert_eq!(lookup(Where::View, &[c(prefix), c('w')]), Match::Miss);
+        }
         assert_eq!(
             keys(Where::View, &[c(' '), c('t')]),
             ["R", "h", "a", "A", "c", "r", "e", "d", "f"]
@@ -2307,7 +2293,7 @@ mod tests {
     #[test]
     fn sequences_are_spelled_the_way_the_guide_writes_them() {
         assert_eq!(spell(&[c('g'), c('g')]), "gg");
-        assert_eq!(spell(&[c(']'), c('c')]), "]c");
+        assert_eq!(spell(&[c('g'), c('f')]), "gf");
         assert_eq!(spell(&[c(' '), c('d'), c('s')]), "Space d s");
         assert_eq!(menu_spell(&[c(' '), c('j'), c('j')]), "Sp j j");
         assert_eq!(lookup(Where::Any, &[c(' '), c('j'), c('a')]), Match::Miss);

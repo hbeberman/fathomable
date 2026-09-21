@@ -3071,6 +3071,14 @@ fn the_review_groups_by_file_and_folds_files() -> anyhow::Result<()> {
         review_file_selected(&app, "README.md"),
         "the file row is a stop"
     );
+    let files = review_files(&app);
+    testing::press(&mut app, "h");
+    testing::press(&mut app, "l");
+    assert_eq!(
+        review_files(&app),
+        files,
+        "horizontal keys leave file rows alone"
+    );
     app.review_fold();
     assert_eq!(review_files(&app), ["docs/guide.md", "▸ README.md"]);
     assert!(review_file_selected(&app, "README.md"));
@@ -3125,6 +3133,26 @@ fn the_review_groups_by_file_and_folds_files() -> anyhow::Result<()> {
 fn the_review_folds_threads_and_shift_z_every_thread() -> anyhow::Result<()> {
     let (_dir, mut app, [guide, top, bottom]) = review_by_file("threads-fold-list")?;
     app.set_thread_cursor(top.clone());
+    testing::press(&mut app, "h");
+    assert!(
+        app.review_list().is_thread_folded(&top),
+        "h collapses the selected thread"
+    );
+    testing::press(&mut app, "h");
+    assert!(
+        app.review_list().is_thread_folded(&top),
+        "h is idempotent on a folded thread"
+    );
+    testing::press(&mut app, "l");
+    assert!(
+        !app.review_list().is_thread_folded(&top),
+        "l expands the selected thread"
+    );
+    testing::press(&mut app, "l");
+    assert!(
+        !app.review_list().is_thread_folded(&top),
+        "l is idempotent on an expanded thread"
+    );
     app.review_fold();
     assert!(app.review_list().is_thread_folded(&top));
     let rows = app.review_rows(60);

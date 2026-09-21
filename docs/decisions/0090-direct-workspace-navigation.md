@@ -31,7 +31,9 @@ destinations without changing persistent folds.
 Amended later 2026-09-20: main Threads reserves `Tab`/`Shift-Tab` for direct
 open-thread traversal and uses `j`/`Down` and `k`/`Up` for a continuous
 visible review walk through messages, folded threads, and file rows. Its old
-`h`/`l` message bindings are removed.
+`h`/`l` message bindings become directional thread folding: `h`/Left
+collapses the selected thread and `l`/Right expands it. File retains ordinary
+cursor movement.
 
 Amended later 2026-09-18 by [0091](0091-pane-focus-navigation.md): the four
 normal panes are now named File, File list, Threads, and Thread list.

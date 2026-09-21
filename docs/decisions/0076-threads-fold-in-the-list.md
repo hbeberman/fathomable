@@ -37,8 +37,9 @@ without mutating the session fold sets. Explicit folding takes ownership.
 Amended again 2026-09-20: main Threads uses `j`/`Down` and `k`/`Up` for one
 continuous visible review walk. Each expanded message is a stop; folded
 threads and file rows remain one stop; movement continues across conversation
-boundaries and clamps at the list edges. The old `h`/`l` message bindings are
-removed because `Tab`/`Shift-Tab` now provide direct open-thread traversal.
+boundaries and clamps at the list edges. On a selected thread, `h`/Left
+collapses it and `l`/Right expands it; file-group rows ignore those keys.
+`Tab`/`Shift-Tab` provide direct open-thread traversal.
 
 ## Context
 
@@ -98,7 +99,8 @@ and in the text alike.
   one stop. Movement continues into the adjacent conversation or file group
   and clamps at the top and bottom. While the cursor rests on a file row its
   logical thread remains the file's first thread, so `Enter`, `c`, `r`, and
-  the hints keep acting on a thread. `h`/`l` have no list-wide action.
+  the hints keep acting on a thread. On a thread selection, `h`/Left
+  collapses and `l`/Right expands; neither changes a file-group row.
   `gg` lands on the first file or thread stop and `G` on the last.
 - **`z` acts on the row the cursor is on.** On a thread's rows it
   folds the thread or expands it. On a file row it folds the file or

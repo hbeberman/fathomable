@@ -1259,6 +1259,20 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Review,
+        &[&[c('h')], &[k(K::Left)]],
+        A::MoveLeft,
+        "Threads",
+        "collapse the selected thread",
+    ),
+    bind(
+        W::Review,
+        &[&[c('l')], &[k(K::Right)]],
+        A::MoveRight,
+        "Threads",
+        "expand the selected thread",
+    ),
+    bind(
+        W::Review,
         &[&[c('g'), c('g')]],
         A::Top,
         "Threads",
@@ -1872,18 +1886,27 @@ mod tests {
     }
 
     #[test]
-    fn review_vertical_navigation_uses_jk_and_arrows() {
+    fn review_navigation_uses_directional_keys() {
         for (keys, action) in [
             ([c('j')], Action::MoveDown),
             ([k(Key::Down)], Action::MoveDown),
             ([c('k')], Action::MoveUp),
             ([k(Key::Up)], Action::MoveUp),
+            ([c('h')], Action::MoveLeft),
+            ([k(Key::Left)], Action::MoveLeft),
+            ([c('l')], Action::MoveRight),
+            ([k(Key::Right)], Action::MoveRight),
         ] {
             assert_eq!(lookup(Where::Review, &keys), Match::Exact(action));
         }
-        for key in [c('h'), c('l'), k(Key::Left), k(Key::Right)] {
-            assert_eq!(lookup(Where::Review, &[key]), Match::Miss);
-        }
+        assert_eq!(
+            lookup(Where::View, &[c('h')]),
+            Match::Exact(Action::MoveLeft)
+        );
+        assert_eq!(
+            lookup(Where::View, &[c('l')]),
+            Match::Exact(Action::MoveRight)
+        );
     }
 
     const PANES: [Where; 4] = [Where::View, Where::Tree, Where::ThreadsPane, Where::Review];

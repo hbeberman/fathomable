@@ -91,6 +91,34 @@ impl App {
         self.review_follow_cursor();
     }
 
+    /// `h` / Left: collapse the selected thread without affecting file rows.
+    pub(crate) fn review_collapse_thread(&mut self) {
+        self.review_set_thread_folded(true);
+    }
+
+    /// `l` / Right: expand the selected thread without affecting file rows.
+    pub(crate) fn review_expand_thread(&mut self) {
+        self.review_set_thread_folded(false);
+    }
+
+    fn review_set_thread_folded(&mut self, folded: bool) {
+        let rows = self.review_rows(self.column_width());
+        let Some(index) = self.selected_index(&rows) else {
+            return;
+        };
+        let Stop::Entry(entry) = self.cursor_stop(&rows, index) else {
+            return;
+        };
+        let id = rows.entries[entry].id().clone();
+        self.release_review_thread_peek(&id);
+        if folded {
+            self.review_list.folded_threads.insert(id);
+        } else {
+            self.review_list.folded_threads.remove(&id);
+        }
+        self.review_follow_cursor();
+    }
+
     /// Fold `path` to its row, or unfold it, the cursor resting on the
     /// row.
     pub(crate) fn review_toggle_fold(&mut self, path: &Path) {

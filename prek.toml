@@ -147,3 +147,13 @@ always_run = true
 pass_filenames = false
 require_serial = true
 priority = 13
+
+[[repos.hooks]]
+id = "secrets"
+name = "Offline secret scan"
+entry = "python3 scripts/betterleaks.py tracked"
+language = "system"
+always_run = true
+pass_filenames = false
+require_serial = true
+priority = 14

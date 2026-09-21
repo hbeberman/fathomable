@@ -56,6 +56,16 @@ udeps:
 licenses:
     prek run --config prek.toml --all-files licenses
 
+secrets:
+    prek run --config prek.toml --all-files secrets
+
+secrets-history:
+    python3 scripts/betterleaks.py history
+
+[positional-arguments]
+secrets-artifacts +PATHS:
+    python3 scripts/betterleaks.py artifacts "$@"
+
 mutants:
     cargo mutants --workspace --all-features
 
@@ -80,10 +90,12 @@ install:
 package:
     scripts/check-licenses.sh
     python3 scripts/rust-toolchain.py release cargo package --workspace --exclude fathomable-testing --locked
+    python3 scripts/betterleaks.py artifacts --packages
 
 release:
     scripts/check-licenses.sh
     python3 scripts/rust-toolchain.py release cargo build --release --locked --bin fathomable --target x86_64-unknown-linux-gnu
+    python3 scripts/betterleaks.py artifacts --release-binary
 
 build-deps:
     scripts/setup-build-deps.sh

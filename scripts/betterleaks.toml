@@ -1,0 +1,7 @@
+# @okf-doc: /secret-scanning.md
+# Keep upstream rules; exceptions require explicit security review.
+# Do not inherit upstream directory/extension exclusions for our scan scopes.
+prefilter = "false"
+
+[extend]
+useDefault = true

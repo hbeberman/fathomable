@@ -23,6 +23,7 @@ need cc "links every Rust binary; gcc or build-essential"
 need git "prek checks staged changes and installs Git hooks"
 need rg "ripgrep drives the boundary and public API scripts"
 need python3 "OKF lint, public API discovery, perf metadata"
+need strings "binutils scans printable strings in release artifacts"
 need pkg-config "cargo-public-api locates OpenSSL and libcurl with it"
 if command -v pkg-config >/dev/null 2>&1 && ! pkg-config --exists openssl; then
     printf 'missing: OpenSSL headers (openssl-devel or libssl-dev; cargo-public-api links them)\n' >&2
@@ -46,6 +47,7 @@ cargo +stable install cargo-nextest --locked --version 0.9.138
 cargo +stable install cargo-mutants --locked --version 27.1.0
 cargo +stable install lychee --locked --version 0.24.2
 cargo +stable install prek --locked --version 0.5.3
+python3 scripts/betterleaks.py install
 
 # The OKF lint imports PyYAML. Distributions package it (python3-pyyaml,
 # python3-yaml); pip is the fallback, and Ubuntu refuses `pip --user`

@@ -43,6 +43,7 @@ GATE_COMMANDS = {
     "audit": ["cargo", "audit"],
     "deny": ["cargo", "deny", "check"],
     "licenses": ["scripts/check-licenses.sh"],
+    "secrets": ["python3", "scripts/betterleaks.py", "tracked"],
 }
 for gate in ("fmt", "clippy", "rustdoc"):
     GATE_COMMANDS[gate] = [
@@ -54,6 +55,7 @@ FIXTURE_SCRIPTS = (
     "scripts/okf-lint.py", "scripts/check-boundaries.sh",
     "scripts/check-public-api.sh", "scripts/check-licenses.sh",
     "scripts/rust-toolchain.py",
+    "scripts/betterleaks.py",
 )
 # Keep the production config unchanged: only the programs it invokes are fixtures.
 FIXTURE_GATE = """#!/usr/bin/env python3
@@ -84,6 +86,7 @@ else:
         "check-boundaries.sh": "boundaries",
         "check-public-api.sh": "public-api",
         "check-licenses.sh": "licenses",
+        "betterleaks.py": "secrets",
     }[program]
     command = sys.argv[:]
     if Path(command[0]).is_absolute():

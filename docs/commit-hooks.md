@@ -20,7 +20,7 @@ tags:
 [prek](https://github.com/j178/prek) generates the Git hook shim and runs
 the repository's checks directly. A thin observer retains its native logs;
 it does not execute or schedule individual checks. `prek.toml` is their single source of
-truth: each of the 13 checks is a local `language = "system"` hook.
+truth: each of the 14 checks is a local `language = "system"` hook.
 Setup and CI pin prek to **0.5.3**, and the config requires at least that
 version. No remote hook repositories, managed hook environments, or
 additional Rust crate dependencies are used.
@@ -97,6 +97,7 @@ separate merge handling.
 | 11 | `audit` | Dependency vulnerabilities |
 | 12 | `deny` | Dependency licenses, sources, and bans |
 | 13 | `licenses` | Bundled notice freshness and generator tests |
+| 14 | `secrets` | Pinned offline Betterleaks scan of tracked contents |
 
 Distinct priorities and `fail_fast` enforce this order and reject an
 invalid message before running expensive checks. All hooks are
@@ -104,7 +105,7 @@ invalid message before running expensive checks. All hooks are
 mandatory on every commit, even empty, deletion-only, documentation-only,
 and merge commits; a failure stops the run and refuses the commit.
 The message checker receives Git's message filename and runs only at
-`commit-msg`. The 13 check hooks use `pass_filenames = false` and declare
+`commit-msg`. The 14 check hooks use `pass_filenames = false` and declare
 `pre-commit`, `commit-msg`, and `manual` stages. Declaring those stages
 does not install extra Git shims.
 
@@ -129,6 +130,12 @@ clean-filesystem isolation or a sandbox: installed tools, environment
 variables, caches, and the network can also influence results. CI's clean
 checkout is the independent validation of committed files without local
 untracked substitutes.
+
+The `secrets` hook deliberately copies only tracked entries to a private scan
+directory. Thus it scans staged tracked bytes during save/restore and current
+tracked bytes under `--all-files`, never ignored scratch or untracked files.
+Separate [secret-scanning](secret-scanning.md) commands cover fetched history
+and explicitly selected distribution artifacts.
 
 Native save/restore temporarily mutates the working tree. Do not edit the
 same worktree concurrently with a commit or staged check; use separate
@@ -212,8 +219,11 @@ unused-dependency analysis across all workspace targets and features.
 `cargo-udeps` is not installed by contributor setup or run by hooks, CI, or `just release`;
 invoke it intentionally [before a release](../CONTRIBUTING.md#release-builds).
 `just install` explicitly runs `cargo +stable install` with locked dependencies.
-`just package` checks the license bundle and locally verifies the two
-publishable crates without uploading either one.
+`just package` checks the license bundle, locally verifies the two
+publishable crates, and scans their exact `.crate` archives without uploading
+either one. `just release` scans the executable after building it. Neither
+creates tags or releases. Contributor setup also installs checksum-pinned
+Betterleaks 1.8.1 into the current worktree's `.tmp/tools/`.
 Other recipes run their substantive commands directly; see
 [Contributing](../CONTRIBUTING.md#2-the-gate).
 
@@ -223,7 +233,7 @@ main job. It does not depend on a locally installed Git hook.
 Additional MSRV and stable jobs build all workspace targets and run tests
 and doctests with `--locked`, without requiring the external gate tools to
 support the product's MSRV. The main job also runs the demo, profiler, and
-toolchain-helper regression tests. The license gate includes the
+toolchain-helper and secret-scanner regression tests. The license gate includes the
 toolchain-helper tests as well as notice-generation tests.
 
 `just test-commit-hooks` exercises real Git commits and prek shims in

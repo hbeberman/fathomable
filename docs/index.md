@@ -15,6 +15,7 @@ Start here before changing documented behavior or adding project documentation.
 - [Setup guide](guide.md)
 - [Commit hooks and staged gates](commit-hooks.md)
 - [Dependency monitoring](dependency-monitoring.md)
+- [Offline secret scanning](secret-scanning.md)
 - [Bundled license notices](decisions/0088-bundled-licenses.md)
 - [Roadmap](roadmap.md)
 - [Design decisions](decisions/index.md)

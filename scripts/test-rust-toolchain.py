@@ -49,9 +49,12 @@ class ToolchainTests(unittest.TestCase):
         (self.repo / "rust-toolchain.toml").write_text('[toolchain]\nchannel = "stable"\n')
         for name in ("rust-toolchain.py", "setup-build-deps.sh"):
             shutil.copy2(SOURCE_ROOT / "scripts" / name, self.repo / "scripts" / name)
+        (self.repo / "scripts/betterleaks.py").write_text(
+            "import sys\nassert sys.argv[1:] == ['install']\n"
+        )
         tools = self.root / "tools"
         tools.mkdir()
-        for name in ("rustup", "cargo", "cc", "git", "rg", "pkg-config"):
+        for name in ("rustup", "cargo", "cc", "git", "rg", "pkg-config", "strings"):
             path = tools / name
             path.write_text(TOOL)
             path.chmod(0o700)

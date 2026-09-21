@@ -38,6 +38,12 @@ run from the default branch; GitHub can disable them in public repositories
 after 60 days without repository activity, so check that the schedule stays
 enabled.
 
+[Offline secret scanning](secret-scanning.md) adds pinned Betterleaks source
+and artifact checks, PR/push introduced-commit scanning, and a weekly
+full-fetched-history job. It complements, rather than enables or replaces,
+GitHub native secret scanning and push protection. The binary version pin
+requires maintainer review; Dependabot does not update it.
+
 ## Public-alpha security sign-off
 
 The tracked [security policy](../SECURITY.md) directs reports to GitHub's
@@ -51,6 +57,14 @@ that repository contents cannot prove:
   `https://github.com/hbeberman/fathomable/security/advisories/new`.
 - [ ] Verify every intended maintainer can access security advisories and has
   the desired repository security-alert notifications enabled.
+- [ ] Verify native GitHub secret scanning and push protection are enabled
+  where available, with appropriate maintainer notifications.
+- [ ] Require the independent secret-scanning CI check and maintainer review
+  of scanner/policy/workflow changes; verify its behavior on fork PRs.
+- [ ] Fetch the intended branches and tags and pass `just secrets-history`
+  locally immediately before publicity.
+- [ ] Pass scans of the exact final source packages and all distributed
+  artifacts after any transformations; keep publishing/tag/release creation manual.
 
 Unchecked items remain release blockers; a policy link alone does not establish
 that the private channel or notifications work.

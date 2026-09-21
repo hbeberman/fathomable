@@ -51,13 +51,17 @@ Then, with rustup already installed:
 
 ```sh
 . "$HOME/.cargo/env"
-scripts/setup-build-deps.sh   # nightly, cargo tools, lychee, prek 0.5.3
+scripts/setup-build-deps.sh   # Rust tools, lychee, prek 0.5.3, Betterleaks 1.8.1
 scripts/install-commit-hooks.sh
 # With just: just install-commit-hooks
 ```
 
 The setup script pins the Cargo tool versions it installs and requests
 stable, the recorded release compiler (with rustfmt and Clippy), and nightly.
+It also checksum-verifies Betterleaks 1.8.1 into the current worktree's
+ignored `.tmp/tools/`; `python3 scripts/betterleaks.py install` installs only
+that scanner. Artifact scanning additionally uses `strings` from binutils,
+normally installed with the C compiler.
 It installs PyYAML with
 `pip --user` only when the `yaml` module is missing; on Ubuntu pip refuses
 that under PEP 668, which is why the distro package is listed above.
@@ -107,7 +111,7 @@ status. Logs are ignored, local, and may contain source snippets. Direct
 
 ## 2. The gate
 
-`prek.toml` is the single source of truth for all 13 checks, each a local
+`prek.toml` is the single source of truth for all 14 checks, each a local
 system hook. Only `commit-msg` is installed: prek checks the message
 first, then runs every check once against staged tracked contents.
 Failures refuse the commit. No checks are filtered by changed filenames,
@@ -148,6 +152,7 @@ The check order and individual checkout commands are:
 | `audit` | `just audit` | Dependency vulnerabilities |
 | `deny` | `just deny` | Dependency licenses, sources, and bans |
 | `licenses` | `just licenses` | Bundled notice freshness and generator tests |
+| `secrets` | `just secrets` | Offline Betterleaks scan of tracked checkout contents |
 
 Each individual check recipe calls `prek run --config prek.toml --all-files`
 with the corresponding hook ID; for example,
@@ -158,6 +163,16 @@ explicit request.
 
 CI runs the same hooks in named steps in one main job. Its clean checkout
 catches missing committed files that local untracked files might mask.
+
+The secret gate scans only tracked files; during native staged runs it sees
+staged bytes, and `--all-files` sees current checkout bytes. The independent
+PR/push security workflow scans every introduced commit, including secrets
+added and removed before the final diff. Weekly and scanner/rule-update runs
+scan full fetched history. Scans disable provider validation and expose only
+counts/rule IDs, never raw findings. Before publicity, fetch all intended
+history and run `just secrets-history` locally. See
+[Offline secret scanning](docs/secret-scanning.md) for scope limits,
+trusted-policy handling and the GitHub settings maintainers must verify.
 
 ### Dependency monitoring
 
@@ -298,13 +313,16 @@ just package
 scripts/check-licenses.sh
 python3 scripts/rust-toolchain.py release cargo package \
     --workspace --exclude fathomable-testing --locked
+python3 scripts/betterleaks.py artifacts --packages
 ```
 
 This creates and builds `fathomable-core` and `fathomable` together through
 Cargo's temporary local registry, proving that the application package uses
 the packaged core rather than the workspace path. The package manifests omit
 the path-only `fathomable-testing` dev-dependency; that fixture crate remains
-unpublished. Inspect the two `.crate` archives under `target/package/`.
+unpublished. The helper scans the exact generated archives (including
+custom Cargo target directories) before returning success.
+Inspect the two `.crate` archives under `target/package/` by default.
 Packaging is local and does not upload, tag, or create a GitHub release.
 
 Publishing and tag creation are manual maintainer actions. When the maintainer
@@ -329,12 +347,17 @@ just release
 # Without just:
 scripts/check-licenses.sh
 python3 scripts/rust-toolchain.py release cargo build --release --locked --bin fathomable --target x86_64-unknown-linux-gnu
+python3 scripts/betterleaks.py artifacts --release-binary
 ```
 
 This checks the notice bundle before building with the exact compiler
 recorded in `licenses/manifest.json`. With the default Cargo target directory,
 the executable is `target/x86_64-unknown-linux-gnu/release/fathomable`.
 The compiler must already be installed (contributor setup installs it).
+The exact executable is secret-scanned after building, including printable
+strings in binary sections. After any further packaging/signing step, scan
+all final distribution files again with `just secrets-artifacts PATH...`.
+Do not treat preflight success as authorization to publish.
 
 Normal development, source installation, and compatibility tests can use
 other supported compilers. Their embedded Rust-runtime inventory still

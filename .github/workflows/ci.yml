@@ -36,8 +36,10 @@ jobs:
         run: cargo install cargo-public-api --locked --version 0.51.0
       - name: Install documentation lint dependencies
         run: python3 -m pip install --requirement requirements-docs.txt
+      - name: Install checksum-pinned Betterleaks
+        run: python3 scripts/betterleaks.py install
       - name: Test contributor helpers
-        run: python3 -m unittest scripts/test-demo-repo.py scripts/test-perf-record.py scripts/test-rust-toolchain.py
+        run: python3 -m unittest scripts/test-demo-repo.py scripts/test-perf-record.py scripts/test-rust-toolchain.py scripts/test-betterleaks.py
       - name: Format
         run: prek run --config prek.toml --all-files fmt
       - name: Test commit hooks
@@ -62,6 +64,8 @@ jobs:
         run: prek run --config prek.toml --all-files deny
       - name: Check bundled license notices
         run: prek run --config prek.toml --all-files licenses
+      - name: Scan tracked checkout for secrets
+        run: prek run --config prek.toml --all-files secrets
 
   compatibility:
     runs-on: ubuntu-latest

@@ -1317,32 +1317,32 @@ impl Workspace {
                 .discover(target_id)
                 .and_then(|()| inspect_commit_header(&repo, target_id, &mut budget))
                 .map_err(|message| self.revision_error(target.as_str(), &message))?;
-            if let Some(included) =
-                paint_commit_range(&repo, source_id, target_id, &mut budget, &self.cancellation)
-                    .map_err(|message| self.revision_error(target.as_str(), &message))?
-            {
-                return Ok(CommitRange {
-                    commits: included
-                        .into_iter()
-                        .map(|id| id.to_hex().to_string())
-                        .collect(),
-                });
-            }
-        }
-        let excluded = match parsed_source {
-            Some((source, source_id)) => walk_commit_graph(
+            let excluded = commit_overlap_frontier(
                 &repo,
                 source_id,
-                &HashSet::new(),
+                target_id,
                 &mut budget,
                 &self.cancellation,
             )
-            .map_err(|message| self.revision_error(source.as_str(), &message))?,
-            None => HashSet::new(),
-        };
-        let included =
-            walk_commit_graph(&repo, target_id, &excluded, &mut budget, &self.cancellation)
-                .map_err(|message| self.revision_error(target.as_str(), &message))?;
+            .map_err(|message| self.revision_error(target.as_str(), &message))?;
+            let included =
+                walk_commit_graph(&repo, target_id, &excluded, &mut budget, &self.cancellation)
+                    .map_err(|message| self.revision_error(target.as_str(), &message))?;
+            return Ok(CommitRange {
+                commits: included
+                    .into_iter()
+                    .map(|id| id.to_hex().to_string())
+                    .collect(),
+            });
+        }
+        let included = walk_commit_graph(
+            &repo,
+            target_id,
+            &HashSet::new(),
+            &mut budget,
+            &self.cancellation,
+        )
+        .map_err(|message| self.revision_error(target.as_str(), &message))?;
         Ok(CommitRange {
             commits: included
                 .into_iter()
@@ -4146,103 +4146,79 @@ impl CommitGraphBudget {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct CommitPaint {
     flags: u8,
-    generation: u32,
+    order: CommitPaintOrder,
     processed: bool,
+    parents: Vec<ObjectId>,
 }
 
 const TARGET_PAINT: u8 = 1 << 0;
 const SOURCE_PAINT: u8 = 1 << 1;
 const STALE_PAINT: u8 = 1 << 2;
 
-fn paint_commit_range(
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct CommitPaintOrder {
+    // Missing or stale commit-graph entries sort ahead; commit time then keeps
+    // both exact-object frontiers moving until their overlap is painted.
+    generation: u32,
+    time: gix::date::SecondsSinceUnixEpoch,
+}
+
+fn commit_overlap_frontier(
     repo: &gix::Repository,
     source: ObjectId,
     target: ObjectId,
     budget: &mut CommitGraphBudget,
     cancellation: &Cancellation,
-) -> Result<Option<HashSet<ObjectId>>, String> {
+) -> Result<HashSet<ObjectId>, String> {
     let graph = repo
         .commit_graph_if_enabled()
         .map_err(|error| format!("cannot read commit graph: {error}"))?;
-    let Some(graph) = graph else {
-        return Ok(None);
-    };
-    let Some(source_generation) = graph.commit_by_id(source).map(|commit| commit.generation())
-    else {
-        return Ok(None);
-    };
-    let Some(target_generation) = graph.commit_by_id(target).map(|commit| commit.generation())
-    else {
-        return Ok(None);
-    };
-    paint_commit_graph(
-        source,
-        source_generation,
-        target,
-        target_generation,
-        budget,
-        cancellation,
-        |id, generation, budget| {
-            let parents = commit_parents(repo, id, budget)?;
-            let mut with_generations = Vec::with_capacity(parents.len());
-            for parent in parents {
-                let Some(parent_generation) =
-                    graph.commit_by_id(parent).map(|commit| commit.generation())
-                else {
-                    return Ok(None);
-                };
-                if parent_generation >= generation {
-                    return Err(format!(
-                        "commit graph generation for parent {parent} is not below child {id}; coverage is incomplete"
-                    ));
-                }
-                with_generations.push((parent, parent_generation));
-            }
-            Ok(Some(with_generations))
-        },
-    )
+    paint_commit_frontier(source, target, budget, cancellation, |id, budget| {
+        let generation = graph
+            .as_ref()
+            .and_then(|graph| graph.commit_by_id(id))
+            .map_or(u32::MAX, |commit| commit.generation());
+        let (time, parents) = commit_paint_data(repo, id, budget)?;
+        Ok((CommitPaintOrder { generation, time }, parents))
+    })
 }
 
-fn paint_commit_graph(
+fn paint_commit_frontier(
     source: ObjectId,
-    source_generation: u32,
     target: ObjectId,
-    target_generation: u32,
     budget: &mut CommitGraphBudget,
     cancellation: &Cancellation,
-    mut parents: impl FnMut(
+    mut load: impl FnMut(
         ObjectId,
-        u32,
         &mut CommitGraphBudget,
-    ) -> Result<Option<Vec<(ObjectId, u32)>>, String>,
-) -> Result<Option<HashSet<ObjectId>>, String> {
+    ) -> Result<(CommitPaintOrder, Vec<ObjectId>), String>,
+) -> Result<HashSet<ObjectId>, String> {
     let mut states = HashMap::new();
     let mut pending = BinaryHeap::new();
     let mut live_pending = 0;
     queue_commit_paint(
         source,
-        source_generation,
         SOURCE_PAINT,
         &mut states,
         &mut pending,
         &mut live_pending,
         budget,
+        &mut load,
     )?;
     queue_commit_paint(
         target,
-        target_generation,
         TARGET_PAINT,
         &mut states,
         &mut pending,
         &mut live_pending,
         budget,
+        &mut load,
     )?;
-    let mut included = HashSet::new();
     while live_pending > 0 {
-        let Some((generation, id)) = pending.pop() else {
+        let Some((order, id)) = pending.pop() else {
             return Err("commit graph paint frontier is incomplete".to_owned());
         };
         if cancellation.is_cancelled() {
@@ -4251,83 +4227,108 @@ fn paint_commit_graph(
         let Some(state) = states.get_mut(&id) else {
             return Err("commit graph paint state is incomplete".to_owned());
         };
-        if state.processed || state.generation != generation {
+        if state.processed || state.order != order {
             continue;
         }
         state.processed = true;
         let mut flags = state.flags;
+        let parents = state.parents.clone();
         if flags & STALE_PAINT == 0 {
             live_pending -= 1;
         }
         if flags & (TARGET_PAINT | SOURCE_PAINT) == TARGET_PAINT | SOURCE_PAINT {
             flags |= STALE_PAINT;
-        } else if flags & TARGET_PAINT != 0 {
-            included.insert(id);
+            state.flags = flags;
         }
-        let Some(parents) = parents(id, generation, budget)? else {
-            return Ok(None);
-        };
-        for (parent, parent_generation) in parents {
+        if flags & STALE_PAINT != 0 && live_pending == 0 {
+            continue;
+        }
+        for parent in parents {
             queue_commit_paint(
                 parent,
-                parent_generation,
                 flags,
                 &mut states,
                 &mut pending,
                 &mut live_pending,
                 budget,
+                &mut load,
             )?;
         }
     }
-    Ok(Some(included))
+    Ok(states
+        .into_iter()
+        .filter_map(|(id, state)| {
+            (state.flags & (TARGET_PAINT | SOURCE_PAINT) == TARGET_PAINT | SOURCE_PAINT)
+                .then_some(id)
+        })
+        .collect())
 }
 
 fn queue_commit_paint(
     id: ObjectId,
-    generation: u32,
     flags: u8,
     states: &mut HashMap<ObjectId, CommitPaint>,
-    pending: &mut BinaryHeap<(u32, ObjectId)>,
+    pending: &mut BinaryHeap<(CommitPaintOrder, ObjectId)>,
     live_pending: &mut usize,
     budget: &mut CommitGraphBudget,
+    load: &mut impl FnMut(
+        ObjectId,
+        &mut CommitGraphBudget,
+    ) -> Result<(CommitPaintOrder, Vec<ObjectId>), String>,
 ) -> Result<(), String> {
     use std::collections::hash_map::Entry;
 
     match states.entry(id) {
         Entry::Vacant(entry) => {
             budget.discover(id)?;
+            let (order, parents) = load(id, budget)?;
             entry.insert(CommitPaint {
                 flags,
-                generation,
+                order,
                 processed: false,
+                parents,
             });
-            pending.push((generation, id));
+            pending.push((order, id));
             if flags & STALE_PAINT == 0 {
                 *live_pending += 1;
             }
         }
         Entry::Occupied(mut entry) => {
             let state = entry.get_mut();
-            if state.generation != generation {
-                return Err(format!(
-                    "commit graph reports inconsistent generations for {id}; coverage is incomplete"
-                ));
-            }
-            if state.processed {
-                return Err(format!(
-                    "commit graph paint reached processed commit {id}; coverage is incomplete"
-                ));
-            }
             let combined = state.flags | flags;
             if combined != state.flags {
-                if state.flags & STALE_PAINT == 0 && combined & STALE_PAINT != 0 {
-                    *live_pending -= 1;
+                if state.processed {
+                    state.processed = false;
+                    pending.push((state.order, id));
+                    if combined & STALE_PAINT == 0 {
+                        *live_pending += 1;
+                    }
+                } else if state.flags & STALE_PAINT == 0 && combined & STALE_PAINT != 0 {
+                    *live_pending = (*live_pending)
+                        .checked_sub(1)
+                        .ok_or_else(|| "commit graph paint frontier is incomplete".to_owned())?;
                 }
                 state.flags = combined;
             }
         }
     }
     Ok(())
+}
+
+fn commit_paint_data(
+    repo: &gix::Repository,
+    id: ObjectId,
+    budget: &mut CommitGraphBudget,
+) -> Result<(gix::date::SecondsSinceUnixEpoch, Vec<ObjectId>), String> {
+    inspect_commit_header(repo, id, budget)?;
+    let commit = repo
+        .find_commit(id)
+        .map_err(|error| format!("cannot read commit graph object {id}: {error}"))?;
+    let time = commit
+        .time()
+        .map_err(|error| format!("cannot read commit time for {id}: {error}"))?
+        .seconds;
+    Ok((time, commit.parent_ids().map(gix::Id::detach).collect()))
 }
 
 fn walk_commit_graph(
@@ -5294,26 +5295,25 @@ mod tests {
         let mut budget = CommitGraphBudget::new(6, 1);
         let inspected = Cell::new(0);
 
-        let range = paint_commit_graph(
+        let frontier = paint_commit_frontier(
             source,
-            3,
             target,
-            4,
             &mut budget,
             &Cancellation::default(),
-            |id, _, _| {
+            |id, _| {
                 inspected.set(inspected.get() + 1);
-                Ok(graph.get(&id).map(|(_, parents)| {
-                    parents
-                        .iter()
-                        .map(|parent| (*parent, graph[parent].0))
-                        .collect()
-                }))
+                let (generation, parents) = &graph[&id];
+                Ok((
+                    CommitPaintOrder {
+                        generation: *generation,
+                        time: i64::from(*generation),
+                    },
+                    parents.clone(),
+                ))
             },
-        )?
-        .ok_or("synthetic graph unexpectedly fell back")?;
+        )?;
 
-        assert_eq!(range, HashSet::from([side_parent, side, target]));
+        assert_eq!(frontier, HashSet::from([ancestor, source_parent, source]));
         assert_eq!(
             budget.discovered.len(),
             6,
@@ -5321,8 +5321,8 @@ mod tests {
         );
         assert_eq!(
             inspected.get(),
-            5,
-            "stale paint reaches the side frontier without scanning below it"
+            6,
+            "each discovered frontier node is loaded once"
         );
 
         let mut metadata_budget = CommitGraphBudget::new(2, 1);
@@ -5417,6 +5417,86 @@ mod tests {
         };
         assert!(cancelled.message().contains("cancelled"));
         assert!(cancelled.message().contains("coverage is incomplete"));
+        Ok(())
+    }
+
+    #[test]
+    fn commit_range_stops_at_merge_overlap_before_missing_history()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("workspace-commit-range-overlap")?;
+        init(&dir.0)?;
+        commit_and_stage(&dir.0, &[("a.md", "a\n")])?;
+        let repo = gix::open_opts(&dir.0, open_options())?;
+        let signature = gix::actor::SignatureRef {
+            name: "test".into(),
+            email: "test@example.com".into(),
+            time: "2 +0000",
+        };
+        let common_signature = gix::actor::SignatureRef {
+            time: "1 +0000",
+            ..signature
+        };
+        let target_signature = gix::actor::SignatureRef {
+            time: "3 +0000",
+            ..signature
+        };
+        let missing = ObjectId::from_hex(b"1111111111111111111111111111111111111111")?;
+        let tree = repo.head_tree_id()?.detach();
+        let common = repo
+            .write_object(&gix::objs::Commit {
+                message: "common".into(),
+                tree,
+                author: common_signature.into(),
+                committer: common_signature.into(),
+                encoding: None,
+                parents: [missing].into_iter().collect(),
+                extra_headers: Vec::default(),
+            })?
+            .detach();
+        let source = repo
+            .write_object(&gix::objs::Commit {
+                message: "source".into(),
+                tree,
+                author: signature.into(),
+                committer: signature.into(),
+                encoding: None,
+                parents: [common].into_iter().collect(),
+                extra_headers: Vec::default(),
+            })?
+            .detach();
+        let side = repo
+            .write_object(&gix::objs::Commit {
+                message: "side".into(),
+                tree,
+                author: signature.into(),
+                committer: signature.into(),
+                encoding: None,
+                parents: [common].into_iter().collect(),
+                extra_headers: Vec::default(),
+            })?
+            .detach();
+        let target = repo
+            .write_object(&gix::objs::Commit {
+                message: "merge".into(),
+                tree,
+                author: target_signature.into(),
+                committer: target_signature.into(),
+                encoding: None,
+                parents: [source, side].into_iter().collect(),
+                extra_headers: Vec::default(),
+            })?
+            .detach();
+        let workspace = Workspace::discover(&dir.0)?;
+
+        let range = workspace.commit_range(
+            Some(&CommitId::parse(source.to_hex().to_string())?),
+            &CommitId::parse(target.to_hex().to_string())?,
+        )?;
+
+        assert_eq!(
+            range.commits,
+            BTreeSet::from([target.to_hex().to_string(), side.to_hex().to_string()])
+        );
         Ok(())
     }
 

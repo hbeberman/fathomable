@@ -23,7 +23,7 @@ if ! command -v python3 >/dev/null 2>&1; then
     echo "install-commit-hooks: python3 is required for local hook history" >&2
     exit 1
 fi
-prek validate-config prek.toml
+prek validate-config scripts/configs/prek.toml
 
 # Git uses the common hooks directory in linked worktrees too.
 hooks_dir=$(git rev-parse --path-format=absolute --git-path hooks)
@@ -56,7 +56,7 @@ cleanup() {
     rmdir -- "$staging"
 }
 trap cleanup EXIT
-prek install --config prek.toml --hook-type commit-msg --git-dir "$staging"
+prek install --config scripts/configs/prek.toml --hook-type commit-msg --git-dir "$staging"
 python3 scripts/commit-hook-history.py --instrument-shim "$staging/hooks/commit-msg"
 mv -- "$staging/hooks/commit-msg" "$hook"
 printf 'Installed observed commit-msg hook at %s\n' "$hook"

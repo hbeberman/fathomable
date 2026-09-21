@@ -78,7 +78,7 @@ state, and connecting an agent over MCP.
 
 ## Contribute
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for build environment setup,
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for build environment setup,
 including the commit gate, dependency monitoring, and maintaining the doc
 bundle. Durable project knowledge lives under [`docs/`](docs/index.md).
 
@@ -96,4 +96,4 @@ in the viewer through **Help > Licenses**.
 
 The bundled Rust-runtime inventory describes the recorded release compiler.
 Before redistributing a source build made with another compiler, review its
-runtime notices; see [release builds](CONTRIBUTING.md#release-builds).
+runtime notices; see [release builds](.github/CONTRIBUTING.md#release-builds).

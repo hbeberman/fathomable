@@ -6,58 +6,58 @@ default:
 
 # Check the current checkout without hiding unstaged edits.
 gates:
-    prek run --config prek.toml --all-files
+    prek run --config scripts/configs/prek.toml --all-files
 
 gates-verbose:
-    prek run --config prek.toml --all-files --verbose
+    prek run --config scripts/configs/prek.toml --all-files --verbose
 
 fmt:
     python3 scripts/rust-toolchain.py release cargo fmt
 
 fmt-check:
-    prek run --config prek.toml --all-files fmt
+    prek run --config scripts/configs/prek.toml --all-files fmt
 
 clippy:
-    prek run --config prek.toml --all-files clippy
+    prek run --config scripts/configs/prek.toml --all-files clippy
 
 test:
-    prek run --config prek.toml --all-files nextest
+    prek run --config scripts/configs/prek.toml --all-files nextest
 
 doctest:
-    prek run --config prek.toml --all-files doctest
+    prek run --config scripts/configs/prek.toml --all-files doctest
 
 doc:
-    prek run --config prek.toml --all-files rustdoc
+    prek run --config scripts/configs/prek.toml --all-files rustdoc
 
 okf:
-    prek run --config prek.toml --all-files okf
+    prek run --config scripts/configs/prek.toml --all-files okf
 
 links:
-    prek run --config prek.toml --all-files links
+    prek run --config scripts/configs/prek.toml --all-files links
 
 docs-check:
-    prek run --config prek.toml --all-files okf links
+    prek run --config scripts/configs/prek.toml --all-files okf links
 
 boundaries:
-    prek run --config prek.toml --all-files boundaries
+    prek run --config scripts/configs/prek.toml --all-files boundaries
 
 public-api:
-    prek run --config prek.toml --all-files public-api
+    prek run --config scripts/configs/prek.toml --all-files public-api
 
 audit:
-    prek run --config prek.toml --all-files audit
+    prek run --config scripts/configs/prek.toml --all-files audit
 
 deny:
-    prek run --config prek.toml --all-files deny
+    prek run --config scripts/configs/prek.toml --all-files deny
 
 udeps:
     cargo +nightly udeps --workspace --all-targets --all-features --locked
 
 licenses:
-    prek run --config prek.toml --all-files licenses
+    prek run --config scripts/configs/prek.toml --all-files licenses
 
 secrets:
-    prek run --config prek.toml --all-files secrets
+    prek run --config scripts/configs/prek.toml --all-files secrets
 
 secrets-history:
     python3 scripts/betterleaks.py history
@@ -82,7 +82,7 @@ install-commit-hooks:
     scripts/install-commit-hooks.sh
 
 test-commit-hooks:
-    prek run --config prek.toml --all-files commit-hooks
+    prek run --config scripts/configs/prek.toml --all-files commit-hooks
 
 install:
     cargo +stable install --path crates/fathomable --locked

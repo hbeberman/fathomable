@@ -128,7 +128,7 @@ def cargo_about(root: Path) -> dict[str, Any]:
     return json.loads(run([
         "cargo", "about", "generate", "--frozen", "--fail", "--threshold", "0.9",
         "--manifest-path", "crates/fathomable/Cargo.toml",
-        "--config", "about.toml", "--format", "json",
+        "--config", "scripts/configs/about.toml", "--format", "json",
     ], root))
 
 
@@ -221,7 +221,8 @@ def crate_notices(
                 ):
                     raise LicenseBundleError(
                         f"cargo-about synthesized {license['id']} for {key}; "
-                        "add a verified about.toml clarification or pinned package notice"
+                        "add a verified scripts/configs/about.toml clarification "
+                        "or pinned package notice"
                     )
             continue
         output.append(section(
@@ -308,10 +309,12 @@ def asset_notices(
 
 def render_bundle(root: Path) -> str:
     manifest = json.loads((root / "licenses/manifest.json").read_text(encoding="utf-8"))
-    config = tomllib.loads((root / "about.toml").read_text(encoding="utf-8"))
+    config = tomllib.loads((root / "scripts/configs/about.toml").read_text(encoding="utf-8"))
     workspace = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]
     if manifest["version"] != 1 or config["targets"] != [manifest["target"]]:
-        raise LicenseBundleError("supplemental inventory version/target does not match about.toml")
+        raise LicenseBundleError(
+            "supplemental inventory version/target does not match scripts/configs/about.toml"
+        )
     if workspace["license"] != "MIT":
         raise LicenseBundleError("Fathomable's declared license is no longer MIT")
     crates, packages = crate_notices(root, cargo_about(root), manifest)
@@ -329,7 +332,7 @@ def render_bundle(root: Path) -> str:
         "and applicable obligations before distributing binaries for another target.",
         "",
     ]
-    for path in ("Cargo.lock", "about.toml", "licenses/manifest.json"):
+    for path in ("Cargo.lock", "scripts/configs/about.toml", "licenses/manifest.json"):
         header.append(f"{path} SHA-256: {hashlib.sha256((root / path).read_bytes()).hexdigest()}")
     result = "\n\n".join([
         "\n".join(header),

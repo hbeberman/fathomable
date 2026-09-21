@@ -2,9 +2,9 @@
 
 Thanks for looking. This page is what to install and what to run before
 a change is ready; the reasoning behind the project lives in the
-[documentation bundle](docs/index.md), starting with the
-[charter](docs/charter.md) and the [design decisions](docs/decisions/index.md).
-Agents and people share one rule book, [AGENTS.md](AGENTS.md).
+[documentation bundle](../docs/index.md), starting with the
+[charter](../docs/charter.md) and the [design decisions](../docs/decisions/index.md).
+Agents and people share one rule book, [AGENTS.md](../AGENTS.md).
 
 ## Security reports
 
@@ -15,7 +15,7 @@ customer data, or unrelated proprietary source.
 
 ## 1. Prerequisites
 
-Everything in the [README install section](README.md#install), plus the
+Everything in the [README install section](../README.md#install), plus the
 tools the commit gate runs. The `cargo-public-api` tool compiles native code
 and links libcurl, so `pkg-config` and the OpenSSL headers must be present
 before `cargo install` builds it. `perf` is only for
@@ -65,8 +65,9 @@ ignored `.tmp/tools/`; `python3 scripts/betterleaks.py install` installs only
 that scanner. Artifact scanning additionally uses `strings` from binutils,
 normally installed with the C compiler.
 It installs PyYAML with
-`pip --user` only when the `yaml` module is missing; on Ubuntu pip refuses
-that under PEP 668, which is why the distro package is listed above.
+`pip --user --requirement scripts/configs/requirements-docs.txt` only when the
+`yaml` module is missing; on Ubuntu pip refuses that under PEP 668, which is
+why the distro package is listed above.
 
 ### Rust compiler support
 
@@ -92,7 +93,7 @@ compiler, keeping their output consistent across developer machines. Ordinary
 `cargo build`, `cargo test`, and `cargo install` use your selected compiler.
 `just install` explicitly selects stable, including when a toolchain override
 is set in the environment.
-See the [toolchain policy](docs/decisions/0001-dependency-policy.md#rust-toolchain-roles).
+See the [toolchain policy](../docs/decisions/0001-dependency-policy.md#rust-toolchain-roles).
 
 Hook installation is explicit opt-in: building or installing the product
 does not install hooks. The installer replaces the recognized bootstrap
@@ -100,9 +101,9 @@ hook without chaining it and refreshes a recognized prek shim. It refuses
 unknown, symlinked, or non-regular `commit-msg` hooks, any
 `commit-msg.legacy` entry, or an existing `core.hooksPath`; other hook types
 are untouched. Default hooks are shared across linked worktrees;
-installing from one affects the others, and a checkout missing `prek.toml`
+installing from one affects the others, and a checkout missing `scripts/configs/prek.toml`
 fails closed. For an isolated trial before migration, see
-[Commit hooks and staged gates](docs/commit-hooks.md).
+[Commit hooks and staged gates](../docs/commit-hooks.md).
 
 Reinstalling also enables transient commit-hook history. Each Git attempt
 saves a timestamped native prek trace and console log in the current
@@ -113,7 +114,7 @@ status. Logs are ignored, local, and may contain source snippets. Direct
 
 ## 2. The gate
 
-`prek.toml` is the single source of truth for all 14 checks, each a local
+`scripts/configs/prek.toml` is the single source of truth for all 14 checks, each a local
 system hook. Only `commit-msg` is installed: prek checks the message
 first, then runs every check once against staged tracked contents.
 Failures refuse the commit. No checks are filtered by changed filenames,
@@ -121,18 +122,18 @@ including on empty, deletion-only, documentation-only, and merge commits.
 Hooks never automatically format, fix, or stage source files.
 
 ```sh
-just gates                                # current checkout
-prek run --config prek.toml --all-files     # same, without just
-just gates-verbose                        # same, with native --verbose
-prek run --config prek.toml                # staged tracked contents
-prek run --config prek.toml --stage manual  # staged tracked contents
+just gates                                                # current checkout
+prek run --config scripts/configs/prek.toml --all-files     # same, without just
+just gates-verbose                                        # same, with native --verbose
+prek run --config scripts/configs/prek.toml                 # staged tracked contents
+prek run --config scripts/configs/prek.toml --stage manual  # staged tracked contents
 ```
 
 Native prek staged runs temporarily save and restore unstaged tracked
 edits; they do **not** create a clean filesystem snapshot. Untracked and
 ignored files remain visible to tools and can affect results. Do not edit
 the same worktree concurrently with a commit or staged check; use separate
-worktrees for parallel agents. Stage `prek.toml` when changing check
+worktrees for parallel agents. Stage `scripts/configs/prek.toml` when changing check
 definitions. `--stage manual` alone does not select checkout semantics:
 `--all-files` does, without stashing or mutating the checkout. Tools in
 that mode can also see any files present.
@@ -156,9 +157,9 @@ The check order and individual checkout commands are:
 | `licenses` | `just licenses` | Bundled notice freshness and generator tests |
 | `secrets` | `just secrets` | Offline Betterleaks scan of tracked checkout contents |
 
-Each individual check recipe calls `prek run --config prek.toml --all-files`
+Each individual check recipe calls `prek run --config scripts/configs/prek.toml --all-files`
 with the corresponding hook ID; for example,
-`prek run --config prek.toml --all-files fmt`. `just docs-check` selects
+`prek run --config scripts/configs/prek.toml --all-files fmt`. `just docs-check` selects
 `okf` and `links` through prek. `just fmt` is deliberately different:
 it runs `cargo fmt` with the release compiler to format the checkout on
 explicit request.
@@ -173,12 +174,12 @@ added and removed before the final diff. Weekly and scanner/rule-update runs
 scan full fetched history. Scans disable provider validation and expose only
 counts/rule IDs, never raw findings. Before publicity, fetch all intended
 history and run `just secrets-history` locally. See
-[Offline secret scanning](docs/secret-scanning.md) for scope limits,
+[Offline secret scanning](../docs/secret-scanning.md) for scope limits,
 trusted-policy handling and the GitHub settings maintainers must verify.
 
 ### Dependency monitoring
 
-[Dependency monitoring](docs/dependency-monitoring.md) documents the
+[Dependency monitoring](../docs/dependency-monitoring.md) documents the
 checked-in weekly version-update configuration, the independent daily
 RustSec audit, and the repository and notification settings maintainers must
 enable separately.
@@ -206,8 +207,9 @@ just licenses
 
 Generation uses `cargo-about` with `--frozen --fail` and cached package
 sources, explicitly selecting the recorded release compiler rather than
-the caller's active development compiler. `about.toml` holds license preferences, target selection, and
-hash-checked clarifications. Cargo-about handles the dependency graph,
+the caller's active development compiler. `scripts/configs/about.toml` holds
+license preferences, target selection, and hash-checked clarifications.
+Cargo-about handles the dependency graph,
 license recognition and deduplication; the Python adapter adds the
 first-party license and supplemental attribution. Missing-file SPDX
 templates are rejected without a reviewed, pinned replacement; obtain the
@@ -216,7 +218,7 @@ generic template. Separate package NOTICE/COPYRIGHT files are retained.
 `licenses/manifest.json` pins supplemental notices, syntect's embedded
 syntax/theme provenance, and the Rust standard-library inventory. Review and
 update those records when their owners or the toolchain change; regenerating
-alone is not a legal review of new dependencies. Update `about.toml`
+alone is not a legal review of new dependencies. Update `scripts/configs/about.toml`
 clarification hashes only after reviewing the changed upstream terms.
 
 The bundle covers the x86_64 GNU/Linux normal/build graph and Rust runtime
@@ -224,11 +226,11 @@ inventory, not system linker/startup objects or dynamic OS libraries. Review
 additional obligations when distributing binaries, changing targets, or
 statically linking native components. Keep the embedded notices and MPL
 source-availability references in redistributions. See
-[Bundled license notices](docs/decisions/0088-bundled-licenses.md).
+[Bundled license notices](../docs/decisions/0088-bundled-licenses.md).
 
 Do not claim the full gate passed after running only one check. Do not
 bypass hooks with `--no-verify`, `SKIP`, `PREK_SKIP`, or
-`PREK_ALLOW_NO_CONFIG`. See [Commit hooks and staged gates](docs/commit-hooks.md)
+`PREK_ALLOW_NO_CONFIG`. See [Commit hooks and staged gates](../docs/commit-hooks.md)
 for ordering, staged-content guarantees, and their limits.
 
 Heavier diagnostics that are not part of the gate:
@@ -382,11 +384,11 @@ compatibility, not notice coverage for that alternative compiler.
 - Product code lives under `crates/` in an edition 2024 workspace: the
   `fathomable` binary, `fathomable-core` (no terminal or MCP
   dependencies), and `fathomable-testing`. See the
-  [crate layout decision](docs/decisions/0002-crate-layout.md).
+  [crate layout decision](../docs/decisions/0002-crate-layout.md).
 - Unsafe code is forbidden compiler-wide.
 - New direct dependencies need a decision record and a rationale; the
   approved set and the rules are in the
-  [dependency policy](docs/decisions/0001-dependency-policy.md).
+  [dependency policy](../docs/decisions/0001-dependency-policy.md).
 - Public APIs avoid leaking third-party types, raw synchronization or
   channel types, glob re-exports, bare `bool` mode parameters, and
   `get_` getters that are not keyed retrieval. The public API scan

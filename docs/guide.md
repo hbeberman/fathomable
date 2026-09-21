@@ -14,7 +14,7 @@ tags:
 Fathomable is a read-only workspace viewer for reviewing diffs and interactive
 comment threads with agents via MCP. It never edits your checkout or Git data.
 Install it on Linux using the [README](../README.md#install); contributor
-tooling is separate in [CONTRIBUTING.md](../CONTRIBUTING.md).
+tooling is separate in [CONTRIBUTING.md](../.github/CONTRIBUTING.md).
 
 Source builds support Rust 1.95 or newer and default to stable Rust. The
 minimum supported compiler and the compiler used for attributed release
@@ -878,7 +878,7 @@ For paths and connection diagnostics, run
 ## Contributor performance profiles
 
 `just perf path/to/file.md` runs the local Linux CPU profiler described in
-[CONTRIBUTING.md](../CONTRIBUTING.md#2-the-gate). It uses a separate optimized
+[CONTRIBUTING.md](../.github/CONTRIBUTING.md#2-the-gate). It uses a separate optimized
 frame-pointer build and keeps the exact sampled executable with owner-only
 artifacts under Cargo's `target/perf/` directory. These artifacts can contain
 source paths and terminal content; inspect them before sharing. Caller stacks

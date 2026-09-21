@@ -2,7 +2,7 @@
 type: Software
 title: Commit hooks and staged gates
 description: Native prek checks, staged validation, transient run history, and explicit hook installation.
-resource: prek.toml
+resource: scripts/configs/prek.toml
 related_resources:
   - scripts/install-commit-hooks.sh
   - scripts/check-commit-message.sh
@@ -20,8 +20,9 @@ tags:
 
 [prek](https://github.com/j178/prek) generates the Git hook shim and runs
 the repository's checks directly. A thin observer retains its native logs;
-it does not execute or schedule individual checks. `prek.toml` is their single source of
-truth: each of the 14 checks is a local `language = "system"` hook.
+it does not execute or schedule individual checks. `scripts/configs/prek.toml`
+is their single source of truth: each of the 14 checks is a local
+`language = "system"` hook.
 Setup and CI pin prek to **0.5.3**, and the config requires at least that
 version. No remote hook repositories, managed hook environments, or
 additional Rust crate dependencies are used.
@@ -41,12 +42,15 @@ Install prerequisites with `scripts/setup-build-deps.sh`, then run
 `just install-commit-hooks` (or `scripts/install-commit-hooks.sh`).
 Installation is explicit opt-in: build, product installation, and tool
 setup commands do not install Git hooks automatically. The installer
-validates `prek.toml` and installs only the `commit-msg` shim, explicitly
+validates `scripts/configs/prek.toml` and installs only the `commit-msg` shim, explicitly
 bound to that config. It replaces the recognized bootstrap hook rather
 than leaving it in prek's legacy chaining mode, which would run the full
 gate twice. It prepares a native shim in a temporary directory, adds the
 history observer, and atomically replaces the installed hook. Reinstalling
 refreshes the shim and enables history on an existing installation.
+After moving the config from the repository root to `scripts/configs/`,
+reinstall so existing shims use the new path. Explicit `--config` selection
+keeps hook working directories and file paths relative to the repository root.
 
 The installer refuses an existing `core.hooksPath`, an unrecognized,
 symlinked, or non-regular `commit-msg`, and any `commit-msg.legacy` entry.
@@ -56,7 +60,7 @@ explicitly before retrying. It leaves other hook types alone.
 Git's default hooks directory is shared by linked worktrees. Installing
 from any worktree therefore affects all worktrees; do this only after
 they contain the config and observer script. A checkout without
-`prek.toml` or `scripts/commit-hook-history.py` fails closed, not silently
+`scripts/configs/prek.toml` or `scripts/commit-hook-history.py` fails closed, not silently
 without checks.
 
 To evaluate a migration branch without changing the shared hook, install
@@ -65,7 +69,7 @@ individual commits:
 
 ```sh
 git_dir=$(git rev-parse --absolute-git-dir)
-prek install --config prek.toml --hook-type commit-msg --git-dir "$git_dir"
+prek install --config scripts/configs/prek.toml --hook-type commit-msg --git-dir "$git_dir"
 python3 scripts/commit-hook-history.py --instrument-shim "$git_dir/hooks/commit-msg"
 git -c core.hooksPath="$git_dir/hooks" commit
 ```
@@ -121,7 +125,7 @@ tracked edits. Checks see staged tracked contents, not unstaged
 replacements of tracked source or scripts. `GIT_INDEX_FILE` remains
 effective, including alternate indexes and the temporary index used by
 `git commit --only`; linked worktrees use their own index.
-Stage `prek.toml` when changing hook definitions: staged runs refuse an
+Stage `scripts/configs/prek.toml` when changing hook definitions: staged runs refuse an
 unstaged config change.
 
 The old exported clean snapshot has deliberately been removed.
@@ -189,18 +193,18 @@ Check the **current checkout**, including unstaged tracked edits:
 ```sh
 just gates
 # Or, without just:
-prek run --config prek.toml --all-files
+prek run --config scripts/configs/prek.toml --all-files
 # Native verbose output:
 just gates-verbose
-prek run --config prek.toml --all-files --verbose
+prek run --config scripts/configs/prek.toml --all-files --verbose
 ```
 
 Check **staged tracked contents** without committing:
 
 ```sh
-prek run --config prek.toml
+prek run --config scripts/configs/prek.toml
 # Or select the manual stage:
-prek run --config prek.toml --stage manual
+prek run --config scripts/configs/prek.toml --stage manual
 ```
 
 Both commands exclude the message checker. The first selects prek's
@@ -209,7 +213,7 @@ does not choose staged versus checkout contents: `--all-files` selects
 checkout semantics. Add `--verbose` to either command for full output.
 
 `justfile` directly invokes prek for check recipes; it does not duplicate
-the commands from `prek.toml`. Individual aliases, including
+the commands from `scripts/configs/prek.toml`. Individual aliases, including
 `fmt-check` -> `fmt`, `test` -> `nextest`, `doc` -> `rustdoc`,
 and `test-commit-hooks` -> `commit-hooks`,
 all use `--all-files`. Other individual check aliases use the same name
@@ -218,7 +222,7 @@ as their hook ID. `just docs-check` runs `okf` and `links` through prek.
 compiler. `just udeps` directly runs optional, locked, nightly
 unused-dependency analysis across all workspace targets and features.
 `cargo-udeps` is not installed by contributor setup or run by hooks, CI, or `just release`;
-invoke it intentionally [before a release](../CONTRIBUTING.md#release-builds).
+invoke it intentionally [before a release](../.github/CONTRIBUTING.md#release-builds).
 `just install` explicitly runs `cargo +stable install` with locked dependencies.
 `just package` checks the license bundle, then `scripts/package.py` locally
 verifies the two publishable crates and scans their exact `.crate` archives.
@@ -233,7 +237,7 @@ The temporary target is cleaned up on success or failure. No crates are uploaded
 creates tags or releases. Contributor setup also installs checksum-pinned
 Betterleaks 1.8.1 into the current worktree's `.tmp/tools/`.
 Other recipes run their substantive commands directly; see
-[Contributing](../CONTRIBUTING.md#2-the-gate).
+[Contributing](../.github/CONTRIBUTING.md#2-the-gate).
 
 CI uses the same hooks with `--all-files`, retaining named steps in one
 main job. It does not depend on a locally installed Git hook.

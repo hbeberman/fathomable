@@ -49,6 +49,11 @@ class ToolchainTests(unittest.TestCase):
         (self.repo / "rust-toolchain.toml").write_text('[toolchain]\nchannel = "stable"\n')
         for name in ("rust-toolchain.py", "setup-build-deps.sh"):
             shutil.copy2(SOURCE_ROOT / "scripts" / name, self.repo / "scripts" / name)
+        (self.repo / "scripts/configs").mkdir()
+        shutil.copy2(
+            SOURCE_ROOT / "scripts/configs/requirements-docs.txt",
+            self.repo / "scripts/configs/requirements-docs.txt",
+        )
         (self.repo / "scripts/betterleaks.py").write_text(
             "import sys\nassert sys.argv[1:] == ['install']\n"
         )
@@ -60,8 +65,15 @@ class ToolchainTests(unittest.TestCase):
             path.chmod(0o700)
         python = tools / "python3"
         python.write_text(
-            f"#!{sys.executable}\nimport os, sys\n"
-            "if sys.argv[1:] == ['-c', 'import yaml']:\n    raise SystemExit(0)\n"
+            f"#!{sys.executable}\nimport json, os, sys\nfrom pathlib import Path\n"
+            "if sys.argv[1:] == ['-c', 'import yaml']:\n"
+            "    raise SystemExit(int(os.environ.get('TOOLCHAIN_TEST_MISSING_YAML', '0')))\n"
+            "if sys.argv[1:3] == ['-m', 'pip']:\n"
+            "    requirements = Path(sys.argv[sys.argv.index('--requirement') + 1])\n"
+            "    assert requirements.read_text().startswith('PyYAML==')\n"
+            "    with open(os.environ['TOOLCHAIN_TEST_LOG'], 'a') as output:\n"
+            "        output.write(json.dumps(['python3', *sys.argv[1:]]) + '\\n')\n"
+            "    raise SystemExit(0)\n"
             f"os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])\n"
         )
         python.chmod(0o700)
@@ -136,6 +148,15 @@ class ToolchainTests(unittest.TestCase):
             self.assertNotIn("cargo-udeps", call)
         self.assertNotIn("1.97", self.log.read_text())
         self.assertFalse((self.repo / ".git/hooks").exists())
+
+    def test_setup_pip_fallback_reads_relocated_requirements(self):
+        self.env["TOOLCHAIN_TEST_MISSING_YAML"] = "1"
+        result = self.run_script("setup-build-deps.sh")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn([
+            "python3", "-m", "pip", "install", "--user",
+            "--requirement", "scripts/configs/requirements-docs.txt",
+        ], self.calls())
 
 
 if __name__ == "__main__":

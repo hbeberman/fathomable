@@ -46,7 +46,8 @@ class SecretScanning(unittest.TestCase):
         (self.repo / "scripts").mkdir()
         for name in ("betterleaks.py", "betterleaks.toml"):
             shutil.copy2(ROOT / "scripts" / name, self.repo / "scripts" / name)
-        shutil.copy2(ROOT / "prek.toml", self.repo / "prek.toml")
+        (self.repo / "scripts/configs").mkdir()
+        shutil.copy2(ROOT / "scripts/configs/prek.toml", self.repo / "scripts/configs/prek.toml")
         tool = self.repo / scanner.TOOL.relative_to(ROOT)
         tool.parent.mkdir(parents=True)
         tool.symlink_to(scanner.TOOL)
@@ -99,14 +100,14 @@ class SecretScanning(unittest.TestCase):
         self.write("payload.txt", "clean unstaged replacement\n")
         self.scan("staged", expected=1)
         self.scan("tracked")
-        self.command("prek", "run", "--config", "prek.toml", "secrets", expected=1)
+        self.command("prek", "run", "--config", "scripts/configs/prek.toml", "secrets", expected=1)
         self.assertEqual((self.repo / "payload.txt").read_text(), "clean unstaged replacement\n")
-        self.command("prek", "run", "--config", "prek.toml", "--all-files", "secrets")
+        self.command("prek", "run", "--config", "scripts/configs/prek.toml", "--all-files", "secrets")
         self.git("add", "payload.txt")
         self.write("payload.txt", self.secret)
-        self.command("prek", "run", "--config", "prek.toml", "secrets")
+        self.command("prek", "run", "--config", "scripts/configs/prek.toml", "secrets")
         self.assertEqual((self.repo / "payload.txt").read_text(), self.secret)
-        self.command("prek", "run", "--config", "prek.toml", "--all-files", "secrets", expected=1)
+        self.command("prek", "run", "--config", "scripts/configs/prek.toml", "--all-files", "secrets", expected=1)
 
     def test_alternate_index_is_preserved_by_staged_and_prek_scans(self):
         index = self.repo / ".tmp/alternate-index"
@@ -116,7 +117,7 @@ class SecretScanning(unittest.TestCase):
         self.command("git", "add", "payload.txt", env=env)
         self.scan("staged")  # Ordinary index is still clean.
         self.scan("staged", expected=1, env=env)
-        self.command("prek", "run", "--config", "prek.toml", "secrets", expected=1, env=env)
+        self.command("prek", "run", "--config", "scripts/configs/prek.toml", "secrets", expected=1, env=env)
         self.assertEqual((self.repo / "payload.txt").read_text(), self.secret)
 
     def test_inline_environment_config_and_ignore_cannot_suppress_findings(self):

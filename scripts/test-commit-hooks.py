@@ -33,7 +33,7 @@ GATE_COMMANDS = {
     "okf": ["python3", "scripts/okf-lint.py", "--repo-root", ".", "docs"],
     "links": [
         "lychee", "--offline", "--no-progress", "docs", "README.md",
-        "CONTRIBUTING.md", "AGENTS.md",
+        ".github/CONTRIBUTING.md", "AGENTS.md",
         ".agents/skills/open-knowledge-format/SKILL.md",
         ".agents/skills/fathomable-threatmodel/SKILL.md",
     ],
@@ -41,7 +41,7 @@ GATE_COMMANDS = {
     "rustdoc": ["cargo", "doc", "--no-deps", "--all-features"],
     "public-api": ["scripts/check-public-api.sh"],
     "audit": ["cargo", "audit"],
-    "deny": ["cargo", "deny", "check"],
+    "deny": ["cargo", "deny", "check", "--config", "scripts/configs/deny.toml"],
     "licenses": ["scripts/check-licenses.sh"],
     "secrets": ["python3", "scripts/betterleaks.py", "tracked"],
 }
@@ -221,7 +221,8 @@ class CommitHooks(unittest.TestCase):
             destination = self.repo / "scripts" / name
             destination.parent.mkdir(exist_ok=True)
             shutil.copy2(SOURCE_ROOT / "scripts" / name, destination)
-        shutil.copy2(SOURCE_ROOT / "prek.toml", self.repo / "prek.toml")
+        (self.repo / "scripts/configs").mkdir()
+        shutil.copy2(SOURCE_ROOT / "scripts/configs/prek.toml", self.repo / "scripts/configs/prek.toml")
         for name in FIXTURE_SCRIPTS:
             self.write(name, FIXTURE_GATE, executable=True)
         self.write("payload.txt", "valid\n")
@@ -331,6 +332,21 @@ class CommitHooks(unittest.TestCase):
         self.assertFalse((self.hooks / "commit-msg.legacy").exists())
         self.commit()
 
+    def test_reinstall_repoints_existing_root_config_hook(self):
+        old_config = self.repo / "prek.toml"
+        shutil.copy2(self.repo / "scripts/configs/prek.toml", old_config)
+        self.run_command(
+            "prek", "install", "--config", "prek.toml", "--hook-type", "commit-msg",
+        )
+        self.run_command(
+            "python3", "scripts/commit-hook-history.py", "--instrument-shim", str(self.hook),
+        )
+        old_config.unlink()
+        self.commit(success=False, gates=[])
+        self.install()
+        self.assertFalse((self.hooks / "commit-msg.legacy").exists())
+        self.commit()
+
     def test_observer_install_failure_preserves_the_installed_hook(self):
         self.install()
         self.write("scripts/commit-hook-history.py", "raise SystemExit(91)\n")
@@ -409,7 +425,7 @@ class CommitHooks(unittest.TestCase):
         self.hook.write_text(BOOTSTRAP_HOOK)
         self.hook.chmod(0o755)
         self.write(".pre-commit-config.yaml", "repos: []\n")
-        config = self.repo / "prek.toml"
+        config = self.repo / "scripts/configs/prek.toml"
         for content in (None, "repos = [\n"):
             with self.subTest(content=content):
                 if content is None:
@@ -481,7 +497,7 @@ class CommitHooks(unittest.TestCase):
 
     def test_history_records_native_setup_errors_without_inventing_phases(self):
         self.install()
-        config = self.repo / "prek.toml"
+        config = self.repo / "scripts/configs/prek.toml"
         config.write_text(config.read_text() + "\n# unstaged config\n")
         self.commit(success=False, gates=[])
         text = self.history()[-1].read_text()
@@ -648,7 +664,7 @@ class CommitHooks(unittest.TestCase):
 
     def test_missing_commit_config_fails_closed(self):
         self.install()
-        (self.repo / "prek.toml").unlink()
+        (self.repo / "scripts/configs/prek.toml").unlink()
         self.write(".pre-commit-config.yaml", "repos: []\n")
         self.commit(success=False, gates=[])
 
@@ -656,27 +672,27 @@ class CommitHooks(unittest.TestCase):
         self.install()
         self.write("payload.txt", "valid staged change\n")
         self.git("add", "payload.txt")
-        config = self.repo / "prek.toml"
+        config = self.repo / "scripts/configs/prek.toml"
         config.write_text(config.read_text() + "\n# Valid but initially unstaged.\n")
         result = self.commit(success=False, gates=[])
         self.assertIn("not staged", result.stdout.lower())
-        self.assertIn("prek.toml", result.stdout)
+        self.assertIn("scripts/configs/prek.toml", result.stdout)
         for selection in ((), ("--stage", "manual")):
             with self.subTest(selection=selection):
                 before = self.state()
                 result = self.run_command(
-                    "prek", "run", "--config", "prek.toml", *selection,
+                    "prek", "run", "--config", "scripts/configs/prek.toml", *selection,
                     success=False,
                 )
                 self.assertIn("not staged", result.stdout.lower())
                 self.assertEqual(self.state(), before)
                 self.assertEqual(self.events(), [])
         before = self.state()
-        self.run_command("prek", "run", "--config", "prek.toml", "--all-files")
+        self.run_command("prek", "run", "--config", "scripts/configs/prek.toml", "--all-files")
         self.assertEqual(self.state(), before)
         self.assert_gates(self.events())
-        self.assertEqual(self.events()[0]["files"]["prek.toml"], config.read_text())
-        self.git("add", "prek.toml")
+        self.assertEqual(self.events()[0]["files"]["scripts/configs/prek.toml"], config.read_text())
+        self.git("add", "scripts/configs/prek.toml")
         self.commit()
 
     def test_linked_worktree_uses_shared_hook_and_own_index(self):
@@ -780,7 +796,7 @@ class CommitHooks(unittest.TestCase):
             with self.subTest(hook=hook):
                 before, count = self.state(), len(self.events())
                 self.run_command(
-                    "prek", "run", "--config", "prek.toml", hook, "--all-files",
+                    "prek", "run", "--config", "scripts/configs/prek.toml", hook, "--all-files",
                 )
                 self.assertEqual(self.state(), before)
                 self.assert_gates(self.events()[count:], [hook])
@@ -791,7 +807,7 @@ class CommitHooks(unittest.TestCase):
             with self.subTest(selection=selection):
                 before, count = self.state(), len(self.events())
                 self.run_command(
-                    "prek", "run", "--config", "prek.toml", *selection,
+                    "prek", "run", "--config", "scripts/configs/prek.toml", *selection,
                 )
                 self.assertEqual(self.state(), before)
                 self.assert_gates(self.events()[count:])
@@ -810,7 +826,7 @@ class CommitHooks(unittest.TestCase):
                 self.write("payload.txt", unstaged)
                 before, head, count = self.state(), self.head(), len(self.events())
                 self.run_command(
-                    "prek", "run", "--config", "prek.toml",
+                    "prek", "run", "--config", "scripts/configs/prek.toml",
                     *selection, success=success,
                 )
                 self.assertEqual(self.state(), before)

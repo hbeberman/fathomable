@@ -11,7 +11,7 @@ objects and dynamic OS libraries are outside scope; review native inputs
 and applicable obligations before distributing binaries for another target.
 
 Cargo.lock SHA-256: cbdb5ae425f85aa6a29d5bec0cfa01fd4800e862f43ff9ef9f62958f7948ac51
-about.toml SHA-256: 2e47c20938e4e1f7046a8d9ce9600dfd9bfccc4d5347515ccb6ea0307d6f4916
+scripts/configs/about.toml SHA-256: 2e47c20938e4e1f7046a8d9ce9600dfd9bfccc4d5347515ccb6ea0307d6f4916
 licenses/manifest.json SHA-256: 61644a8b9922555893622cb803aed1498321f97f9143c3192f61fbd2ce36a00b
 
 ===============================================================================

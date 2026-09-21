@@ -81,7 +81,7 @@ priority = 6
 [[repos.hooks]]
 id = "links"
 name = "Documentation links"
-entry = "lychee --offline --no-progress docs README.md CONTRIBUTING.md AGENTS.md .agents/skills/open-knowledge-format/SKILL.md .agents/skills/fathomable-threatmodel/SKILL.md"
+entry = "lychee --offline --no-progress docs README.md .github/CONTRIBUTING.md AGENTS.md .agents/skills/open-knowledge-format/SKILL.md .agents/skills/fathomable-threatmodel/SKILL.md"
 language = "system"
 always_run = true
 pass_filenames = false
@@ -131,7 +131,7 @@ priority = 11
 [[repos.hooks]]
 id = "deny"
 name = "Dependency policy"
-entry = "cargo deny check"
+entry = "cargo deny check --config scripts/configs/deny.toml"
 language = "system"
 always_run = true
 pass_filenames = false

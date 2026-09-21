@@ -67,7 +67,7 @@ with synthetic content under a permissive umask.
 Use a compact findings table followed by evidence, remediation order, and
 coverage limits. "No confirmed findings in these surfaces" is not "secure."
 
-Follow repository `SECURITY.md` when present. If absent, report the disclosure
+Follow repository `.github/SECURITY.md` when present. If absent, report the disclosure
 policy gap; do not invent a reporting address or claim GitHub private reporting
 is enabled. Get operator approval before submitting any report. Use the
 verified private GitHub reporting/advisory channel, never public issues, PRs,

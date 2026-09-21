@@ -20,7 +20,7 @@ user, system, or repo policy.
 - Use [the threat model](docs/threat-model.md) to identify assets, attacker
   prerequisites, and trust boundaries; verify protections in code rather than
   treating documented goals as implemented guarantees.
-- Follow [the security policy](SECURITY.md) for responsible disclosure. Never
+- Follow [the security policy](.github/SECURITY.md) for responsible disclosure. Never
   put undisclosed vulnerability details in public issues, pull requests, or
   discussions. Agents need operator approval before reporting and must use
   synthetic or redacted evidence.
@@ -102,19 +102,19 @@ gate behavior:
 ```sh
 just gates
 # Without just:
-prek run --config prek.toml --all-files
+prek run --config scripts/configs/prek.toml --all-files
 ```
 
-`prek.toml` is the single source of truth for the checks. `just` calls prek
+`scripts/configs/prek.toml` is the single source of truth for the checks. `just` calls prek
 directly; `just gates-verbose` adds native `--verbose` output. Hooks never
 automatically format, fix, or stage files.
 
-Plain `prek run --config prek.toml` or
-`prek run --config prek.toml --stage manual` checks staged tracked contents
+Plain `prek run --config scripts/configs/prek.toml` or
+`prek run --config scripts/configs/prek.toml --stage manual` checks staged tracked contents
 without committing. Native prek temporarily saves and restores unstaged
 tracked edits, but untracked and ignored files remain visible. Do not edit
 the same worktree concurrently with a commit or staged check; use separate
-worktrees for parallel agents. Stage `prek.toml` when changing hook definitions.
+worktrees for parallel agents. Stage `scripts/configs/prek.toml` when changing hook definitions.
 `--all-files` checks the current checkout without hiding unstaged changes
 or stashing the checkout; tools can still see any files present.
 `just test-commit-hooks` runs the hook regression suite.

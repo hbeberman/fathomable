@@ -2,7 +2,7 @@
 type: Decision
 title: Dependency policy
 description: Which third-party crates Fathomable takes on, and how the policy is enforced.
-resource: deny.toml
+resource: scripts/configs/deny.toml
 related_resources:
   - rust-toolchain.toml
   - scripts/rust-toolchain.py
@@ -75,7 +75,8 @@ specified by [0088](0088-bundled-licenses.md).
 Rules:
 
 - Versions are locked in `Cargo.lock`; bumps are deliberate commits.
-- `cargo deny` runs in the local gate with an explicit license allowlist
+- `cargo deny check --config scripts/configs/deny.toml` runs in the local gate
+  with an explicit license allowlist
   (MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, Zlib,
   MPL-2.0, and CC0-1.0 for `notify`, added 2026-08-26), a `crates.io`-only
   source list, and `wildcards = deny`. Its narrow
@@ -85,7 +86,7 @@ Rules:
   unapproved Git dependencies.
 - Crates that build C code (`*-sys`, `openssl`, `onig`, `libgit2`) are not
   banned but each requires its own decision record before it lands.
-- Advisory ignores in `deny.toml` are for "unmaintained" notices only, each
+- Advisory ignores in `scripts/configs/deny.toml` are for "unmaintained" notices only, each
   with a reason and the decision record that accepted it; a vulnerability is
   never ignored. (Added 2026-08-26: RUSTSEC-2025-0141 for `bincode` 1.3.3,
   which syntect's bundled dumps require; see
@@ -143,7 +144,7 @@ Contributor setup installs stable, the release compiler with rustfmt/Clippy,
 and nightly. External Cargo tools are installed explicitly using stable,
 regardless of a caller's toolchain override. Optional `cargo-udeps` is installed
 separately with nightly and run intentionally before releases, not by the
-commit gate or CI; see [release builds](../../CONTRIBUTING.md#release-builds).
+commit gate or CI; see [release builds](../../.github/CONTRIBUTING.md#release-builds).
 The MSRV is installed by its CI job or explicitly by a contributor when needed.
 
 `just release` checks the committed notices, then builds the locked x86_64

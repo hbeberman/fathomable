@@ -4,7 +4,7 @@ title: Bundled license notices
 description: Offline first- and third-party license notices travel with the executable and are readable from Help.
 resource: crates/fathomable/src/app/licenses.rs
 related_resources:
-  - about.toml
+  - scripts/configs/about.toml
   - scripts/generate_licenses.py
   - scripts/check-licenses.sh
 tags:
@@ -59,7 +59,7 @@ metadata alone is not sufficient for syntect's embedded grammar/theme data.
 
 `cargo-about` **0.9.2** inventories the x86_64 GNU/Linux normal/build
 dependency graph and gathers license texts from cached crate sources.
-`about.toml` selects accepted licenses, excludes dev/private workspace crates,
+`scripts/configs/about.toml` selects accepted licenses, excludes dev/private workspace crates,
 and records hash-checked clarifications for combined or unrecognized license
 files. The generator separately removes exact first-party workspace manifests
 that cargo-about includes after they become publishable; an unrecognized path
@@ -108,4 +108,4 @@ for every compiler version.
 - [Dependency policy](0001-dependency-policy.md)
 - [The menu bar](0081-the-menu-bar.md)
 - [Dependency monitoring](../dependency-monitoring.md)
-- [Contributor setup](../../CONTRIBUTING.md)
+- [Contributor setup](../../.github/CONTRIBUTING.md)

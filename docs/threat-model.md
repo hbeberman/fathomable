@@ -115,7 +115,7 @@ vulnerabilities, accepted trust assumptions, and unvalidated hardening proposals
 remain distinct. A narrow fix or a clean diff does not establish release safety.
 
 Responsible reporting follows the repository
-[security policy](../SECURITY.md) through a verified private GitHub
+[security policy](../.github/SECURITY.md) through a verified private GitHub
 reporting/advisory channel. A missing or unverified channel is a
 release-readiness gap, not permission to publish undisclosed details in an
 issue, pull request, discussion, or tracked audit report. Agents obtain

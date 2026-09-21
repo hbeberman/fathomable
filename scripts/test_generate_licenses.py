@@ -55,6 +55,8 @@ class LicenseTests(unittest.TestCase):
             self.assertIn(flag, command)
         self.assertEqual(command[command.index("--manifest-path") + 1],
                          "crates/fathomable/Cargo.toml")
+        self.assertEqual(command[command.index("--config") + 1],
+                         "scripts/configs/about.toml")
         self.assertEqual(command[command.index("--format") + 1], "json")
 
     def test_wrong_cargo_about_version_is_rejected(self):
@@ -172,7 +174,9 @@ class LicenseTests(unittest.TestCase):
             (root / "licenses/manifest.json").write_text(json.dumps({
                 "version": 1, "target": "x86_64-unknown-linux-gnu", "package_notices": {},
             }))
-            (root / "about.toml").write_text('targets = ["x86_64-unknown-linux-gnu"]\n')
+            (root / "scripts/configs").mkdir(parents=True)
+            config = root / "scripts/configs/about.toml"
+            config.write_text('targets = ["x86_64-unknown-linux-gnu"]\n')
             (root / "Cargo.toml").write_text(
                 '[workspace.package]\nlicense = "MIT"\nversion = "0.1.0"\n',
             )
@@ -186,6 +190,11 @@ class LicenseTests(unittest.TestCase):
                 mock.patch.object(licenses, "asset_notices", return_value="Asset notices"),
             ):
                 original = licenses.render_bundle(root)
+                self.assertIn(
+                    f"scripts/configs/about.toml SHA-256: "
+                    f"{hashlib.sha256(config.read_bytes()).hexdigest()}",
+                    original,
+                )
                 output.write_text(original)
                 lock.write_text("version = 4\n# dependency change\n")
                 with self.assertRaisesRegex(licenses.LicenseBundleError, "stale"):

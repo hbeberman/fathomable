@@ -37,7 +37,7 @@ archive warnings fail closed. Tool setup does not enable GitHub settings.
 
 | Trigger / command | Exact scope |
 | --- | --- |
-| Normal commit; `prek run --config prek.toml secrets` | All tracked files as visible after prek hides unstaged tracked edits; the staged state, including unchanged tracked files |
+| Normal commit; `prek run --config scripts/configs/prek.toml secrets` | All tracked files as visible after prek hides unstaged tracked edits; the staged state, including unchanged tracked files |
 | `just secrets` | All tracked files at their current working-tree contents, including unstaged edits; not an empty staged diff |
 | `python3 scripts/betterleaks.py staged` | Only the staged Git diff, using the effective index; useful for explicit local triage |
 | PR | Every commit in `base.sha..head.sha`, not merely the final tree or net diff |
@@ -106,7 +106,7 @@ reject the scan, even when upstream returns success. A maintainer needing
 locations can rerun the pinned CLI privately with the same offline/redaction
 flags; do not paste raw diagnostics or reports into public CI, issues or PRs.
 For a real credential, stop publication, arrange revocation/rotation through
-the owner, and follow the [private reporting policy](../SECURITY.md).
+the owner, and follow the [private reporting policy](../.github/SECURITY.md).
 
 ## Distribution preflight and limitations
 

@@ -35,37 +35,37 @@ jobs:
       - name: Install cargo-public-api
         run: cargo install cargo-public-api --locked --version 0.51.0
       - name: Install documentation lint dependencies
-        run: python3 -m pip install --requirement requirements-docs.txt
+        run: python3 -m pip install --requirement scripts/configs/requirements-docs.txt
       - name: Install checksum-pinned Betterleaks
         run: python3 scripts/betterleaks.py install
       - name: Test contributor helpers
         run: python3 -m unittest scripts/test-demo-repo.py scripts/test-perf-record.py scripts/test-rust-toolchain.py scripts/test-betterleaks.py scripts/test-package.py
       - name: Format
-        run: prek run --config prek.toml --all-files fmt
+        run: prek run --config scripts/configs/prek.toml --all-files fmt
       - name: Test commit hooks
-        run: prek run --config prek.toml --all-files commit-hooks
+        run: prek run --config scripts/configs/prek.toml --all-files commit-hooks
       - name: Clippy
-        run: prek run --config prek.toml --all-files clippy
+        run: prek run --config scripts/configs/prek.toml --all-files clippy
       - name: Test
-        run: prek run --config prek.toml --all-files nextest
+        run: prek run --config scripts/configs/prek.toml --all-files nextest
       - name: Test documentation
-        run: prek run --config prek.toml --all-files doctest
+        run: prek run --config scripts/configs/prek.toml --all-files doctest
       - name: Check documentation bundle
-        run: prek run --config prek.toml --all-files okf links
+        run: prek run --config scripts/configs/prek.toml --all-files okf links
       - name: Boundary checks
-        run: prek run --config prek.toml --all-files boundaries
+        run: prek run --config scripts/configs/prek.toml --all-files boundaries
       - name: Public API checks
-        run: prek run --config prek.toml --all-files public-api
+        run: prek run --config scripts/configs/prek.toml --all-files public-api
       - name: Rustdoc
-        run: prek run --config prek.toml --all-files rustdoc
+        run: prek run --config scripts/configs/prek.toml --all-files rustdoc
       - name: Audit dependencies
-        run: prek run --config prek.toml --all-files audit
+        run: prek run --config scripts/configs/prek.toml --all-files audit
       - name: Deny check
-        run: prek run --config prek.toml --all-files deny
+        run: prek run --config scripts/configs/prek.toml --all-files deny
       - name: Check bundled license notices
-        run: prek run --config prek.toml --all-files licenses
+        run: prek run --config scripts/configs/prek.toml --all-files licenses
       - name: Scan tracked checkout for secrets
-        run: prek run --config prek.toml --all-files secrets
+        run: prek run --config scripts/configs/prek.toml --all-files secrets
 
   compatibility:
     runs-on: ubuntu-latest

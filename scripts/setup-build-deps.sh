@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # @okf-doc: /commit-hooks.md
 # Install the pinned cargo tooling the commit gate runs. The system
-# packages it needs are listed per distribution in CONTRIBUTING.md; this
+# packages it needs are listed per distribution in .github/CONTRIBUTING.md; this
 # script checks for them first so a missing header fails here, not
 # twenty minutes into a `cargo install`.
 set -euo pipefail
@@ -30,7 +30,7 @@ if command -v pkg-config >/dev/null 2>&1 && ! pkg-config --exists openssl; then
     missing=1
 fi
 if [[ $missing -eq 1 ]]; then
-    printf 'install the packages above (see CONTRIBUTING.md), then rerun\n' >&2
+    printf 'install the packages above (see .github/CONTRIBUTING.md), then rerun\n' >&2
     exit 1
 fi
 
@@ -54,7 +54,7 @@ python3 scripts/betterleaks.py install
 # under PEP 668, so the failure names the package instead of aborting.
 if python3 -c 'import yaml' >/dev/null 2>&1; then
     printf 'PyYAML present; skipping pip\n'
-elif ! python3 -m pip install --user --requirement requirements-docs.txt; then
+elif ! python3 -m pip install --user --requirement scripts/configs/requirements-docs.txt; then
     printf 'pip could not install PyYAML; install python3-pyyaml (Fedora, Azure Linux) or python3-yaml (Ubuntu) instead\n' >&2
     exit 1
 fi

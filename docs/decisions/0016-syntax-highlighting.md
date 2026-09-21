@@ -133,7 +133,7 @@ settled in a question round on 2026-08-26.
   and theme sets once.
 - syntect's bundled dumps depend on `bincode` 1.3.3, which carries an
   "unmaintained" advisory (RUSTSEC-2025-0141) but no vulnerability;
-  `deny.toml` ignores that one id with a reason, amending
+  `scripts/configs/deny.toml` ignores that one id with a reason, amending
   [0001](0001-dependency-policy.md).
 - First presentation of a source file is plain for the short interval before
   its syntax colours arrive. Whole-file syntect cost no longer blocks input,

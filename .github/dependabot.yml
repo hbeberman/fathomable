@@ -34,7 +34,7 @@ updates:
           - patch
 
   - package-ecosystem: pip
-    directory: "/"
+    directory: "/scripts/configs"
     schedule:
       interval: weekly
       day: monday

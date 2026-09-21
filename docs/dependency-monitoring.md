@@ -12,8 +12,10 @@ tags:
 # Dependency monitoring
 
 Dependabot opens weekly version-update pull requests for Cargo, GitHub
-Actions, and the Python documentation requirements. Routine minor and patch
-updates are grouped per ecosystem, while major updates remain individual.
+Actions, and the Python documentation requirements in
+`scripts/configs/requirements-docs.txt`. The pip configuration targets
+`/scripts/configs`. Routine minor and patch updates are grouped per ecosystem,
+while major updates remain individual.
 The conservative open-pull-request limits apply to version updates, not
 security updates.
 
@@ -46,12 +48,12 @@ requires maintainer review; Dependabot does not update it.
 
 ## Public-alpha security sign-off
 
-The tracked [security policy](../SECURITY.md) directs reports to GitHub's
+The tracked [security policy](../.github/SECURITY.md) directs reports to GitHub's
 private vulnerability reporting channel. Before making the repository public
 or publishing the first alpha, a maintainer completes the external settings
 that repository contents cannot prove:
 
-- [x] Add the root policy and link it from contributor and agent guidance.
+- [x] Add `.github/SECURITY.md` and link it from contributor and agent guidance.
 - [ ] Enable private vulnerability reporting under **Settings > Security**.
 - [ ] While signed in as a maintainer, verify access to
   `https://github.com/hbeberman/fathomable/security/advisories/new`.

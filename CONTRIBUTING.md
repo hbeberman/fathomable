@@ -6,6 +6,13 @@ a change is ready; the reasoning behind the project lives in the
 [charter](docs/charter.md) and the [design decisions](docs/decisions/index.md).
 Agents and people share one rule book, [AGENTS.md](AGENTS.md).
 
+## Security reports
+
+Report suspected vulnerabilities through the private channel in
+[SECURITY.md](SECURITY.md), not through a public issue, pull request, or
+discussion. Use synthetic or redacted evidence and do not include credentials,
+customer data, or unrelated proprietary source.
+
 ## 1. Prerequisites
 
 Everything in the [README install section](README.md#install), plus the

@@ -20,6 +20,10 @@ user, system, or repo policy.
 - Use [the threat model](docs/threat-model.md) to identify assets, attacker
   prerequisites, and trust boundaries; verify protections in code rather than
   treating documented goals as implemented guarantees.
+- Follow [the security policy](SECURITY.md) for responsible disclosure. Never
+  put undisclosed vulnerability details in public issues, pull requests, or
+  discussions. Agents need operator approval before reporting and must use
+  synthetic or redacted evidence.
 
 ## Workspace policy
 

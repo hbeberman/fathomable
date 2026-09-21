@@ -11,6 +11,7 @@ Start here before changing documented behavior or adding project documentation.
 
 - [Fathomable charter](charter.md)
 - [Fathomable threat model](threat-model.md)
+- [Security policy](../SECURITY.md)
 - [Setup guide](guide.md)
 - [Commit hooks and staged gates](commit-hooks.md)
 - [Dependency monitoring](dependency-monitoring.md)

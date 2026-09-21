@@ -114,9 +114,10 @@ coverage, attacker prerequisites, evidence, and unresolved gaps. Confirmed
 vulnerabilities, accepted trust assumptions, and unvalidated hardening proposals
 remain distinct. A narrow fix or a clean diff does not establish release safety.
 
-Responsible reporting follows repository `SECURITY.md` when available, through
-a verified private GitHub reporting/advisory channel. Missing policy or an
-unverified channel is a release-readiness gap, not permission to publish
-undisclosed details in an issue, PR, discussion, or tracked audit report.
-Agents obtain operator approval before sending reports and use synthetic,
-redacted evidence rather than customer data.
+Responsible reporting follows the repository
+[security policy](../SECURITY.md) through a verified private GitHub
+reporting/advisory channel. A missing or unverified channel is a
+release-readiness gap, not permission to publish undisclosed details in an
+issue, pull request, discussion, or tracked audit report. Agents obtain
+operator approval before sending reports and use synthetic, redacted evidence
+rather than customer data.

@@ -1,7 +1,7 @@
 ---
 type: Software
 title: Dependency monitoring
-description: Automated version updates, RustSec checks, and the GitHub settings maintained outside the repository.
+description: Automated dependency checks and GitHub security settings maintained outside the repository.
 resource: .github/dependabot.yml
 related_resources:
   - .github/workflows/audit.yml
@@ -37,3 +37,20 @@ notifications to receive failures from this workflow. Scheduled workflows
 run from the default branch; GitHub can disable them in public repositories
 after 60 days without repository activity, so check that the schedule stays
 enabled.
+
+## Public-alpha security sign-off
+
+The tracked [security policy](../SECURITY.md) directs reports to GitHub's
+private vulnerability reporting channel. Before making the repository public
+or publishing the first alpha, a maintainer completes the external settings
+that repository contents cannot prove:
+
+- [x] Add the root policy and link it from contributor and agent guidance.
+- [ ] Enable private vulnerability reporting under **Settings > Security**.
+- [ ] While signed in as a maintainer, verify access to
+  `https://github.com/hbeberman/fathomable/security/advisories/new`.
+- [ ] Verify every intended maintainer can access security advisories and has
+  the desired repository security-alert notifications enabled.
+
+Unchecked items remain release blockers; a policy link alone does not establish
+that the private channel or notifications work.

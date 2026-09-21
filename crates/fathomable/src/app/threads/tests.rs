@@ -1928,6 +1928,43 @@ fn changing_a_tombstones_git_source_relocates_its_threads() -> anyhow::Result<()
 }
 
 #[test]
+fn truncated_context_on_restart_requires_an_exact_anchor() -> anyhow::Result<()> {
+    use fathomable_core::annotations::Placement;
+    use fathomable_core::context::{Context, MAX_CONTEXT_BYTES};
+
+    let original = "x".repeat(MAX_CONTEXT_BYTES + 100);
+    let range = LineRange::new(1, 1);
+    let context = Context::capture(&original, range).context("context")?;
+    let dir = testing::workspace("threads-truncated-context", &original)?;
+    let id = Store::open(testing::store_path(&dir))?.annotate(
+        testing::at_working_tree(
+            &testing::root(&dir),
+            Draft::new(Author::User, Path::new("README.md"), range, "long line"),
+            &original,
+        )?,
+        &original,
+        1,
+    )?;
+    let before = fs::read(testing::store_path(&dir))?;
+
+    for (suffix, expected) in [
+        ("", Placement::Anchored(LineRange::new(2, 2))),
+        (" edited", Placement::Detached(range)),
+    ] {
+        fs::write(
+            testing::root(&dir).join("README.md"),
+            format!("{}\n{original}{suffix}\n", context.snippet()),
+        )?;
+        let app = testing::source_app(&dir)?;
+        let mark = app.marks().first().context("thread mark")?;
+        assert_eq!(mark.id(), &id);
+        assert_eq!(mark.placement(), expected);
+        assert_eq!(fs::read(testing::store_path(&dir))?, before);
+    }
+    Ok(())
+}
+
+#[test]
 fn selection_becomes_a_thread_and_survives_reload() -> anyhow::Result<()> {
     let dir = testing::workspace("threads-annotate", testing::README)?;
     let mut app = app(&dir)?;

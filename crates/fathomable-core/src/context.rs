@@ -68,8 +68,9 @@ impl Context {
 
     /// Capture a context window with an explicit byte bound.
     ///
-    /// If line separators alone exceed the bound, selected-line head and tail
-    /// are retained and [`map_context`] subsequently declines placement.
+    /// A shortened window remains displayable, but [`map_context`] declines
+    /// placement. If line separators alone exceed the bound, selected-line
+    /// head and tail are retained.
     #[must_use]
     pub fn capture_bounded(text: &str, range: LineRange, max_bytes: usize) -> Option<Self> {
         let lines: Vec<&str> = text.lines().collect();
@@ -231,9 +232,13 @@ fn context_bytes(before: &[String], lines: &[String], after: &[String]) -> usize
 /// diffed against the lines between the blocks with `map_range`, and the
 /// result shifted into `current`. A side that cannot be found reads as a
 /// rewrite of the surroundings: `Mapping::Removed`.
+///
+/// Truncated windows return [`Mapping::Removed`]: their retained text cannot
+/// establish that the selected evidence is complete. This also applies to
+/// previously persisted windows. Exact anchor matching is independent.
 #[must_use]
 pub fn map_context(context: &Context, current: &str, hint: LineRange) -> Mapping {
-    if context.selected_omitted > 0 {
+    if context.truncated || context.selected_omitted > 0 {
         return Mapping::Removed;
     }
     let hashes: Vec<String> = current.lines().map(line_hash).collect();

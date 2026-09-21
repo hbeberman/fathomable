@@ -12,6 +12,10 @@ tags:
 
 Status: accepted (2026-08-28)
 
+Amended 2026-09-20: truncated windows remain display evidence but cannot
+authorize context-based placement. Exact full-anchor matching remains
+available independently.
+
 Amended 2026-09-16 by
 [0087](0087-global-comparisons-and-board-history.md): the bounded context
 window and mapping algorithm remain, but there is no snapshot-first path,
@@ -99,6 +103,14 @@ question round on 2026-08-28, with these choices:
   result is shifted by the region's start. A side that cannot be
   found means the surroundings were rewritten, and the result is
   `Mapping::Removed`, as 0019's locality rule would give.
+- Any truncated window returns `Mapping::Removed` before matching. The stored
+  truncation flag does not distinguish dropped surroundings from shortened
+  selected-line contents, so even a window with no omitted whole lines cannot
+  establish complete evidence. This conservative rule covers existing records
+  without a format change. Viewer and MCP still try exact full anchors first;
+  when those fail, a truncated window leaves the thread detached rather than
+  matching a retained prefix elsewhere. The stored excerpt remains available
+  for display.
 
 ### On start
 

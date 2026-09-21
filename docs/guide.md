@@ -425,6 +425,10 @@ hidden File list catches up when shown.
 Select lines and press `c`, or use `Space t f` for a file-wide comment.
 Threads retain their original excerpt even if edits move or detach them.
 Keep comments focused; each new message is limited to 1024 UTF-8 bytes.
+When placing a thread from stored evidence, the viewer and MCP try an exact
+full-anchor match first. If that fails and its context was truncated at
+capture, the thread stays detached rather than guessing from partial text;
+the stored excerpt remains readable.
 
 An expanded entry in the wide main **Threads** surface places its stored
 immutable origin context before the conversation. Source uses the origin

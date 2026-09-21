@@ -444,6 +444,9 @@ projects into its bound checkout. These answers may differ without either
 overwriting a global current line. Exact anchors are tried first, then the
 latest bounded placement context and immutable origin context. Ambiguous or
 missing evidence detaches the thread and retains its original excerpt.
+Truncated stored context is display evidence only, never a fallback placement
+authority; exact full anchors remain usable
+([context mapping](0038-reanchoring-without-a-snapshot.md#mapping-through-the-window)).
 
 Live working-tree reloads may persist a trustworthy local relocation.
 Working-file events never relocate a thread while the viewer displays an

@@ -2105,6 +2105,41 @@ fn zero_limit_returns_no_threads() -> Result<()> {
 }
 
 #[test]
+fn truncated_context_requires_an_exact_anchor_without_read_side_effects() -> Result<()> {
+    let fixture = Fixture::new("mcp-truncated-context")?;
+    let original = "x".repeat(fathomable_core::context::MAX_CONTEXT_BYTES + 100);
+    let range = LineRange::new(1, 1);
+    let context =
+        fathomable_core::context::Context::capture(&original, range).context("context")?;
+    fs::write(fixture.root.join("a.md"), &original)?;
+    let thread = fixture.store()?.annotate(
+        Draft::new(Author::User, Path::new("a.md"), range, "long line"),
+        &original,
+        1,
+    )?;
+    let mut client = Mcp::start(&fixture, "unknown-client", &[])?;
+    let before = fs::read(fixture.threads_path()?)?;
+
+    for (suffix, placement, location, line) in [
+        ("", "anchored", "moved", 2),
+        (" edited", "detached", "detached", 1),
+    ] {
+        fs::write(
+            fixture.root.join("a.md"),
+            format!("{}\n{original}{suffix}\n", context.snippet()),
+        )?;
+        let result = client.ok("threads", json!({"ids": [thread]}))?;
+        let shown = &result["structuredContent"]["threads"][0];
+        assert_eq!(shown["placement"], placement);
+        assert_eq!(shown["location"], location);
+        assert_eq!(shown["range"], json!({"start": line, "end": line}));
+        assert_eq!(shown["anchor_range"], json!({"start": 1, "end": 1}));
+        assert_eq!(fs::read(fixture.threads_path()?)?, before);
+    }
+    Ok(())
+}
+
+#[test]
 fn context_projection_preserves_placement_without_read_side_effects() -> Result<()> {
     let fixture = Fixture::new("mcp-read-placement")?;
     let original = "one\ntwo\nthree\n";

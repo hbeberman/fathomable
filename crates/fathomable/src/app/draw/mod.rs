@@ -699,7 +699,7 @@ fn draw_about(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         Line::raw(""),
         Line::from(vec![
             Span::styled("License  ", theme.info),
-            Span::raw("MIT (Fathomable)"),
+            Span::raw("MIT"),
         ]),
         Line::from(vec![
             Span::styled("Source   ", theme.info),
@@ -4596,7 +4596,7 @@ mod tests {
             "│diffs and interactive comment threads with agents       (     │",
             "│via MCP.                                               _|_    │",
             "│                                                      (   )   │",
-            "│License  MIT (Fathomable)                          ====`|'====│",
+            "│License  MIT                                       ====`|'====│",
             "│Source   https://github.com/hbeberman/fathomable        |     │",
             "│Third-party notices: Help > Licenses               |\\   |   /|│",
             "│                                                   \\'-._|_.-'/│",
@@ -4911,7 +4911,7 @@ mod tests {
             "diffs and interactive comment threads with agents",
             "via MCP.",
             "",
-            "License  MIT (Fathomable)",
+            "License  MIT",
             "Source   https://github.com/hbeberman/fathomable",
             "Third-party notices: Help > Licenses",
             "",

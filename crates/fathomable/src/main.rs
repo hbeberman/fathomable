@@ -39,6 +39,10 @@ struct Cli {
     #[arg(long)]
     mcp: bool,
 
+    /// Let MCP tools select a project root with their `workspace` parameter.
+    #[arg(long, requires = "mcp")]
+    allow_mutable_mcp_root: bool,
+
     /// Override the configuration file.
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
@@ -108,7 +112,12 @@ fn main() -> ExitCode {
     tracing::info!(session = %id, "starting");
 
     if cli.mcp {
-        return match mcp::run(&dirs, cli.path.as_deref()) {
+        let root_mode = if cli.allow_mutable_mcp_root {
+            mcp::RootMode::PerCall
+        } else {
+            mcp::RootMode::Fixed
+        };
+        return match mcp::run(&dirs, cli.path.as_deref(), root_mode) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 tracing::error!(error = format!("{error:#}"), "mcp failed");

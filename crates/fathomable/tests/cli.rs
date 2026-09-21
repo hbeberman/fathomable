@@ -57,6 +57,18 @@ fn command(fixture: &TempDir) -> Command {
     command
 }
 
+#[test]
+fn mutable_mcp_root_requires_mcp() -> Result {
+    let fixture = TempDir::new("cli-mutable-mcp-root")?;
+    let without_mcp = command(&fixture).arg("--allow-mutable-mcp-root").output()?;
+    assert!(!without_mcp.status.success());
+    assert!(
+        String::from_utf8(without_mcp.stderr)?.contains("--mcp"),
+        "the error should name the required flag"
+    );
+    Ok(())
+}
+
 fn viewers(fixture: &TempDir) -> std::io::Result<Output> {
     command(fixture).arg("--viewers").output()
 }

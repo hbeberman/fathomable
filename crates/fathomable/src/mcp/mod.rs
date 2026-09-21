@@ -1,11 +1,9 @@
 // @okf-doc: /decisions/0089-store-only-mcp.md
 //! The repository-bound stdio MCP review server.
 //!
-//! Startup binds one server to the checkout containing `--mcp DIR`, or
-//! the process working directory when `DIR` is omitted. Calls cannot route
-//! to another checkout. Reads use the shared non-archived board directly and
-//! project placement against the bound checkout; writes use the same shared
-//! store directly.
+//! Startup normally binds one server to the checkout containing `--mcp DIR`,
+//! or the process working directory when `DIR` is omitted. The explicit
+//! `--allow-mutable-mcp-root` mode instead lets each call select a checkout.
 
 mod identity;
 mod source;
@@ -28,8 +26,14 @@ use rmcp::model::{
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt, tool_handler};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RootMode {
+    Fixed,
+    PerCall,
+}
+
 /// Run the server on stdin/stdout until the client disconnects.
-pub(crate) fn run(dirs: &XdgDirs, root: Option<&Path>) -> anyhow::Result<()> {
+pub(crate) fn run(dirs: &XdgDirs, root: Option<&Path>, root_mode: RootMode) -> anyhow::Result<()> {
     let directory = match root {
         Some(root) => root
             .canonicalize()
@@ -43,7 +47,7 @@ pub(crate) fn run(dirs: &XdgDirs, root: Option<&Path>) -> anyhow::Result<()> {
         .build()
         .context("cannot start async runtime")?;
     runtime.block_on(async {
-        let server = Server::new(dirs.clone(), target, Launch::from_env());
+        let server = Server::new(dirs.clone(), target, Launch::from_env(), root_mode);
         let service = server
             .serve(rmcp::transport::stdio())
             .await
@@ -54,10 +58,11 @@ pub(crate) fn run(dirs: &XdgDirs, root: Option<&Path>) -> anyhow::Result<()> {
     })
 }
 
-/// The tool server and its immutable checkout binding.
+/// The tool server and its default checkout.
 pub(crate) struct Server {
     dirs: XdgDirs,
     target: Target,
+    root_mode: RootMode,
     launch: Launch,
     tool_router: ToolRouter<Self>,
 }
@@ -70,7 +75,7 @@ impl std::fmt::Debug for Server {
     }
 }
 
-/// The checkout one MCP process serves.
+/// The repository identity and checkout selected at startup or for one call.
 #[derive(Debug, Clone)]
 struct Target {
     key: PathBuf,
@@ -94,10 +99,11 @@ impl Target {
 }
 
 impl Server {
-    fn new(dirs: XdgDirs, target: Target, launch: Launch) -> Self {
+    fn new(dirs: XdgDirs, target: Target, launch: Launch, root_mode: RootMode) -> Self {
         Self {
             dirs,
             target,
+            root_mode,
             launch,
             tool_router: Self::router(),
         }
@@ -105,6 +111,17 @@ impl Server {
 
     fn router() -> ToolRouter<Self> {
         Self::tool_router() + Self::tool_router_start()
+    }
+
+    fn target(&self, workspace: Option<&Path>) -> Result<Target, String> {
+        match workspace {
+            Some(_) if self.root_mode == RootMode::Fixed => Err(
+                "`workspace` requires starting Fathomable with `--allow-mutable-mcp-root`"
+                    .to_owned(),
+            ),
+            Some(workspace) => Target::discover(workspace).map_err(|error| error.to_string()),
+            None => Ok(self.target.clone()),
+        }
     }
 
     /// Resolve the automatic caller identity into a stored annotation author
@@ -123,14 +140,14 @@ impl Server {
     }
 
     /// Every non-archived thread on the shared discussion board.
-    fn fetch(&self) -> Result<Vec<fathomable_core::annotations::Thread>, String> {
-        headless_list(&self.dirs, &self.target)
+    fn fetch(&self, target: &Target) -> Result<Vec<fathomable_core::annotations::Thread>, String> {
+        headless_list(&self.dirs, target)
     }
 
     /// Every stored thread, for an explicit id lookup that must remain
     /// reliable after ordinary checkout/status visibility changes.
-    fn fetch_exact(&self) -> Result<Vec<Thread>, String> {
-        let store = headless_store(&self.dirs, &self.target)?;
+    fn fetch_exact(&self, target: &Target) -> Result<Vec<Thread>, String> {
+        let store = headless_store(&self.dirs, target)?;
         Ok(store.all_threads().cloned().collect())
     }
 }
@@ -164,9 +181,28 @@ impl ServerHandler for Server {
         let cache_hints = context
             .protocol_version()
             .is_some_and(|version| version >= ProtocolVersion::V_2026_07_28);
+        let mut tools = self.tool_router.list_all();
+        for tool in &mut tools {
+            let schema = std::sync::Arc::make_mut(&mut tool.input_schema);
+            if let Some(serde_json::Value::Object(properties)) = schema.get_mut("properties") {
+                if self.root_mode == RootMode::PerCall {
+                    if let Some(serde_json::Value::Object(workspace)) =
+                        properties.get_mut("workspace")
+                    {
+                        workspace.insert("description".to_owned(), serde_json::json!(format!(
+                            "Project root to operate on. Supports the main checkout and linked worktrees. Default: {}.",
+                            self.target.root.display()
+                        )));
+                        workspace.insert("default".to_owned(), serde_json::json!(self.target.root));
+                    }
+                } else {
+                    properties.remove("workspace");
+                }
+            }
+        }
         Ok(ListToolsResult {
             result_type: Some(ResultType::COMPLETE),
-            tools: self.tool_router.list_all(),
+            tools,
             meta: None,
             next_cursor: None,
             ttl_ms: cache_hints.then_some(0),

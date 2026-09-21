@@ -24,6 +24,11 @@ runtime/socket checks, and XDG path discovery no longer needs a runtime
 directory. Viewer registrations, workspace markers, logging, and all
 persistent-state privacy checks remain.
 
+Mutable MCP roots added 2026-09-21: `--allow-mutable-mcp-root` requires
+`--mcp` and adds an optional `workspace` parameter to all three MCP tools.
+Omitting that parameter uses the checkout discovered from positional `PATH`,
+or the server process's startup working directory when `PATH` is omitted.
+
 Agent-delivery CLI removed 2026-09-15 by
 [0082](0082-three-tool-review-core.md): `pending` and hook diagnostics no
 longer exist. The obsolete `--register` command is also removed because
@@ -55,6 +60,9 @@ Command line:
 - `fathomable --mcp [DIR]`: run the stdio MCP server instead of the TUI;
   `DIR`, or startup cwd when omitted, anchors its immutable default
   workspace ([0080](0080-automatic-chat-identity.md)).
+- `fathomable --mcp --allow-mutable-mcp-root [DIR]`: let every MCP call select
+  a project root with optional `workspace`; omission uses the checkout
+  discovered from `DIR`, or startup cwd when `DIR` is omitted.
 - `--config PATH` overrides the config file; `--theme NAME` selects a theme
   from `$XDG_CONFIG_HOME/fathomable/themes/` for this run.
 - `--discovery-entries`, `--workspace-watches`, `--retained-paths`,

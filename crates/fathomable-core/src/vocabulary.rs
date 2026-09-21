@@ -14,7 +14,7 @@
 pub struct Tool {
     /// The name the MCP server registers.
     pub name: &'static str,
-    /// The properties of its input schema, top level only.
+    /// All top-level input properties; `workspace` requires per-call root mode.
     pub params: &'static [&'static str],
 }
 
@@ -29,6 +29,8 @@ pub const WORKTREE: &str = "worktree";
 pub const PATH: &str = "path";
 /// An optional immutable source selected for a tool call.
 pub const SOURCE: &str = "source";
+/// An optional project root override, exposed only in per-call root mode.
+pub const WORKSPACE: &str = "workspace";
 /// A first line.
 pub const LINE: &str = "line";
 /// A last line.
@@ -54,20 +56,20 @@ pub const STATUS_OPEN: &str = "open";
 /// The `status` that lists open and resolved threads alike.
 pub const STATUS_ALL: &str = "all";
 
-/// Read threads in the checkout bound when the MCP server starts.
+/// Read threads in the checkout selected for the call.
 pub const THREADS: Tool = Tool {
     name: "threads",
-    params: &[SOURCE, STATUS, PATH, SINCE, AFTER, LIMIT, IDS],
+    params: &[WORKSPACE, SOURCE, STATUS, PATH, SINCE, AFTER, LIMIT, IDS],
 };
 /// Answer one or more threads.
 pub const THREAD_REPLY: Tool = Tool {
     name: "thread_reply",
-    params: &[REPLIES],
+    params: &[WORKSPACE, REPLIES],
 };
 /// Start one or more threads on lines of a file.
 pub const THREAD_START: Tool = Tool {
     name: "thread_start",
-    params: &[SOURCE, COMMENTS],
+    params: &[WORKSPACE, SOURCE, COMMENTS],
 };
 
 /// Every tool, in the order the guide lists them.

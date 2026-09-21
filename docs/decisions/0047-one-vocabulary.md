@@ -36,6 +36,11 @@ The production agent-facing table is `fathomable_core::vocabulary`; the
 test-only identifier parser and membership check used by [0043](0043-agent-vocabulary.md)
 live in `fathomable_testing::vocabulary`.
 
+The table includes `workspace`, the optional request-local project root on
+all three tools. As amended in [0082](0082-three-tool-review-core.md), it is
+advertised only with `--allow-mutable-mcp-root`; fixed-root schemas omit it.
+Schema checks cover both modes.
+
 ## Context
 
 [0043](0043-agent-vocabulary.md) put the agent-facing names in one table

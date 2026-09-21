@@ -36,7 +36,8 @@ the agent does the writing.
   "since this workspace state" comparisons.
 - An **agent endpoint**: `fathomable --mcp [DIR]` is a repository-bound stdio
   MCP server that works without a viewer, so agents can read discussions,
-  start threads, and reply to them.
+  start threads, and reply to them. An explicit `--allow-mutable-mcp-root`
+  launch delegates per-call project selection to the MCP caller.
 - A **user-mediated discussion space**: reviewers, coders, and the human may
   use the same thread history. The user's stated decision and task assignment,
   not an inferred queue state, determine what an agent should do.

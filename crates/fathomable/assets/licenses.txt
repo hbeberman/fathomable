@@ -10,12 +10,12 @@ This is not a byte-for-byte software bill of materials. System linker/startup
 objects and dynamic OS libraries are outside scope; review native inputs
 and applicable obligations before distributing binaries for another target.
 
-Cargo.lock SHA-256: 53876ed46ad774fc474543532c1db6bb34bfd09b13bd931afa0b4cfb815308c8
+Cargo.lock SHA-256: b5e4ac45cc3bcf3f3b80122e171562ea6343d17b3655b9947f56d06e8e4f028a
 scripts/configs/about.toml SHA-256: 2e47c20938e4e1f7046a8d9ce9600dfd9bfccc4d5347515ccb6ea0307d6f4916
 licenses/manifest.json SHA-256: 93680a50c1f03b7c5a62e2c09a463d54883ef765656cbf6b2ac8731b959970c1
 
 ===============================================================================
-Fathomable 0.1.0 (MIT)
+Fathomable 0.1.1 (MIT)
 Source: https://github.com/hbeberman/fathomable
 ===============================================================================
 

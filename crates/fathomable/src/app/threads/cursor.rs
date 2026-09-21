@@ -177,14 +177,6 @@ impl App {
         self.thread(id).map_or(0, |thread| thread.replies().len())
     }
 
-    /// Messages in the cursor's thread.
-    pub(crate) fn cursor_message_count(&self) -> usize {
-        self.thread_cursor()
-            .thread()
-            .and_then(|id| self.thread(id))
-            .map_or(0, |thread| thread.replies().len() + 1)
-    }
-
     /// Put the cursor on `id`, at its newest message unless the cursor
     /// already stands on it.
     pub(crate) fn set_thread_cursor(&mut self, id: ThreadId) {
@@ -440,25 +432,6 @@ impl App {
                     || self.docs[index].deleted == Some(crate::app::Deleted::ComparisonBase)
             })
             && self.marks().iter().any(|mark| mark.id() == id)
-    }
-
-    /// `j` / `k` in the pane and the list: the next or previous message
-    /// of the cursor's thread, without wrapping.
-    pub(crate) fn message_step(&mut self, delta: isize) {
-        let count = self.cursor_message_count();
-        if count == 0 {
-            return;
-        }
-        let cursor = self.thread_cursor();
-        let message = cursor.message().saturating_add_signed(delta).min(count - 1);
-        self.go_to_message(message);
-    }
-
-    fn go_to_message(&mut self, message: usize) {
-        if let Some(id) = self.thread_cursor().thread().cloned() {
-            self.set_thread_cursor_message(id, message);
-            self.follow_cursor_message();
-        }
     }
 
     /// Keep the highlighted message on screen in whichever surface shows

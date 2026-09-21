@@ -249,8 +249,6 @@ fn is_far_move(action: Action) -> bool {
             | Action::SearchPrev
             | Action::Top
             | Action::Bottom
-            | Action::ThreadNext
-            | Action::ThreadPrev
             | Action::ChangeNext
             | Action::ChangePrev
             | Action::ChangeFileNext
@@ -664,10 +662,8 @@ impl App {
     fn act_list(&mut self, action: Action) -> Effect {
         match action {
             Action::Escape => {}
-            Action::MoveDown => self.review_message_step(1),
-            Action::MoveUp => self.review_message_step(-1),
-            Action::ThreadPrev => self.review_step(-1),
-            Action::ThreadNext => self.review_step(1),
+            Action::MoveDown => self.review_move(1),
+            Action::MoveUp => self.review_move(-1),
             Action::HalfPageDown => self.review_page(1),
             Action::HalfPageUp => self.review_page(-1),
             Action::Top => self.review_goto(false),

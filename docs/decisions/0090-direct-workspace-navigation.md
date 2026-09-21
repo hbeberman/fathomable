@@ -28,6 +28,11 @@ the first rendered changed row at the top third of File. Thread traversal is
 surface-specific, seats the newest message, and temporarily reveals folded
 destinations without changing persistent folds.
 
+Amended later 2026-09-20: main Threads reserves `Tab`/`Shift-Tab` for direct
+open-thread traversal and uses `j`/`Down` and `k`/`Up` for a continuous
+visible review walk through messages, folded threads, and file rows. Its old
+`h`/`l` message bindings are removed.
+
 Amended later 2026-09-18 by [0091](0091-pane-focus-navigation.md): the four
 normal panes are now named File, File list, Threads, and Thread list.
 References below to Files mean File list, and references to Reviews mean the

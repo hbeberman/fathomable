@@ -969,7 +969,7 @@ fn leaving_a_long_review_peek_relocates_the_destination_before_scrolling() -> an
     app.thread_step_across(-1);
     assert!(app.review_thread_peeked(&first));
 
-    app.review_step(1);
+    app.review_move(1);
 
     assert!(!app.review_thread_peeked(&first));
     assert_eq!(app.thread_cursor().thread(), Some(&destination));
@@ -1452,7 +1452,7 @@ fn assert_review_actions_ignore_rejected_sidebar_preview(
         "the permission action must not target the sidebar cursor"
     );
     assert_eq!(app.review_peek_message(archived), Some(1));
-    testing::press(app, "l");
+    testing::press(app, "j");
     assert_eq!(app.thread_cursor().thread(), Some(archived));
     assert_eq!(app.thread_cursor().message(), 2);
     assert_eq!(app.review_peek_message(archived), Some(2));
@@ -2277,13 +2277,13 @@ fn review_keys_select_messages_and_edit_only_the_users() -> anyhow::Result<()> {
         "the selected message is visible"
     );
 
-    keys::handle_key(&mut app, key(KeyCode::Char('h')));
+    keys::handle_key(&mut app, key(KeyCode::Char('k')));
     assert_eq!(app.thread_cursor().message(), 1);
     keys::handle_key(&mut app, key(KeyCode::Char('e')));
     assert!(app.popup().is_none());
     assert_eq!(app.message(), Some("only your messages can be edited"));
 
-    keys::handle_key(&mut app, key(KeyCode::Char('h')));
+    keys::handle_key(&mut app, key(KeyCode::Char('k')));
     assert_eq!(app.thread_cursor().message(), 0);
     keys::handle_key(&mut app, key(KeyCode::Char('e')));
     assert!(matches!(
@@ -2327,12 +2327,19 @@ fn review_keys_select_messages_and_edit_only_the_users() -> anyhow::Result<()> {
     );
 
     keys::handle_key(&mut app, key(KeyCode::Char('j')));
+    assert_eq!(app.thread_cursor().message(), 1);
+    keys::handle_key(&mut app, key(KeyCode::Char('j')));
+    assert_eq!(app.thread_cursor().message(), 2);
+    let next = app.review_rows(60).entries[1].id().clone();
+    keys::handle_key(&mut app, key(KeyCode::Char('j')));
+    assert_eq!(app.thread_cursor().thread(), Some(&next));
     assert_eq!(app.thread_cursor().message(), 0);
     keys::handle_key(&mut app, key(KeyCode::Char('k')));
+    assert_eq!(app.thread_cursor().thread(), Some(&id));
     assert_eq!(
         app.thread_cursor().message(),
         2,
-        "changing threads selects the newest message"
+        "moving back across the boundary selects the previous thread's newest message"
     );
     keys::handle_key(&mut app, key(KeyCode::Char('e')));
     assert!(matches!(
@@ -2682,7 +2689,7 @@ fn resolving_in_the_list_keeps_the_scroll_and_moves_to_the_next_entry() -> anyho
     // fourth entry.
     app.review_goto(false);
     for _ in 0..4 {
-        app.review_step(1);
+        app.review_move(1);
     }
     let scroll = app.review_list().scroll();
     assert!(scroll > 0, "the fourth entry is below the fold");
@@ -2922,7 +2929,7 @@ fn the_review_list_shows_the_work_and_acts_in_place() -> anyhow::Result<()> {
             .iter()
             .any(|row| matches!(row, Row::Body { line, .. } if line.text() == "top"))
     );
-    app.review_step(1);
+    app.review_move(1);
     app.thread_open_in_file();
     assert!(!app.review_list().is_open());
     assert_eq!(app.focus(), Focus::View);
@@ -3056,10 +3063,10 @@ fn the_review_groups_by_file_and_folds_files() -> anyhow::Result<()> {
 
     // `k` from README's first thread stops on README's file row (ADR
     // 0076), where `z` folds the file; the cursor stays on the row over
-    // the file's first thread, `k` reaches the guide's thread and then
-    // its row, `j` comes back to README's row once, and no further.
+    // the file's first thread, `k` reaches the guide's only message and
+    // then its row, `j` comes back to README's row once, and no further.
     app.set_thread_cursor(top.clone());
-    app.review_step(-1);
+    app.review_move(-1);
     assert!(
         review_file_selected(&app, "README.md"),
         "the file row is a stop"
@@ -3075,20 +3082,20 @@ fn the_review_groups_by_file_and_folds_files() -> anyhow::Result<()> {
         "a folded file's threads have no rows"
     );
     assert_eq!(app.thread_cursor().thread(), Some(&top));
-    app.review_step(-1);
+    app.review_move(-1);
     assert_eq!(app.thread_cursor().thread(), Some(&guide));
     assert!(!review_file_selected(&app, "docs/guide.md"));
-    app.review_step(-1);
+    app.review_move(-1);
     assert!(review_file_selected(&app, "docs/guide.md"));
-    app.review_step(-1);
+    app.review_move(-1);
     assert!(
         review_file_selected(&app, "docs/guide.md"),
         "the first stop"
     );
-    app.review_step(2);
+    app.review_move(2);
     assert!(review_file_selected(&app, "README.md"));
     assert_eq!(app.thread_cursor().thread(), Some(&top));
-    app.review_step(1);
+    app.review_move(1);
     assert!(
         review_file_selected(&app, "README.md"),
         "one stop, no further"

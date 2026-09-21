@@ -357,8 +357,6 @@ actions! {
     PaneScope,
     ReviewResolved,
     Help,
-    ThreadNext,
-    ThreadPrev,
     OpenThreadNext,
     OpenThreadPrev,
     Reply,
@@ -1248,30 +1246,16 @@ pub(crate) const BINDINGS: &[Binding] = &[
     bind(
         W::Review,
         &[&[c('j')], &[k(K::Down)]],
-        A::ThreadNext,
+        A::MoveDown,
         "Threads",
-        "next thread",
+        "down through the review",
     ),
     bind(
         W::Review,
         &[&[c('k')], &[k(K::Up)]],
-        A::ThreadPrev,
-        "Threads",
-        "previous thread",
-    ),
-    bind(
-        W::Review,
-        &[&[c('l')], &[k(K::Right)]],
-        A::MoveDown,
-        "Threads",
-        "next message",
-    ),
-    bind(
-        W::Review,
-        &[&[c('h')], &[k(K::Left)]],
         A::MoveUp,
         "Threads",
-        "previous message",
+        "up through the review",
     ),
     bind(
         W::Review,
@@ -1884,6 +1868,21 @@ mod tests {
             ([shift(Key::Left)], Action::ChangeFilePrev),
         ] {
             assert_eq!(lookup(Where::View, &keys), Match::Exact(action));
+        }
+    }
+
+    #[test]
+    fn review_vertical_navigation_uses_jk_and_arrows() {
+        for (keys, action) in [
+            ([c('j')], Action::MoveDown),
+            ([k(Key::Down)], Action::MoveDown),
+            ([c('k')], Action::MoveUp),
+            ([k(Key::Up)], Action::MoveUp),
+        ] {
+            assert_eq!(lookup(Where::Review, &keys), Match::Exact(action));
+        }
+        for key in [c('h'), c('l'), k(Key::Left), k(Key::Right)] {
+            assert_eq!(lookup(Where::Review, &[key]), Match::Miss);
         }
     }
 

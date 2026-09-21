@@ -9,9 +9,9 @@
 //! are the [`ReviewState`] the sidebar's threads pane shares. Its rows
 //! are computed from the store on every draw and key by
 //! [`App::review_rows`], so a reload or a change of state needs
-//! nothing invalidated. The stops `j`/`k` walk are rows: a file row,
-//! then each of its threads while it is unfolded, a folded thread
-//! being one row.
+//! nothing invalidated. The stops `j`/`k` walk follow the visible review:
+//! file rows, every message in expanded threads, and one row per folded
+//! thread.
 
 use std::cmp::Ordering;
 use std::collections::HashSet;
@@ -327,8 +327,7 @@ pub(crate) struct Rows {
     pub(crate) entries: Vec<Entry>,
 }
 
-/// One stop of the list's `j`/`k` (ADR 0076): a file row, or a thread
-/// with a header or a folded row.
+/// A file or thread-level list stop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Stop {
     File(PathBuf),
@@ -452,9 +451,7 @@ impl Rows {
         Some(start..start + len)
     }
 
-    /// The stops of `j` / `k` in row order (ADR 0076): every file row,
-    /// and every thread with a header or a folded row, which is every
-    /// thread of an unfolded file.
+    /// Every file and thread-level stop in row order.
     fn stops(&self) -> Vec<Stop> {
         self.rows
             .iter()
@@ -462,6 +459,29 @@ impl Rows {
                 Row::File { path, .. } => Some(Stop::File(path.clone())),
                 Row::Header { entry, .. } | Row::Stub { entry, .. } => Some(Stop::Entry(*entry)),
                 Row::Message { .. }
+                | Row::Body { .. }
+                | Row::OriginWarning { .. }
+                | Row::OriginContext { .. }
+                | Row::OriginTruncation { .. }
+                | Row::DraftAuthor { .. }
+                | Row::DraftBody { .. }
+                | Row::Blank => None,
+            })
+            .collect()
+    }
+
+    /// Visible keyboard landings in vertical order.
+    ///
+    /// Expanded threads contribute each message; folded threads and file
+    /// groups contribute their single visible row.
+    fn landings(&self) -> Vec<Landing> {
+        self.rows
+            .iter()
+            .filter_map(|row| match row {
+                Row::File { path, .. } => Some(Landing::Stop(Stop::File(path.clone()))),
+                Row::Stub { entry, .. } => Some(Landing::Stop(Stop::Entry(*entry))),
+                Row::Message { entry, message, .. } => Some(Landing::Message(*entry, *message)),
+                Row::Header { .. }
                 | Row::Body { .. }
                 | Row::OriginWarning { .. }
                 | Row::OriginContext { .. }
@@ -1304,26 +1324,6 @@ impl App {
         }
     }
 
-    /// Whether the cursor is on a row that shows no messages (ADR
-    /// 0076): a file row or a folded thread, where `l`/`h` have nothing
-    /// to walk.
-    pub(crate) fn review_cursor_folded(&self) -> bool {
-        if !self.review_list.is_open() {
-            return false;
-        }
-
-        let rows = self.review_rows(self.column_width());
-        let Some(index) = self.selected_index(&rows) else {
-            return false;
-        };
-        match self.cursor_stop(&rows, index) {
-            Stop::File(_) => true,
-            Stop::Entry(entry) => rows
-                .entry_row(entry)
-                .is_some_and(|row| matches!(rows.rows.get(row), Some(Row::Stub { .. }))),
-        }
-    }
-
     /// Whether the review cursor rests on a thread rather than its file row.
     pub(crate) fn review_cursor_on_thread(&self) -> bool {
         if !self.review_list.is_open() {
@@ -1334,18 +1334,34 @@ impl App {
             .is_some_and(|index| matches!(self.cursor_stop(&rows, index), Stop::Entry(_)))
     }
 
-    /// `l` / `h`: the next or previous message of the cursor's thread,
-    /// when its messages are shown.
-    pub(crate) fn review_message_step(&mut self, delta: isize) {
+    /// `j` / `k`: move through visible review items without wrapping.
+    ///
+    /// Expanded threads contribute each message. At a conversation edge,
+    /// movement continues to the adjacent thread or file row.
+    pub(crate) fn review_move(&mut self, delta: isize) {
         self.activate_review_peek_cursor();
-        if self.review_cursor_folded() {
+        let rows = self.review_rows(self.column_width());
+        let Some(entry) = self.selected_index(&rows) else {
             return;
-        }
-        self.message_step(delta);
-        let cursor = self.review_thread_cursor();
-        if let Some(id) = cursor.thread().cloned() {
-            self.update_review_peek_message(&id, cursor.message());
-        }
+        };
+        let current = match self.cursor_stop(&rows, entry) {
+            Stop::File(path) => Landing::Stop(Stop::File(path)),
+            Stop::Entry(entry)
+                if rows
+                    .entry_row(entry)
+                    .is_some_and(|row| matches!(rows.rows.get(row), Some(Row::Stub { .. }))) =>
+            {
+                Landing::Stop(Stop::Entry(entry))
+            }
+            Stop::Entry(entry) => Landing::Message(entry, self.review_thread_cursor().message()),
+        };
+        let landings = rows.landings();
+        let Some(at) = landings.iter().position(|landing| *landing == current) else {
+            return;
+        };
+        let last = landings.len().saturating_sub(1);
+        let target = landings[at.saturating_add_signed(delta).min(last)].clone();
+        self.land_on_review_item(&rows, &target);
     }
 
     /// Scroll enough to keep the cursor's message, or a folded file's
@@ -1408,22 +1424,11 @@ impl App {
         }
     }
 
-    /// `j` / `k`: move by `delta` stops in the list's order (ADR 0066,
-    /// ADR 0076): file rows, and each thread of an unfolded file.
-    pub(crate) fn review_step(&mut self, delta: isize) {
-        let rows = self.review_rows(self.column_width());
-        let Some(index) = self.selected_index(&rows) else {
-            return;
-        };
-        let stops = rows.stops();
-        if stops.is_empty() {
-            return;
+    fn land_on_review_item(&mut self, rows: &Rows, landing: &Landing) {
+        match landing {
+            Landing::Stop(stop) => self.land_on_stop(rows, stop),
+            Landing::Message(entry, message) => self.select_message(rows, *entry, *message),
         }
-        let stop = self.cursor_stop(&rows, index);
-        let at = stops.iter().position(|s| *s == stop).unwrap_or(0);
-        let last = stops.len() - 1;
-        let target = stops[at.saturating_add_signed(delta).min(last)].clone();
-        self.land_on_stop(&rows, &target);
     }
 
     /// `Ctrl-d` / `Ctrl-u`: the message half a page of rows below or
@@ -1454,10 +1459,8 @@ impl App {
         } else {
             (0..=target).rev().find_map(|row| rows.landing_at(row))
         };
-        match landing {
-            Some(Landing::Message(entry, message)) => self.select_message(&rows, entry, message),
-            Some(Landing::Stop(stop)) => self.land_on_stop(&rows, &stop),
-            None => {}
+        if let Some(landing) = landing {
+            self.land_on_review_item(&rows, &landing);
         }
     }
 

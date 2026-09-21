@@ -1043,21 +1043,12 @@ pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
             hints.push(HintOf::keyed(place, Action::ReviewResolved, "resolved"));
             hints.push(HintOf::keyed(place, Action::FileOnly, "file"));
         }
-        if entries.len() > 1 {
+        if !entries.is_empty() {
             hints.push(HintOf::paired(
                 place,
-                Action::ThreadPrev,
-                Action::ThreadNext,
-                "threads",
-            ));
-        }
-        // No messages to walk on a file row or a folded thread (ADR 0076).
-        if app.cursor_message_count() > 1 && !app.review_cursor_folded() {
-            hints.push(HintOf::paired(
-                place,
-                Action::MoveDown,
                 Action::MoveUp,
-                "messages",
+                Action::MoveDown,
+                "move",
             ));
         }
         hints.push(HintOf::keyed(place, Action::Escape, ""));
@@ -1207,7 +1198,7 @@ mod tests {
         Header::bar(vec![
             HintOf::new("s", "file", &[Action::FileOnly]),
             HintOf::new("x", "resolved", &[Action::ReviewResolved]),
-            HintOf::new("k/j", "threads", &[Action::ThreadPrev, Action::ThreadNext]),
+            HintOf::new("k/j", "move", &[Action::MoveUp, Action::MoveDown]),
         ])
     }
 
@@ -1216,7 +1207,7 @@ mod tests {
         let line = bar().line(&theme()?, 40);
         let text = text(&line);
         assert_eq!(display_width(&text), 40);
-        assert_eq!(text.trim_end(), " file s · resolved x · threads k/j");
+        assert_eq!(text.trim_end(), " file s · resolved x · move k/j");
         Ok(())
     }
 
@@ -1235,15 +1226,15 @@ mod tests {
         let bar = bar();
         assert_eq!(bar.action_at(40, 1), Some(Action::FileOnly));
         assert_eq!(bar.action_at(40, 10), Some(Action::ReviewResolved));
-        let threads = display_width(" file s · resolved x · ");
-        assert_eq!(bar.action_at(40, threads), Some(Action::ThreadPrev));
+        let movement = display_width(" file s · resolved x · ");
+        assert_eq!(bar.action_at(40, movement), Some(Action::MoveUp));
         assert_eq!(
-            bar.action_at(40, threads + display_width("threads k/")),
-            Some(Action::ThreadNext)
+            bar.action_at(40, movement + display_width("move k/")),
+            Some(Action::MoveDown)
         );
         assert_eq!(bar.action_at(40, 0), None, "the margin runs nothing");
         assert_eq!(
-            bar.action_at(24, threads),
+            bar.action_at(24, movement),
             None,
             "a dropped hint is not there"
         );

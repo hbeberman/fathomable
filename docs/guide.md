@@ -140,6 +140,12 @@ by the surface that owns focus. Returning from a rejected Thread-list preview
 therefore acts on the still-visible main Threads entry, while the sidebar keeps
 its own selection for the next focus return.
 
+In main Threads, `j`/`Down` and `k`/`Up` walk the visible review vertically:
+each message in an expanded conversation, then the adjacent thread or file
+row. Folded threads and file groups are one stop, and movement stops at the
+top and bottom. `h`/`l` have no Threads-wide meaning; `Tab` and `Shift-Tab`
+remain the direct next/previous open-thread loop.
+
 A thread jump temporarily reveals a folded destination without changing the
 remembered fold. File centers the visible source, detached marker, or
 file-wide anchor through the newest reply when it fits, otherwise the newest
@@ -186,7 +192,8 @@ the table below is a quick reference, not the full list.
 
 | Keys | Action |
 | --- | --- |
-| `h` `j` `k` `l` | move left, down, up, right (arrow keys also work) |
+| `h` `j` `k` `l` | move left, down, up, right in File (arrow keys also work) |
+| `j` `k` | next / previous visible review item in Threads (`Down` / `Up` also work) |
 | `gg` `G` | top / bottom |
 | `Ctrl-d` `Ctrl-u` | half page down / up |
 | `/` `n` `N` | search, next match, previous match |

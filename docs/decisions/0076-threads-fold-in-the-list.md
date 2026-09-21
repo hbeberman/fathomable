@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Threads fold in the list
-description: In the review list every thread folds and expands as it does in the text, with the same chevrons, `z`, `Z`, clicks, and menu entries, and a folded thread is one packed row; file rows and folded threads are stops for `j`/`k`, and `z` acts on the row the cursor is on; `Z` folds or expands every thread and no longer touches files; a file row always carries its `▾` or `▸`; and in the text a stub is a stop too.
+description: In the review list every thread folds and expands as it does in the text; vertical movement walks messages, folded threads, and file rows in visible order.
 resource: crates/fathomable/src/app/threads/list_fold.rs
 related_resources:
   - crates/fathomable/src/app/threads/list.rs
@@ -33,6 +33,12 @@ current lifecycle replace the historical packed-row state wording below.
 Amended 2026-09-20: a direct navigation target can temporarily reveal its
 main Threads entry and containing file, or its Thread-list file group,
 without mutating the session fold sets. Explicit folding takes ownership.
+
+Amended again 2026-09-20: main Threads uses `j`/`Down` and `k`/`Up` for one
+continuous visible review walk. Each expanded message is a stop; folded
+threads and file rows remain one stop; movement continues across conversation
+boundaries and clamps at the list edges. The old `h`/`l` message bindings are
+removed because `Tab`/`Shift-Tab` now provide direct open-thread traversal.
 
 ## Context
 
@@ -86,15 +92,14 @@ and in the text alike.
 
 ### File rows are stops, and `z` acts on the row
 
-- **A file row is a stop.** `j`/`k` in the list stop on a file row,
-  then on each of its threads when it is unfolded, folded threads
-  included. A folded file is its row alone, one stop. The cursor's
-  thread while the cursor rests on a file row is the file's first
-  thread, as it was inside a folded file, so `Enter`, `c`, `o`, and the
-  hints keep acting on a thread; `l`/`h` do nothing on a file row or a
-  folded thread, since there is no visible message to walk, and the
-  bar drops the `messages` hint there. `gg` lands on the first stop
-  and `G` on the last.
+- **File rows, messages, and folded threads are stops.** `j`/`Down` and
+  `k`/`Up` walk the visible list vertically. A file row is one stop, each
+  message in an expanded thread is one stop, and a folded thread or file is
+  one stop. Movement continues into the adjacent conversation or file group
+  and clamps at the top and bottom. While the cursor rests on a file row its
+  logical thread remains the file's first thread, so `Enter`, `c`, `r`, and
+  the hints keep acting on a thread. `h`/`l` have no list-wide action.
+  `gg` lands on the first file or thread stop and `G` on the last.
 - **`z` acts on the row the cursor is on.** On a thread's rows it
   folds the thread or expands it. On a file row it folds the file or
   unfolds it; the cursor stays on the file row. `f`, which drops the
@@ -168,8 +173,8 @@ and in the text alike.
 
 - `app/threads/list_fold.rs`, which this record backs, keeps the
   list's fold state and its `z`, `Z`, and toggles for files and
-  threads; `list.rs` gains a `Row::Stub`, stops that are rows rather
-  than entries, and the cursor's rest on a file row.
+  threads; `list.rs` keeps `Row::Stub`, file and thread stops, message
+  landings, and the cursor's rest on a file row.
 - `draw/mod.rs` draws the stub row and the arrows on file rows;
   `draw/header.rs` gives the entry header its chevron and the list's
   bar its hints; `draw/threads_pane.rs` draws the pane's arrows.

@@ -25,6 +25,11 @@ list retain separate logical thread/message seats. Shared actions still use
 one implementation, but resolve their target from the surface that dispatched
 them.
 
+Main Threads movement amended 2026-09-20: `j`/`Down` and `k`/`Up` walk its
+visible review order message by message and continue across thread and file
+boundaries. `h`/`l` no longer have main-Threads bindings; `Tab`/`Shift-Tab`
+remain the direct open-thread traversal.
+
 ## Context
 
 Three surfaces showed threads and each kept its own idea of which one:
@@ -125,9 +130,8 @@ selects a line in the text, one focus away.
   after deliberate selection it retains its own. Previewing a thread can
   deliberately synchronize the destination surface without making unrelated
   focus changes overwrite either selection.
-- The list's `h` / `l` still walk
-  the list's own order (open before resolved, then by file), which is
-  not the workspace order `L` / `H` walk in the pane.
+- Main Threads' `j` / `k` walk its visible review order, while
+  `Tab` / `Shift-Tab` walk only open threads in the current view.
 - A reply sent from any surface moves the cursor to the new message,
   as the pane and list each did before.
 - [0007](0007-key-grammar-and-mouse.md) is amended: the lateral

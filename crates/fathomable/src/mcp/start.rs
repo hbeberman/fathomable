@@ -1,5 +1,5 @@
 // @okf-doc: /decisions/0061-agents-start-threads.md
-//! Start one or more review discussions in the bound checkout.
+//! Start one or more review discussions in the checkout selected for the call.
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
@@ -59,6 +59,9 @@ pub(crate) struct StartItem {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StartParams {
+    /// Optional project root override for this call.
+    #[serde(default)]
+    workspace: Option<PathBuf>,
     /// Select one exact immutable commit origin for every comment.
     ///
     /// Omit this only for `WorkingTree`-origin comments. The checkout's
@@ -114,6 +117,10 @@ impl Server {
         Parameters(p): Parameters<StartParams>,
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
+        let target = match self.target(p.workspace.as_deref()) {
+            Ok(target) => target,
+            Err(error) => return failure(error),
+        };
         if p.comments.is_empty() {
             return failure("`comments` must contain at least one comment");
         }
@@ -122,7 +129,7 @@ impl Server {
             Err(error) => return failure(error),
         };
         if let Some(source) = p.source.as_ref() {
-            return self.thread_start_selected(&p.comments, source, &author, &caller);
+            return self.thread_start_selected(&target, &p.comments, source, &author, &caller);
         }
 
         // Check the whole batch before writing any of it, so that a retry
@@ -131,7 +138,7 @@ impl Server {
         let mut placed = Vec::with_capacity(p.comments.len());
         let mut problems = Vec::new();
         let probe_store = if p.comments.iter().any(|item| item.idempotency_key.is_some()) {
-            match Store::open_workspace(&self.dirs, &self.target.key) {
+            match Store::open_workspace(&self.dirs, &target.key) {
                 Ok(store) => Some(store),
                 Err(error) => return failure(error.to_string()),
             }
@@ -189,7 +196,7 @@ impl Server {
                     },
                 ));
             } else {
-                match place(&self.target.root, item) {
+                match place(&target.root, item) {
                     Ok(item) => placed.push((index, item)),
                     Err(error) => problems.push(BatchIssue::new(index, error)),
                 }
@@ -199,11 +206,11 @@ impl Server {
             return invalid_batch("comments", &problems);
         }
 
-        let mut tree = Tree::new(&self.target.root);
+        let mut tree = Tree::new(&target.root);
         let mut lines = Vec::new();
         let mut started = Vec::new();
         for (index, item) in placed {
-            match self.start_one(author.clone(), &caller, item) {
+            match self.start_one(&target, author.clone(), &caller, item) {
                 Ok(thread) => started.push(thread),
                 Err(error) => {
                     lines.extend(shown_lines(&started, &mut tree, "started"));
@@ -221,7 +228,7 @@ impl Server {
             shown.push(Shown::new(thread, placement));
         }
         CallToolResult::structured(json!(StartSuccess::Ordinary(WriteOutput {
-            checkout: self.target.root.clone(),
+            checkout: target.root.clone(),
             threads: shown,
         })))
     }
@@ -234,6 +241,7 @@ impl Server {
     )]
     fn thread_start_selected(
         &self,
+        target: &super::Target,
         comments: &[StartItem],
         source: &Source,
         author: &Author,
@@ -263,19 +271,19 @@ impl Server {
         }
         let (commit, mut capture) = match &request {
             super::source::CommitRequest::Head => {
-                match super::source::SelectedCommit::resolve(&self.target, &request) {
+                match super::source::SelectedCommit::resolve(target, &request) {
                     Ok(selected) => (selected.id().clone(), Some(selected.into_capture())),
                     Err(error) => return invalid_source(error, None),
                 }
             }
             super::source::CommitRequest::Id(commit) => {
-                if let Err(error) = super::source::validate_binding(&self.target) {
+                if let Err(error) = super::source::validate_binding(target) {
                     return invalid_source(error, Some(commit.as_str()));
                 }
                 (commit.clone(), None)
             }
         };
-        let probe_store = match Store::open_workspace(&self.dirs, &self.target.key) {
+        let probe_store = match Store::open_workspace(&self.dirs, &target.key) {
             Ok(store) => store,
             Err(error) => return failure(error.to_string()),
         };
@@ -369,7 +377,7 @@ impl Server {
             .any(|item| item.preparation == Preparation::Fresh)
         {
             if capture.is_none() {
-                capture = match super::source::SelectedCommit::resolve(&self.target, &request) {
+                capture = match super::source::SelectedCommit::resolve(target, &request) {
                     Ok(selected) => Some(selected.into_capture()),
                     Err(error) => return invalid_source(error, Some(commit.as_str())),
                 };
@@ -409,7 +417,7 @@ impl Server {
             return invalid_batch("comments", &problems);
         }
 
-        let mut tree = Tree::new(&self.target.root);
+        let mut tree = Tree::new(&target.root);
         for item in &prepared {
             if let Err(error) = tree.preflight(&item.projected_path) {
                 problems.push(BatchIssue::new(item.index, error));
@@ -423,7 +431,7 @@ impl Server {
         for (position, item) in prepared.iter().enumerate() {
             match headless_start_selected(
                 &self.dirs,
-                &self.target.key,
+                &target.key,
                 author.clone(),
                 caller,
                 item,
@@ -432,7 +440,7 @@ impl Server {
                 Ok(thread) => started.push((item.index, thread)),
                 Err(error) => {
                     return selected_partial_failure(
-                        &self.target.root,
+                        &target.root,
                         &commit,
                         &started,
                         item.index,
@@ -451,27 +459,26 @@ impl Server {
             shown.push(Shown::new(thread, placement));
         }
         CallToolResult::structured(json!(StartSuccess::Selected(SelectedWriteOutput {
-            checkout: self.target.root.clone(),
+            checkout: target.root.clone(),
             resolved_commit: commit.as_str().to_owned(),
             threads: shown,
         })))
     }
 
     /// Write one validated comment to the shared store.
-    fn start_one(&self, author: Author, caller: &str, item: Placed) -> Result<Thread, String> {
+    fn start_one(
+        &self,
+        target: &super::Target,
+        author: Author,
+        caller: &str,
+        item: Placed,
+    ) -> Result<Thread, String> {
         let place = match item.range {
             Some(range) => format!("{}:{}", item.path.display(), range.start()),
             None => item.path.display().to_string(),
         };
-        headless_start(
-            &self.dirs,
-            &self.target.key,
-            &self.target.root,
-            author,
-            caller,
-            item,
-        )
-        .map_err(|message| format!("{place}: {message}"))
+        headless_start(&self.dirs, &target.key, &target.root, author, caller, item)
+            .map_err(|message| format!("{place}: {message}"))
     }
 }
 

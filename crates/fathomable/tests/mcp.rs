@@ -91,11 +91,27 @@ impl Mcp {
         )
     }
 
-    fn start(fixture: &Fixture, client: &str, env: &[(&str, &OsStr)]) -> Result<Self> {
+    fn mutable(fixture: &Fixture, session: &str) -> Result<Self> {
         let mut command = fixture.command();
         command
+            .current_dir(&fixture.root)
             .arg("--mcp")
-            .arg(&fixture.root)
+            .arg("--allow-mutable-mcp-root");
+        Self::spawn(
+            command,
+            "copilot-cli",
+            &[("COPILOT_AGENT_SESSION_ID", OsStr::new(session))],
+        )
+    }
+
+    fn start(fixture: &Fixture, client: &str, env: &[(&str, &OsStr)]) -> Result<Self> {
+        let mut command = fixture.command();
+        command.arg("--mcp").arg(&fixture.root);
+        Self::spawn(command, client, env)
+    }
+
+    fn spawn(mut command: Command, client: &str, env: &[(&str, &OsStr)]) -> Result<Self> {
+        command
             .envs(env.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -376,6 +392,284 @@ fn exposes_only_three_tools_with_array_only_write_inputs() -> Result<()> {
             .find(|tool| tool["name"] == "threads")
             .and_then(|tool| tool["outputSchema"].as_object())
             .is_some()
+    );
+    Ok(())
+}
+
+#[test]
+fn mutable_root_flag_adds_workspace_to_every_tool_schema() -> Result<()> {
+    let fixture = Fixture::new("mcp-mutable-root-schema")?;
+
+    let mut bound = Mcp::copilot(&fixture, "bound-schema")?;
+    let bound_tools = bound.request("tools/list", json!({}))?["tools"]
+        .as_array()
+        .cloned()
+        .context("bound tools")?;
+    assert!(bound_tools.iter().all(|tool| {
+        !tool["inputSchema"]["properties"]
+            .as_object()
+            .is_some_and(|properties| properties.contains_key("workspace"))
+    }));
+
+    let mut mutable = Mcp::mutable(&fixture, "mutable-schema")?;
+    let mutable_tools = mutable.request("tools/list", json!({}))?["tools"]
+        .as_array()
+        .cloned()
+        .context("mutable tools")?;
+    for (tools, mutable) in [(&bound_tools, false), (&mutable_tools, true)] {
+        assert_eq!(tools.len(), fathomable_core::vocabulary::ALL.len());
+        for expected in fathomable_core::vocabulary::ALL {
+            let tool = tools
+                .iter()
+                .find(|tool| tool["name"] == expected.name)
+                .context("vocabulary tool")?;
+            let properties = tool["inputSchema"]["properties"]
+                .as_object()
+                .context("tool properties")?;
+            let mut actual: Vec<&str> = properties.keys().map(String::as_str).collect();
+            let mut params: Vec<&str> = expected
+                .params
+                .iter()
+                .copied()
+                .filter(|param| mutable || *param != fathomable_core::vocabulary::WORKSPACE)
+                .collect();
+            actual.sort_unstable();
+            params.sort_unstable();
+            assert_eq!(actual, params, "{}", expected.name);
+        }
+    }
+    for tool in mutable_tools {
+        let workspace = &tool["inputSchema"]["properties"]["workspace"];
+        assert!(
+            schema_contains(workspace, "type", &json!(["string", "null"])),
+            "{}: {workspace}",
+            tool["name"]
+        );
+        assert!(
+            !tool["inputSchema"]["required"]
+                .as_array()
+                .is_some_and(|required| required.contains(&json!("workspace"))),
+            "{}: workspace must remain optional",
+            tool["name"]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn mutable_root_overrides_are_rejected_without_the_flag() -> Result<()> {
+    let fixture = Fixture::new("mcp-fixed-root-rejection")?;
+    let other = Fixture::new("mcp-fixed-root-other")?;
+    let id = fixture.user_thread("Do not change this discussion")?;
+    let before = fs::read(fixture.threads_path()?)?;
+    let mut client = Mcp::copilot(&fixture, "fixed-rejection")?;
+    for (name, arguments) in [
+        ("threads", json!({"workspace": other.root})),
+        (
+            "thread_start",
+            json!({"workspace": other.root,
+            "comments": [{"path": "a.md", "body": "Must not be written"}]}),
+        ),
+        (
+            "thread_reply",
+            json!({"workspace": other.root,
+            "replies": [{"thread": id.to_string(), "body": "Must not be written"}]}),
+        ),
+    ] {
+        let result = client.call(name, arguments)?;
+        assert_eq!(result["isError"], true, "{name}: {result}");
+        assert!(result.to_string().contains("--allow-mutable-mcp-root"));
+    }
+    assert_eq!(fs::read(fixture.threads_path()?)?, before);
+    let other_key = Workspace::discover(&other.root)?.key().to_path_buf();
+    assert!(!fixture.dirs.threads_file(&other_key).exists());
+    Ok(())
+}
+
+#[test]
+fn mutable_root_linked_worktree_uses_shared_board_and_selected_source() -> Result<()> {
+    let fixture = Fixture::new("mcp-mutable-worktree")?;
+    fathomable_testing::git::init(&fixture.root)?;
+    fathomable_testing::git::commit_and_stage(&fixture.root, &[("a.md", "one\ntwo\n")])?;
+    let linked = fixture.dir.0.join("linked");
+    fathomable_testing::git::worktree_add(&fixture.root, &linked, "linked")?;
+    fs::write(linked.join("a.md"), "linked first\nlinked second\n")?;
+    let mut client = Mcp::mutable(&fixture, "linked-routing")?;
+    let started = client.ok(
+        "thread_start",
+        json!({"workspace": linked,
+        "comments": [{"path": "a.md", "line": 1, "body": "Worktree finding"}]}),
+    )?;
+    assert_eq!(started["structuredContent"]["checkout"], json!(linked));
+    let thread = &started["structuredContent"]["threads"][0];
+    assert_eq!(thread["origin"]["snippet"], "linked first");
+    let id = thread["id"].clone();
+    for workspace in [&fixture.root, &linked] {
+        let read = client.ok("threads", json!({"workspace": workspace, "ids": [id]}))?;
+        assert_eq!(read["structuredContent"]["checkout"], json!(workspace));
+        assert_eq!(read["structuredContent"]["threads"][0]["id"], id);
+    }
+    let replied = client.ok(
+        "thread_reply",
+        json!({"workspace": linked,
+        "replies": [{"thread": id, "body": "Relocated in linked checkout", "line": 2}]}),
+    )?;
+    assert_eq!(replied["structuredContent"]["checkout"], json!(linked));
+    let read = client.ok("threads", json!({"workspace": linked, "ids": [id]}))?;
+    assert_eq!(read["structuredContent"]["threads"][0]["range"]["start"], 2);
+    assert_eq!(fixture.store()?.threads().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn mutable_root_commit_source_uses_the_selected_repository() -> Result<()> {
+    let fixture = Fixture::new("mcp-mutable-commit-default")?;
+    let other = Fixture::new("mcp-mutable-commit-other")?;
+    for (root, text) in [
+        (&fixture.root, "default commit\n"),
+        (&other.root, "selected commit\n"),
+    ] {
+        fathomable_testing::git::init(root)?;
+        fathomable_testing::git::commit_and_stage(root, &[("a.md", text)])?;
+    }
+    fs::write(other.root.join("a.md"), "uncommitted content\n")?;
+    let commit = Workspace::discover(&other.root)?
+        .head_commit()
+        .context("selected HEAD")?;
+    let mut client = Mcp::mutable(&fixture, "commit-routing")?;
+    let started = client.ok(
+        "thread_start",
+        json!({"workspace": other.root,
+        "source": {"kind": "commit", "revision": "HEAD"},
+        "comments": [{"path": "a.md", "line": 1, "body": "Commit finding"}]}),
+    )?;
+    assert_eq!(started["structuredContent"]["checkout"], json!(other.root));
+    assert_eq!(
+        started["structuredContent"]["resolved_commit"],
+        commit.as_str()
+    );
+    assert_eq!(
+        started["structuredContent"]["threads"][0]["origin"]["snippet"],
+        "selected commit"
+    );
+    for revision in ["HEAD", commit.as_str()] {
+        let read = client.ok(
+            "threads",
+            json!({"workspace": other.root,
+            "source": {"kind": "commit", "revision": revision}}),
+        )?;
+        assert_eq!(
+            read["structuredContent"]["resolved_commit"],
+            commit.as_str()
+        );
+        assert_eq!(
+            read["structuredContent"]["threads"][0]["id"],
+            started["structuredContent"]["threads"][0]["id"]
+        );
+    }
+    let wrong_repo = client.call(
+        "threads",
+        json!({
+        "source": {"kind": "commit", "revision": commit.as_str()}}),
+    )?;
+    assert_eq!(wrong_repo["isError"], true);
+    assert!(fixture.store()?.threads().is_empty());
+    Ok(())
+}
+
+#[test]
+fn mutable_root_positional_path_sets_the_default() -> Result<()> {
+    let fixture = Fixture::new("mcp-mutable-explicit-default")?;
+    let mut command = fixture.command();
+    command
+        .args(["--mcp", "--allow-mutable-mcp-root"])
+        .arg(&fixture.root);
+    let mut client = Mcp::spawn(
+        command,
+        "copilot-cli",
+        &[("COPILOT_AGENT_SESSION_ID", OsStr::new("explicit-default"))],
+    )?;
+    let listed = client.request("tools/list", json!({}))?;
+    for tool in listed["tools"].as_array().context("tools")? {
+        assert_eq!(
+            tool["inputSchema"]["properties"]["workspace"]["default"],
+            json!(fixture.root)
+        );
+        assert!(
+            tool["inputSchema"]["properties"]["workspace"]["description"]
+                .as_str()
+                .context("workspace description")?
+                .contains(&fixture.root.display().to_string())
+        );
+    }
+    let started = client.ok(
+        "thread_start",
+        json!({"comments": [{"path": "a.md", "body": "Default project"}]}),
+    )?;
+    assert_eq!(
+        started["structuredContent"]["checkout"],
+        json!(fixture.root)
+    );
+    let selected = client.ok("threads", json!({"workspace": fixture.dir.0}))?;
+    assert_eq!(selected["structuredContent"]["threads"], json!([]));
+    let default = client.ok("threads", json!({}))?;
+    assert_eq!(
+        default["structuredContent"]["checkout"],
+        json!(fixture.root)
+    );
+    assert_eq!(
+        default["structuredContent"]["threads"][0]["id"],
+        started["structuredContent"]["threads"][0]["id"]
+    );
+    Ok(())
+}
+
+#[test]
+fn mutable_root_routes_each_tool_and_defaults_to_process_directory() -> Result<()> {
+    let fixture = Fixture::new("mcp-mutable-root-routing")?;
+    let other = fixture.dir.0.join("other");
+    fs::create_dir(&other)?;
+    fs::write(other.join("a.md"), "other\n")?;
+    let other = other.canonicalize()?;
+    let mut client = Mcp::mutable(&fixture, "mutable-routing")?;
+
+    let started = client.ok(
+        "thread_start",
+        json!({
+            "workspace": other,
+            "comments": [{"path": "a.md", "line": 1, "body": "Route this discussion"}]
+        }),
+    )?;
+    assert_eq!(started["structuredContent"]["checkout"], json!(other));
+    let id = started["structuredContent"]["threads"][0]["id"]
+        .as_str()
+        .context("started thread id")?
+        .to_owned();
+
+    let default = client.ok("threads", json!({}))?;
+    assert_eq!(
+        default["structuredContent"]["checkout"],
+        json!(fixture.root)
+    );
+    assert_eq!(default["structuredContent"]["threads"], json!([]));
+
+    let listed = client.ok("threads", json!({"workspace": other}))?;
+    assert_eq!(listed["structuredContent"]["checkout"], json!(other));
+    assert_eq!(listed["structuredContent"]["threads"][0]["id"], id);
+
+    let replied = client.ok(
+        "thread_reply",
+        json!({
+            "workspace": other,
+            "replies": [{"thread": id, "body": "Handled"}]
+        }),
+    )?;
+    assert_eq!(replied["structuredContent"]["checkout"], json!(other));
+    assert_eq!(
+        replied["structuredContent"]["results"][0]["thread"]["messages"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
     );
     Ok(())
 }

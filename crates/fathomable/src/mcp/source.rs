@@ -97,7 +97,8 @@ fn bound_workspace(target: &Target) -> Result<Workspace, String> {
     Ok(workspace)
 }
 
-/// Confirm that the checkout still has the repository identity bound at startup.
+/// Confirm that the checkout still has the identity captured when this target
+/// was selected, either at startup or for the current call.
 pub(super) fn validate_binding(target: &Target) -> Result<(), String> {
     bound_workspace(target).map(drop)
 }

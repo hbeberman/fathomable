@@ -14,6 +14,12 @@ tags:
 
 Status: accepted (2026-09-18)
 
+Mutable MCP roots amended 2026-09-21: `--allow-mutable-mcp-root` delegates
+request-local project selection to all three tools. Each selected checkout
+still uses its repository's shared store directly; no viewer transport or
+global checkout mutation is introduced. Default launches remain bound to one
+startup checkout.
+
 Commit source selection amended 2026-09-19 by
 [0092](0092-per-call-commit-sources.md): request-local selected starts read
 immutable regular blobs from the bound repository's local object database,
@@ -46,11 +52,15 @@ observation belongs in the filesystem watcher, not another write path.
 
 ### One bound store path
 
-`fathomable --mcp [DIR]` always reads and writes the shared thread store for
-its startup-bound repository and checkout. Viewer registrations, names,
-availability, and active comparisons never choose a write path. The public
-MCP surface remains `threads`, `thread_start`, and `thread_reply`, over stdio.
-No socket, signal, broker, or replacement viewer-control protocol is added.
+`fathomable --mcp [DIR]` reads and writes the shared thread store for its
+startup-bound repository and checkout. With `--allow-mutable-mcp-root`, each
+call instead reads or writes the shared store for its optional `workspace`,
+defaulting to the checkout discovered from `DIR`, or startup cwd when `DIR`
+is omitted. Viewer
+registrations, names, availability, and active comparisons never choose a
+write path. The public MCP surface remains `threads`, `thread_start`, and
+`thread_reply`, over stdio. No socket, signal, broker, or replacement
+viewer-control protocol is added.
 
 The [MCP contracts](0084-explicit-mcp-contracts.md) and
 [atomic reply authority](0085-thread-lifecycle-and-auto-resolve.md) remain:

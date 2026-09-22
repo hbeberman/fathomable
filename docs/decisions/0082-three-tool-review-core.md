@@ -14,6 +14,13 @@ tags:
 
 Status: accepted (2026-09-15)
 
+Mutable MCP roots amended 2026-09-21: the three-tool surface remains, but an
+explicit `--allow-mutable-mcp-root` launch adds optional `workspace` to every
+tool. Each call independently discovers that project checkout; omission uses
+the checkout discovered from positional `PATH`, or startup cwd when `PATH`
+is omitted. Without the flag, schemas and routing retain the immutable
+startup binding described below.
+
 Commit source selection amended 2026-09-19 by
 [0092](0092-per-call-commit-sources.md): the surface remains exactly
 `threads`, `thread_start`, and `thread_reply`. Only the first two accept a
@@ -97,10 +104,14 @@ that handoff.
 
 ### One repository-bound server, three tools
 
-`fathomable --mcp [DIR]` binds to the repository or checkout containing
-`DIR`, or the server's startup directory when `DIR` is omitted. The binding
-does not change. It discovers the checkout directly without workspace-marker
-setup. Tools have no per-call workspace or viewer selector.
+By default, `fathomable --mcp [DIR]` binds to the repository or checkout
+containing `DIR`, or the server's startup directory when `DIR` is omitted.
+The binding does not change. `--allow-mutable-mcp-root` is an explicit
+alternative: every tool accepts an optional `workspace`, and each call
+discovers that project independently. Omitting `workspace` selects the
+startup default derived from `DIR` or cwd. Tool schemas name that resolved
+default path. Overrides never change the default for subsequent calls.
+Neither mode uses workspace-marker setup or accepts a viewer selector.
 
 Working-tree text used by these tools is
 [read within the checkout](0061-agents-start-threads.md#checkout-confined-reads),

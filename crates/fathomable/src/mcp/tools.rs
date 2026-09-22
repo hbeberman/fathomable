@@ -35,6 +35,9 @@ use super::{Server, Target};
 #[serde(deny_unknown_fields)]
 #[schemars(transform = threads_constraints)]
 pub(crate) struct ThreadsParams {
+    /// Optional project root override for this call.
+    #[serde(default)]
+    workspace: Option<PathBuf>,
     /// Optionally filter by exact immutable commit origin.
     ///
     /// `WorkingTree` origins never match, even when their observed `HEAD` is
@@ -132,6 +135,9 @@ pub(crate) struct ReplyItem {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ReplyParams {
+    /// Optional project root override for this call.
+    #[serde(default)]
+    workspace: Option<PathBuf>,
     /// One or more replies. The whole batch is validated before any write.
     #[schemars(length(min = 1))]
     replies: Vec<ReplyItem>,
@@ -728,7 +734,7 @@ enum LifecycleOutput {
 /// The complete result returned by a read.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct ThreadsOutput {
-    /// The immutable checkout this MCP server was bound to at startup.
+    /// The checkout used for this call.
     checkout: PathBuf,
     threads: Vec<Shown>,
     more: usize,
@@ -739,7 +745,7 @@ pub(super) struct ThreadsOutput {
 /// The complete result returned by a commit-selected read.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct SelectedThreadsOutput {
-    /// The immutable checkout this MCP server was bound to at startup.
+    /// The checkout used for this call.
     checkout: PathBuf,
     /// The canonical full ID selected for immutable-origin filtering.
     #[schemars(regex(pattern = r"^[0-9a-f]{40}$"))]
@@ -761,7 +767,7 @@ pub(super) enum ThreadsSuccess {
 /// The complete result returned by a write.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct WriteOutput {
-    /// The immutable checkout this MCP server was bound to at startup.
+    /// The checkout used for this call.
     pub(super) checkout: PathBuf,
     pub(super) threads: Vec<Shown>,
 }
@@ -769,7 +775,7 @@ pub(super) struct WriteOutput {
 /// The complete result returned by a commit-selected start.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct SelectedWriteOutput {
-    /// The immutable checkout this MCP server was bound to at startup.
+    /// The checkout used for this call.
     pub(super) checkout: PathBuf,
     /// The canonical full ID used for immutable origin capture.
     #[schemars(regex(pattern = r"^[0-9a-f]{40}$"))]
@@ -847,7 +853,7 @@ pub(super) struct ReplyResult {
 /// The complete successful `thread_reply` result.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct ReplyWriteOutput {
-    /// The immutable checkout this MCP server was bound to at startup.
+    /// The checkout used for this call.
     checkout: PathBuf,
     results: Vec<ReplyResult>,
 }
@@ -1120,7 +1126,15 @@ impl Server {
             open_world_hint = false
         )
     )]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Keep request-local target selection, filter validation, and result projection together."
+    )]
     fn threads(&self, Parameters(p): Parameters<ThreadsParams>) -> CallToolResult {
+        let target = match self.target(p.workspace.as_deref()) {
+            Ok(target) => target,
+            Err(error) => return failure(error),
+        };
         if !p.ids.is_empty() && p.source.is_some() {
             return failure("pass non-empty `ids` without `source`");
         }
@@ -1143,7 +1157,7 @@ impl Server {
         }
 
         let selected_commit = match source_request.as_ref() {
-            Some(request) => match super::source::SelectedCommit::resolve(&self.target, request) {
+            Some(request) => match super::source::SelectedCommit::resolve(&target, request) {
                 Ok(selected) => Some(selected),
                 Err(error) => return invalid_source(error, None),
             },
@@ -1168,13 +1182,13 @@ impl Server {
         }
 
         let selected = if p.ids.is_empty() {
-            let all = match self.fetch() {
+            let all = match self.fetch(&target) {
                 Ok(all) => all,
                 Err(error) => return failure(error),
             };
             let selection = match selected_commit.as_ref() {
                 Some(commit) => select_commit_filtered(&all, &p, commit.id()),
-                None => select_filtered(std::slice::from_ref(&self.target.root), &all, &p),
+                None => select_filtered(std::slice::from_ref(&target.root), &all, &p),
             };
             match selection {
                 Ok(selected) => OwnedSelection::from(selected),
@@ -1189,7 +1203,7 @@ impl Server {
             {
                 return failure("pass `ids` alone, without status, path, since, after, or limit");
             }
-            let all = match self.fetch_exact() {
+            let all = match self.fetch_exact(&target) {
                 Ok(all) => all,
                 Err(error) => return failure(error),
             };
@@ -1199,10 +1213,10 @@ impl Server {
             }
         };
 
-        let mut trees = Trees::new(&self.target.root);
+        let mut trees = Trees::new(&target.root);
         let mut shown = Vec::with_capacity(selected.threads.len());
         for thread in &selected.threads {
-            let location = match trees.locate(&self.target.root, thread) {
+            let location = match trees.locate(&target.root, thread) {
                 Ok(location) => location,
                 Err(error) => return failure(error),
             };
@@ -1210,14 +1224,14 @@ impl Server {
         }
         let output = match selected_commit {
             Some(commit) => ThreadsSuccess::Selected(SelectedThreadsOutput {
-                checkout: self.target.root.clone(),
+                checkout: target.root.clone(),
                 resolved_commit: commit.id().as_str().to_owned(),
                 threads: shown,
                 more: selected.more,
                 next_after: selected.next_after,
             }),
             None => ThreadsSuccess::Ordinary(ThreadsOutput {
-                checkout: self.target.root.clone(),
+                checkout: target.root.clone(),
                 threads: shown,
                 more: selected.more,
                 next_after: selected.next_after,
@@ -1256,6 +1270,10 @@ impl Server {
         Parameters(p): Parameters<ReplyParams>,
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
+        let target = match self.target(p.workspace.as_deref()) {
+            Ok(target) => target,
+            Err(error) => return failure(error),
+        };
         if p.replies.is_empty() {
             return failure("`replies` must contain at least one reply");
         }
@@ -1263,15 +1281,15 @@ impl Server {
             Ok(identity) => identity,
             Err(error) => return failure(error),
         };
-        let all = match self.fetch() {
+        let all = match self.fetch(&target) {
             Ok(all) => all,
             Err(error) => return failure(error),
         };
-        let probe_store = match Store::open_workspace(&self.dirs, &self.target.key) {
+        let probe_store = match Store::open_workspace(&self.dirs, &target.key) {
             Ok(store) => store,
             Err(error) => return failure(error.to_string()),
         };
-        let mut trees = Trees::new(&self.target.root);
+        let mut trees = Trees::new(&target.root);
         let mut seen = HashSet::with_capacity(p.replies.len());
         let mut seen_keys = HashSet::with_capacity(p.replies.len());
         let mut validated = Vec::with_capacity(p.replies.len());
@@ -1333,7 +1351,7 @@ impl Server {
                 validated.push(ValidatedReply {
                     index,
                     item,
-                    root: self.target.root.clone(),
+                    root: target.root.clone(),
                 });
             } else {
                 if exact_thread.is_some_and(Thread::is_archived) {
@@ -1343,7 +1361,7 @@ impl Server {
                     ));
                     continue;
                 }
-                match validate_reply(&item, &all, &mut trees, &self.target.root) {
+                match validate_reply(&item, &all, &mut trees, &target.root) {
                     Ok(root) => validated.push(ValidatedReply { index, item, root }),
                     Err(error) => problems.push(BatchIssue::new(index, error)),
                 }
@@ -1356,7 +1374,7 @@ impl Server {
         let mut answered = Vec::with_capacity(validated.len());
         for position in 0..validated.len() {
             let item = &validated[position];
-            match self.reply_one(author.clone(), &caller, item) {
+            match self.reply_one(&target, author.clone(), &caller, item) {
                 Ok(answer) => answered.push(answer),
                 Err(error) => {
                     return partial_reply_failure(
@@ -1364,12 +1382,12 @@ impl Server {
                         item,
                         &validated[position + 1..],
                         error,
-                        &self.target.root,
+                        &target.root,
                     );
                 }
             }
         }
-        let mut trees = Trees::new(&self.target.root);
+        let mut trees = Trees::new(&target.root);
         let mut results = Vec::with_capacity(answered.len());
         for answered in &answered {
             let placement = match trees.place(&answered.root, &answered.thread) {
@@ -1383,7 +1401,7 @@ impl Server {
             });
         }
         CallToolResult::structured(json!(ReplyWriteOutput {
-            checkout: self.target.root.clone(),
+            checkout: target.root.clone(),
             results,
         }))
     }
@@ -1407,6 +1425,7 @@ struct Answered {
 impl Server {
     fn reply_one(
         &self,
+        target: &Target,
         author: Author,
         caller: &str,
         validated: &ValidatedReply,
@@ -1416,7 +1435,7 @@ impl Server {
         let lines = item_lines(item);
         let answer = headless_reply(
             &self.dirs,
-            &self.target,
+            target,
             &validated.root,
             &thread,
             author,
@@ -2187,6 +2206,7 @@ mod tests {
             std::slice::from_ref(&dir.0),
             all,
             &ThreadsParams {
+                workspace: None,
                 source: None,
                 status: None,
                 path: None,
@@ -2202,6 +2222,7 @@ mod tests {
             std::slice::from_ref(&dir.0),
             all,
             &ThreadsParams {
+                workspace: None,
                 source: None,
                 status: None,
                 path: None,
@@ -2238,6 +2259,7 @@ mod tests {
             std::slice::from_ref(&dir.0),
             store.threads(),
             &ThreadsParams {
+                workspace: None,
                 source: None,
                 status: None,
                 path: None,
@@ -2256,6 +2278,7 @@ mod tests {
             std::slice::from_ref(&dir.0),
             store.threads(),
             &ThreadsParams {
+                workspace: None,
                 source: None,
                 status: None,
                 path: None,

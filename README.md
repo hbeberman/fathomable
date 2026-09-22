@@ -51,7 +51,8 @@ code --add-mcp '{"name":"fathomable","type":"stdio","command":"fathomable","args
 
 Fathomable must be on `PATH` in the Linux environment where the server runs.
 See the [setup guide](docs/guide.md#connect-an-agent) for configuration and
-remote-workspace details.
+remote-workspace details, including the opt-in mutable-root mode for one MCP
+server operating across projects.
 
 ## Using it
 
@@ -70,9 +71,11 @@ including the commit gate, dependency monitoring, and maintaining the doc
 bundle. Durable project knowledge lives under [`docs/`](docs/index.md).
 
 ## AI Notice
+
 This project is developed largely via LLM coding agents.
 
 ## Support Policy
+
 **Early alpha:** expect features to appear, change, or disappear at
 any time. Fathomable stores are not guaranteed to survive upgrades or
 downgrades; treat annotations, review points, and other app state as

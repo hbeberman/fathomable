@@ -615,6 +615,16 @@ claude mcp add --scope user fathomable -- fathomable --mcp
 codex mcp add fathomable -- fathomable --mcp
 ```
 
+To let one server operate across projects, launch it with
+`fathomable --mcp --allow-mutable-mcp-root [DIR]`. This adds an optional `workspace`
+parameter to `threads`, `thread_start`, and `thread_reply`. It is the project
+root to operate on and supports main checkouts and linked worktrees; when
+omitted, it defaults to the checkout discovered from `DIR`, or the server
+process's startup working directory when `DIR` is omitted. The tool schemas
+show the resolved default path. Overrides apply only to the current call.
+Enabling the flag delegates selection of any accessible project root to the
+MCP caller.
+
 For Copilot CLI, the command adds the server to
 `~/.copilot/mcp-config.json`. Launch Copilot from the checkout you want to
 review. To configure it manually, merge this entry into the existing

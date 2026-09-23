@@ -847,6 +847,7 @@ pub(crate) struct App {
     /// This viewer-local projection prevents one worktree from rewriting the
     /// repository board's path for every other worktree.
     local_thread_paths: HashMap<ThreadId, PathBuf>,
+    thread_moves: threads::moves::ThreadMoves,
     /// What the loop's watcher must move to, once (ADR 0070).
     rewatch: Option<worktrees::Rewatch>,
 }
@@ -989,6 +990,7 @@ impl App {
             reach_cache: HashMap::new(),
             elsewhere: HashMap::new(),
             local_thread_paths: HashMap::new(),
+            thread_moves: threads::moves::ThreadMoves::new(),
             rewatch: None,
         };
         if app.sidebar.tree && !app.ensure_tree() {
@@ -999,6 +1001,7 @@ impl App {
         app.refresh_status();
         app.refresh_comparison();
         app.refresh_reach();
+        app.trigger_thread_moves();
         if shared_state_ancestor_count > 0 && app.message.is_none() {
             app.startup_warning(format!(
                 "{shared_state_ancestor_count} group-writable state ancestor{}; run :doctor for details",
@@ -1499,6 +1502,9 @@ impl App {
             self.refresh_base(index);
         }
         self.refresh_reach();
+        if !self.thread_moves.matches_workspace(&self.workspace) {
+            self.trigger_thread_moves();
+        }
     }
 
     /// Reconcile state after the platform reports that watcher events were
@@ -1514,6 +1520,9 @@ impl App {
             self.refresh_base(index);
         }
         self.refresh_reach();
+        self.thread_moves.clear();
+        self.local_thread_paths.clear();
+        self.trigger_thread_moves();
 
         let root = self.workspace.root().to_path_buf();
         let loaded: Vec<PathBuf> = self.docs.iter().map(|doc| doc.relative.clone()).collect();
@@ -1629,6 +1638,14 @@ impl App {
             }
         };
         self.remember_thread_moves(&moved);
+        if !self.thread_moves.renamed(
+            from,
+            to,
+            is_dir,
+            self.workspace.limits().comparison_path_limit(),
+        ) {
+            self.notice("rename recovery exceeded the comparison path limit");
+        }
         self.refresh_review_paths();
         let tracks_working_tree = self.displayed_target_is_working_tree();
         if !tracks_working_tree {
@@ -2850,6 +2867,7 @@ impl App {
         self.comparison.pending()
             || self.comparison.index_prompt_pending()
             || self.landing.pending()
+            || self.thread_moves.pending()
             || self.file_index.pending()
             || self.all_index.pending()
             || self.tree_walk.pending()
@@ -2933,11 +2951,18 @@ impl App {
             }
         }
         let landed = self.poll_landing();
+        let moved = self.poll_thread_moves();
         let indexed = self.file_index.poll() | self.all_index.poll();
         if indexed || compared || target_changed {
             self.refresh_active_file_picker();
         }
-        tree_changed || indexed || compared || index_prompt_changed || target_changed || landed
+        tree_changed
+            || indexed
+            || compared
+            || index_prompt_changed
+            || target_changed
+            || landed
+            || moved
     }
 
     #[cfg(test)]

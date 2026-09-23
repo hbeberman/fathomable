@@ -22,6 +22,7 @@ pub(crate) mod file;
 pub(crate) mod fold;
 pub(crate) mod list;
 pub(crate) mod list_fold;
+pub(crate) mod moves;
 pub(crate) mod open;
 pub(crate) mod pane;
 pub(crate) mod peek;
@@ -231,6 +232,7 @@ impl App {
         if self.displayed_target_is_working_tree() {
             self.local_thread_paths
                 .get(thread.id())
+                .or_else(|| self.thread_moves.paths.get(thread.id()))
                 .map_or_else(|| thread.path(), PathBuf::as_path)
         } else {
             thread.path()
@@ -486,13 +488,7 @@ impl App {
         let targets: Vec<(ThreadId, PathBuf)> = store
             .threads()
             .iter()
-            .filter_map(|thread| {
-                let path = self
-                    .local_thread_paths
-                    .get(thread.id())
-                    .map_or_else(|| thread.path(), PathBuf::as_path);
-                Some((thread.id().clone(), moved(path)?))
-            })
+            .filter_map(|thread| Some((thread.id().clone(), moved(self.thread_path(thread))?)))
             .collect();
         for (id, path) in &targets {
             self.local_thread_paths.insert(id.clone(), path.clone());
@@ -512,6 +508,7 @@ impl App {
     /// Recompute commit membership once after a store reload or viewer write.
     pub(super) fn refresh_after_thread_store_change(&mut self) {
         self.recompute_reach();
+        self.trigger_thread_moves();
         self.refresh_all_marks();
         self.reconcile_normal_thread_cursor();
     }

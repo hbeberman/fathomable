@@ -411,6 +411,7 @@ impl App {
         }
 
         if changed {
+            self.trigger_thread_moves();
             self.refresh_all_marks();
             self.refresh_review_paths();
             self.reconcile_normal_thread_cursor();

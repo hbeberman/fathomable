@@ -266,6 +266,7 @@ impl App {
         self.status = fathomable_core::status::Status::default();
         self.status_stale = false;
         self.local_thread_paths.clear();
+        self.thread_moves.clear();
         self.workspace = workspace;
         self.worktree_issue = None;
         self.comparison.reload(&self.dirs, &self.workspace);
@@ -282,6 +283,7 @@ impl App {
         self.refresh_status();
         self.refresh_comparison();
         self.refresh_reach();
+        self.trigger_thread_moves();
         if self.sidebar.tree {
             self.ensure_tree();
         }

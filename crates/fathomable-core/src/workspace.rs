@@ -2494,6 +2494,109 @@ impl Workspace {
                 }))
     }
 
+    /// Find unambiguous exact file moves from an ancestor commit to a later commit.
+    ///
+    /// A move requires one deleted regular blob and one newly added regular
+    /// blob with the same object ID, with no other occurrence in either tree.
+    /// Paths retained at both endpoints, copies, and ambiguous blobs are not
+    /// moves. This does not infer renames whose content changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when history or either complete tree is
+    /// unavailable, corrupt, cancelled, or exceeds the configured budgets.
+    pub fn exact_commit_moves(
+        &self,
+        source: &CommitId,
+        target: &CommitId,
+    ) -> Result<Vec<(PathBuf, PathBuf)>, WorkspaceError> {
+        let repo = self.exact_repository(target.as_str(), MAX_EXACT_METADATA_BYTES)?;
+        let source_id = parse_object_id(source)
+            .map_err(|message| self.revision_error(source.as_str(), &message))?;
+        let target_id = parse_object_id(target)
+            .map_err(|message| self.revision_error(target.as_str(), &message))?;
+        let mut budget = CommitGraphBudget::new(
+            self.limits.comparison_path_limit(),
+            self.limits.comparison_bytes.max(MAX_EXACT_METADATA_BYTES),
+        );
+        budget
+            .discover(target_id)
+            .map_err(|message| self.revision_error(target.as_str(), &message))?;
+        let mut pending = vec![target_id];
+        let mut ancestor = false;
+        while let Some(id) = pending.pop() {
+            self.check_scan()?;
+            if id == source_id {
+                inspect_commit_header(&repo, id, &mut budget)
+                    .map_err(|message| self.revision_error(source.as_str(), &message))?;
+                ancestor = true;
+                break;
+            }
+            for parent in commit_parents(&repo, id, &mut budget)
+                .map_err(|message| self.revision_error(target.as_str(), &message))?
+            {
+                if !budget.discovered.contains(&parent) {
+                    budget
+                        .discover(parent)
+                        .map_err(|message| self.revision_error(target.as_str(), &message))?;
+                    pending.push(parent);
+                }
+            }
+        }
+        if !ancestor || source == target {
+            return Ok(Vec::new());
+        }
+
+        let before = self.exact_commit_entries(source)?;
+        let after = self.exact_commit_entries(target)?;
+        let before_paths: HashSet<&[u8]> = before.iter().map(|entry| entry.path.as_ref()).collect();
+        let after_paths: HashSet<&[u8]> = after.iter().map(|entry| entry.path.as_ref()).collect();
+        let mut before_blobs = HashMap::<&str, usize>::new();
+        let mut after_blobs = HashMap::<&str, Vec<&IndexManifestEntry>>::new();
+        for entry in &before {
+            *before_blobs.entry(entry.object()).or_default() += 1;
+        }
+        for entry in &after {
+            after_blobs.entry(entry.object()).or_default().push(entry);
+        }
+
+        let mut moves = Vec::new();
+        for entry in &before {
+            if after_paths.contains(entry.path.as_ref())
+                || !matches!(entry.mode, FileMode::Regular | FileMode::Executable)
+                || before_blobs.get(entry.object()) != Some(&1)
+            {
+                continue;
+            }
+            let Some(destinations) = after_blobs.get(entry.object()) else {
+                continue;
+            };
+            let [destination] = destinations.as_slice() else {
+                continue;
+            };
+            if before_paths.contains(destination.path.as_ref())
+                || !matches!(destination.mode, FileMode::Regular | FileMode::Executable)
+            {
+                continue;
+            }
+            let from = gix::path::from_bstr(entry.path.as_ref().as_bstr()).into_owned();
+            let to = gix::path::from_bstr(destination.path.as_ref().as_bstr()).into_owned();
+            let blob_id = ObjectId::from_hex(entry.object().as_bytes())
+                .map_err(|error| self.revision_error(source.as_str(), &error.to_string()))?;
+            let header = repo.find_header(blob_id).map_err(|error| {
+                self.revision_error(
+                    source.as_str(),
+                    &format!("cannot inspect moved blob: {error}"),
+                )
+            })?;
+            if header.kind() != gix::objs::Kind::Blob {
+                return Err(self.revision_error(source.as_str(), "moved file is not a blob"));
+            }
+            moves.push((from, to));
+        }
+        Ok(moves)
+    }
+
     fn exact_commit_entries(
         &self,
         id: &CommitId,

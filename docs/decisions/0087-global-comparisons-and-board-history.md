@@ -7,6 +7,7 @@ related_resources:
   - crates/fathomable-core/src/review_points.rs
   - crates/fathomable/src/app/review_points.rs
   - crates/fathomable/src/app/threads/archive.rs
+  - crates/fathomable/src/app/threads/moves.rs
 tags:
   - annotations
   - architecture
@@ -461,11 +462,28 @@ Live working-tree reloads may persist a trustworthy local relocation.
 Working-file events never relocate a thread while the viewer displays an
 immutable target.
 
-An exact working-tree rename is remembered by that viewer as a projection
-local to the active checkout. Switching worktrees or restarting discards that
-projection. It is not appended as one global board path that would overwrite
-another worktree's answer. Without enough bounded evidence, the renamed path
-may therefore detach rather than claim a shared current name.
+An exact working-tree rename is remembered by that viewer as a live-event
+projection local to the active checkout. Switching worktrees or restarting
+discards that live-event projection. It is not appended as one global board
+path that would overwrite another worktree's answer. Without enough bounded
+evidence, the renamed path may therefore detach rather than claim a shared
+current name.
+
+Amended 2026-09-23: on startup, store changes, HEAD changes, and worktree
+switches, the viewer also recovers unambiguous *committed* moves into its
+active working tree. It compares bounded exact commit trees: the source must
+be an ancestor of the active HEAD, the original regular file must disappear,
+and exactly one newly added regular file must carry its blob object. Any
+other occurrence of that blob in either tree prevents the match. Mutable
+origins additionally need a complete-file digest matching the recorded path
+at their observed or landed commit; an observed HEAD by itself is not proof.
+The destination must still be a confined regular working-tree file. Recovery
+runs on a cancellable worker and reports unavailable or limited scans; its
+paths remain viewer-local, never rewriting the shared board or immutable
+origin. Live rename events can further advance a recovered path in that
+viewer. Edited-and-renamed content, ambiguous identical files, unrelated
+branch histories, and missing evidence are not automatically followed.
+Immutable targets and MCP placement keep their own path interpretation.
 
 Automatic last-seen snapshots, idle marks, mark-all-seen, snapshot pinning,
 startup snapshot relocation, and automatic follow-HEAD rescoping are

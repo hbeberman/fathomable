@@ -112,6 +112,11 @@ The **File list** title menu has four session filters: **only changed**,
 reviews means files with an active or resolution-proposed, non-archived thread
 in the current workspace. Filters combine, and the File list header names active
 filters compactly as `c`, `r`, `u`, and `i`.
+After a committed file move, a fresh viewer can show threads at the new
+working-tree path when their recorded source and the current commit prove one
+unambiguous, byte-identical move. Their original path remains in the shared
+thread history. Edited or ambiguous moves are not guessed; selecting an older
+comparison may still list its Source-only paths.
 
 `Space f` contains file-opening workflows: `f` opens the ordinary picker, `i`
 includes ignored paths, and `r` lists files opened during this viewer session.

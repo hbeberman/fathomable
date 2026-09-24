@@ -693,6 +693,24 @@ to reply without relocating it, including when the source is detached in the
 bound checkout; supplying coordinates explicitly requests relocation and
 therefore requires readable source in that checkout.
 
+Each tool result may also include compact change hints, such as
+`"changes":[["thread-id","new"],["another-id","add"]]`. Fetch those IDs with
+`threads` for details. `existing` marks open threads on the conversation's
+first call; `new` marks a new thread, `add` a reply, and `edit` another update.
+Lifecycle hints are `resolve`, `reopen`, `archive`, `restore`, and `delete`;
+deleted threads cannot be fetched. Multiple changes to one thread coalesce
+into one hint, independent of the current query's filters. Automatic landing
+bookkeeping does not produce a hint. No relevant change means no `changes` field.
+
+Tracking is per conversation and repository, in memory until the MCP server
+restarts. Copilot CLI and VS Code use their automatic chat identities; subagents
+sharing an identity share a checkpoint. If identity or tracking is unavailable,
+`changes` contains a short prompt to use `threads` with `since` (Unix seconds),
+`status:"all"`, and optional `path`, keeping a timestamp in the agent. That
+fallback lists non-archived changes, not archived or deleted threads. Hints
+arrive only with Fathomable tool results, not while an agent is idle or using
+other tools, and do not acknowledge or resolve discussions.
+
 #### Per-call commit sources
 
 Only `threads` and `thread_start` accept the optional top-level selector:

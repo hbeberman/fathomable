@@ -22,6 +22,7 @@ use serde_json::json;
 use crate::app::threads::{agent_start_draft, read_checkout_text};
 
 use super::Server;
+use super::changes::WithChanges;
 use super::source::Source;
 use super::tools::{
     BatchIssue, SelectedWriteOutput, Shown, StartSuccess, Tree, WriteOutput, check_path, failure,
@@ -87,7 +88,7 @@ struct Placed {
 impl Server {
     #[tool(
         name = "thread_start",
-        output_schema = rmcp::handler::server::tool::schema_for_output::<StartSuccess>(),
+        output_schema = rmcp::handler::server::tool::schema_for_output::<WithChanges<StartSuccess>>(),
         description = "Start one or more new review discussions. Pass exactly one non-empty \
                        `comments` array. Start one discussion per independently actionable finding, \
                        placed on the narrowest relevant repository file or optional 1-based line \

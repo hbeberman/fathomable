@@ -3,6 +3,8 @@ type: Decision
 title: Store-only MCP and independent thread refresh
 description: MCP writes directly to the shared thread store; viewers observe it without a socket protocol or the workspace debounce.
 resource: crates/fathomable/src/mcp/mod.rs
+related_resources:
+  - crates/fathomable/src/mcp/changes.rs
 tags:
   - annotations
   - architecture
@@ -87,6 +89,73 @@ than an unrelated viewer-local projection.
 The viewer keeps its ephemeral rename projection for display, as specified
 by [0087](0087-global-comparisons-and-board-history.md). It is not promoted
 into a shared rename registry or a second agent-write interpretation.
+
+### Tool results carry compact change hints
+
+Every completed business-tool result, including application errors, carries
+optional model-visible `changes` hints for the selected repository and the
+automatically identified conversation. Initialization, tool discovery, and
+protocol errors do not observe or advance checkpoints. VS Code uses per-call
+conversation metadata; Copilot CLI uses its launch identity. Shared subagent
+identities necessarily share a checkpoint.
+
+The compact shape is `{"changes":[["thread-id","new"]]}`. Each affected thread
+appears at most once, in ID order, without bodies, paths, authors, or timestamps:
+
+| Kind | Meaning |
+| --- | --- |
+| `existing` | Open, non-archived thread in this conversation's first result. |
+| `new` | Thread first observed after the initial result. |
+| `add` | One or more replies added. |
+| `edit` | Another persisted update, including message edits, placement, or permissions. |
+| `resolve` / `reopen` | Resolution or reopening. |
+| `archive` / `restore` | Archival or restoration. |
+| `delete` | A tombstone removed the thread; it cannot be fetched. |
+
+Agents fetch the indicated IDs with `threads`, except for deletion hints.
+Hints cover the repository board, including archived history, independently
+of the call's path, status, source, pagination, or exact-ID filters. Linked
+worktrees share the repository checkpoint; unrelated repositories do not.
+The first result seeds all thread states but announces only current open,
+non-archived threads. This includes threads created by that first call.
+Later results include the caller's own writes as well as other writers.
+
+This is a coalesced changed-thread hint, not an event log. Newly observed
+threads use `new`; otherwise archive/restore and resolution transitions take
+precedence over added replies, with `edit` for remaining changes. Intermediate
+states need not be reported separately. Reading the complete thread remains
+necessary to understand the change. Automatic landing-only bookkeeping is
+excluded: recording a matching commit neither changes the discussion nor
+requires an agent to reread it. The durable landing record remains intact,
+and replies or edits alongside landing still produce their normal hints.
+When nothing relevant changed, the field is absent.
+Structured results and their JSON text fallback include the same hints.
+Plain-text errors retain their original content and append a compact JSON
+hint block.
+
+Checkpoints live only in the MCP process and reset on restart. They retain
+per-thread append-log revisions and classification facts, not copied message
+bodies. They do not depend on wall-clock timestamps, so edits in the same
+second are observed. Checkpoint observation and advancement are serialized;
+advancement occurs when constructing the response, not on an acknowledgement
+from the agent. This is best-effort visibility, not exactly-once delivery.
+It does not resolve, acknowledge, or persistently mark discussions as read.
+
+Missing, unsupported, or malformed caller identity disables hints for that
+request only. The result instead includes a short `changes` string directing
+the agent to query `threads` with `since` (Unix seconds), `status:"all"`, and
+optional `path`, retaining its own timestamp. This manual fallback covers
+non-archived changed threads, not every archive or deletion event. There is no
+anonymous shared checkpoint, and write identity requirements remain unchanged.
+An invalid workspace never falls back to another repository's hints.
+
+Store or checkpoint failures likewise produce explicit unavailable guidance
+and a diagnostic, without replacing the tool's result or advancing its
+checkpoint. A previously observed store disappearing or its append cursor
+regressing is not an empty successful update. Recovery can reuse the retained
+checkpoint when the valid history returns; intentional history replacement
+requires an MCP restart. Arbitrary external history rewrites are not a
+supported change-feed mechanism.
 
 ### Thread observation is independent of workspace debounce
 

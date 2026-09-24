@@ -5,6 +5,7 @@
 //! or the process working directory when `DIR` is omitted. The explicit
 //! `--allow-mutable-mcp-root` mode instead lets each call select a checkout.
 
+mod changes;
 mod identity;
 mod source;
 mod start;
@@ -19,9 +20,10 @@ use fathomable_core::annotations::{Author, Store, Thread};
 use fathomable_core::workspace::Workspace;
 use identity::Launch;
 use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::model::{
-    CacheScope, Implementation, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
-    ResultType, ServerCapabilities, ServerConfig,
+    CacheScope, CallToolRequestParams, CallToolResponse, Implementation, ListToolsResult,
+    PaginatedRequestParams, ProtocolVersion, ResultType, ServerCapabilities, ServerConfig,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt, tool_handler};
@@ -65,6 +67,7 @@ pub(crate) struct Server {
     root_mode: RootMode,
     launch: Launch,
     tool_router: ToolRouter<Self>,
+    changes: changes::Tracker,
 }
 
 impl std::fmt::Debug for Server {
@@ -106,6 +109,7 @@ impl Server {
             root_mode,
             launch,
             tool_router: Self::router(),
+            changes: changes::Tracker::default(),
         }
     }
 
@@ -171,6 +175,35 @@ impl ServerHandler for Server {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("fathomable", env!("CARGO_PKG_VERSION")))
             .with_instructions(tools::instructions())
+    }
+
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let scope = self.launch.require(&context).and_then(|caller| {
+            let workspace = request
+                .arguments
+                .as_ref()
+                .and_then(|arguments| arguments.get("workspace"))
+                .map(|value| serde_json::from_value::<Option<PathBuf>>(value.clone()))
+                .transpose()
+                .map_err(|error| error.to_string())?
+                .flatten();
+            self.target(workspace.as_deref())
+                .map(|target| (target, caller.id))
+        });
+        let mut response = self
+            .tool_router
+            .call(ToolCallContext::new(self, request, context))
+            .await?;
+        if let CallToolResponse::Complete(result) = &mut response {
+            let hints =
+                scope.and_then(|(target, caller)| self.changes.hints(&self.dirs, &target, caller));
+            changes::attach(result, hints);
+        }
+        Ok(response)
     }
 
     async fn list_tools(

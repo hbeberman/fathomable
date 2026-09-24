@@ -28,6 +28,7 @@ use serde_json::{Value, json};
 
 use crate::app::threads::read_checkout_text;
 
+use super::changes::WithChanges;
 use super::source::{After, CommitRequest, Source};
 use super::{Server, Target};
 /// `threads` arguments.
@@ -1109,7 +1110,7 @@ impl Trees {
 #[tool_router(vis = "pub(super)")]
 impl Server {
     #[tool(
-        output_schema = rmcp::handler::server::tool::schema_for_output::<ThreadsSuccess>(),
+        output_schema = rmcp::handler::server::tool::schema_for_output::<WithChanges<ThreadsSuccess>>(),
         description = "Read review discussions in this repository checkout. By default returns \
                        all non-archived open discussions with their complete conversation, \
                        immutable origin, current placement, and lifecycle history. Filter with \
@@ -1241,7 +1242,7 @@ impl Server {
     }
 
     #[tool(
-        output_schema = rmcp::handler::server::tool::schema_for_output::<ReplyWriteOutput>(),
+        output_schema = rmcp::handler::server::tool::schema_for_output::<WithChanges<ReplyWriteOutput>>(),
         description = "Continue one or more existing, non-archived review discussions. Pass exactly one \
                        non-empty `replies` array. Each item gives a concise resolution: what changed \
                        and where, or why no change was made. Include only a small focused snippet \
@@ -2052,7 +2053,14 @@ pub(super) fn instructions() -> String {
      Use thread_start for new findings or questions and thread_reply to continue \
      existing discussions. A resolution_proposed result is successful and awaits \
      the Fathomable user's review in Fathomable; do not ask for confirmation in \
-     chat and do not retry it. Reading a thread does not authorize changes."
+     chat and do not retry it. Reading a thread does not authorize changes. \
+     Tool results may include changes:[[id,kind]] hints; fetch those IDs with threads, \
+     except delete means the thread is gone. existing marks startup open threads; \
+     new marks a new thread, add a reply, edit another update; resolve/reopen and \
+     archive/restore mark lifecycle changes. Hints are coalesced per repository/chat \
+     until the next tool result, reset on server restart, and absent when unchanged. \
+     If tracking is unavailable, query threads with since (Unix seconds), status:\"all\" \
+     and optional path, keeping your own timestamp."
         .to_owned()
 }
 

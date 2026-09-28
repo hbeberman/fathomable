@@ -31,7 +31,7 @@ anyhow = "1.0.104"
 cap-std = "4.0.3"
 clap = "4.6.7"
 crossterm = "0.29.0"
-gix = { version = "0.87", default-features = false }
+gix = { version = "0.88", default-features = false }
 kdl = { version = "6", default-features = false }
 notify = "8"
 nucleo-matcher = "0.3"

@@ -21,6 +21,9 @@ use fathomable_core::workspace::Workspace;
 use fathomable_testing::TempDir;
 use serde_json::{Value, json};
 
+#[path = "mcp/changes.rs"]
+mod changes;
+
 struct Fixture {
     dir: TempDir,
     dirs: XdgDirs,
@@ -1309,7 +1312,11 @@ fn commit_source_head_retry_requires_the_original_pin_after_head_moves() -> Resu
         "source": {"kind": "commit", "revision": "HEAD"},
         "comments": [{"path": "a.md", "body": "keyed", "idempotency_key": "head"}]
     });
-    let first = client.ok("thread_start", request.clone())?;
+    let mut first = client.ok("thread_start", request.clone())?;
+    first["structuredContent"]
+        .as_object_mut()
+        .context("start result")?
+        .remove("changes");
     assert_eq!(
         client.ok("thread_start", request.clone())?["structuredContent"],
         first["structuredContent"]

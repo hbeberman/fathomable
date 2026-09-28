@@ -12,6 +12,12 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Change hints amended 2026-09-23 by
+[0089](0089-store-only-mcp.md#tool-results-carry-compact-change-hints):
+business-tool results may add compact per-conversation `changes` pairs, or
+filtered-query guidance when tracking is unavailable. Output schemas describe
+the optional field; structured results and text fallbacks remain identical.
+
 Commit source contracts amended 2026-09-19 by
 [0092](0092-per-call-commit-sources.md): selected read/start successes add a
 required canonical full `resolved_commit`, while omitted-source result shapes

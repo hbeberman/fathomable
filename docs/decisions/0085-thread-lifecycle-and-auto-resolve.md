@@ -12,6 +12,12 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Circle presentation amended 2026-10-02 by
+[0086](0086-one-thread-summary-and-its-actions.md#author-colours-circle-shapes-and-lifecycle-counts):
+colour follows the latest message's author, and an active thread with one-shot
+auto-resolve permission draws a half circle too. Stored lifecycle and authority
+remain unchanged.
+
 Transport amended 2026-09-18 by [0089](0089-store-only-mcp.md):
 all MCP writes use the store directly and viewers reconcile observed
 activity without a socket. Atomic reply authority, original retry outcomes,

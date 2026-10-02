@@ -13,6 +13,11 @@ tags:
 
 Status: accepted (2026-09-09)
 
+Amended 2026-10-02 by
+[0086](0086-one-thread-summary-and-its-actions.md#author-colours-circle-shapes-and-lifecycle-counts):
+circle and bracket foregrounds follow the latest message's author rather than
+lifecycle. The focused bracket background remains unchanged.
+
 ## Context
 
 The text column had come to carry several backgrounds at once. Every

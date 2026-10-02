@@ -209,9 +209,9 @@ pub enum Key {
     ThreadBracket,
     /// The background of a thread's stub and expanded rows (ADR 0049).
     ThreadInline,
-    /// The user's messages (ADR 0071): `fg` the name, `bg` the stripe.
+    /// User messages and latest-human thread marks: `fg` names/marks, `bg` stripes.
     ThreadUser,
-    /// An agent's messages (ADR 0071): `fg` the name, `bg` the stripe.
+    /// Agent messages and latest-agent thread marks: `fg` names/marks, `bg` stripes.
     ThreadAgent,
     /// The background of a draft's rows while it is written (ADR 0071).
     ThreadDraft,

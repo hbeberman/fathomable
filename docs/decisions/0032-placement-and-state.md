@@ -19,6 +19,11 @@ active, resolution-proposed, or resolved lifecycle glyph. The old
 placement/state word pair, waiting and auto-resolved states, and detached
 `?` glyph are historical. The single-write append guarantee remains.
 
+Circle presentation amended 2026-10-02 by
+[0086](0086-one-thread-summary-and-its-actions.md#author-colours-circle-shapes-and-lifecycle-counts):
+`Words` keeps lifecycle, latest message author, and one-shot permission.
+Colour follows the author; half circles mark current proposals or permission.
+
 Previously amended 2026-09-05 by
 [0066](0066-one-circle-language.md): the `✓` retires; `Words::glyph()` picks the
 one circle every surface draws.

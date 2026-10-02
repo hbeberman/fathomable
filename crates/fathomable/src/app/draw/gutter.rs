@@ -14,7 +14,8 @@ use fathomable_core::annotations::LineRange;
 use fathomable_core::diff::LineStatus;
 
 use crate::app::App;
-use crate::app::threads::{Mark, ThreadState, overlaps};
+use crate::app::threads::words::Words;
+use crate::app::threads::{Mark, overlaps};
 
 impl App {
     /// The git status and staging state drawn on `row`, including
@@ -50,7 +51,7 @@ impl App {
     /// current view, or `None` when no thread touches it: the bracket
     /// of the threads on its lines, `│` on a sourceless row a thread
     /// spans, `?` on a detached thread's row (ADR 0039, ADR 0066).
-    pub(crate) fn note_on_row(&self, row: usize) -> Option<(&'static str, ThreadState)> {
+    pub(crate) fn note_on_row(&self, row: usize) -> Option<(&'static str, Words)> {
         let view = self.view();
         if let Some(anchor) = view.detached_anchor_of_row(row) {
             return self.detached_note(anchor);
@@ -85,11 +86,11 @@ impl App {
     }
 
     /// The most urgent thread covering both `above` and `below`.
-    fn spanning_mark(&self, above: LineRange, below: LineRange) -> Option<ThreadState> {
+    fn spanning_mark(&self, above: LineRange, below: LineRange) -> Option<Words> {
         self.placed_marks()
             .filter(|mark| mark.covers(above) && mark.covers(below))
-            .map(Mark::kind)
-            .max()
+            .map(Mark::words)
+            .max_by_key(|words| words.urgency())
     }
 
     /// The note-cell glyph and colour for a rendered row holding `lines`,
@@ -101,18 +102,22 @@ impl App {
     /// bracketed across its rows. The thread that starts or ends here
     /// with the shortest range decides the bracket, so a nested thread's
     /// corners sit on the outer thread's line; a bracket beats a dot. The
-    /// colour is the most urgent state on the row.
+    /// colour follows the latest author of the most urgent thread on the row.
     pub(crate) fn note_in(
         &self,
         lines: LineRange,
         above: Option<LineRange>,
         below: Option<LineRange>,
-    ) -> Option<(&'static str, ThreadState)> {
-        let kind = self.mark_in(lines)?;
+    ) -> Option<(&'static str, Words)> {
+        let words = self
+            .placed_marks()
+            .filter(|mark| mark.covers(lines))
+            .map(Mark::words)
+            .max_by_key(|words| words.urgency())?;
         let mut bracket: Option<(usize, &'static str)> = None;
         // The most urgent one-row thread's circle, when a bracket does
         // not take the cell.
-        let mut point: Option<(ThreadState, &'static str)> = None;
+        let mut point: Option<Words> = None;
         for mark in self.placed_marks().filter(|mark| mark.covers(lines)) {
             let Some(range) = mark.range() else {
                 continue;
@@ -121,9 +126,9 @@ impl App {
                 |rows: Option<LineRange>| rows.is_some_and(|rows| overlaps(range, rows));
             let glyph = match (continues(above), continues(below)) {
                 (false, false) => {
-                    let urgency = mark.words().urgency();
-                    if point.is_none_or(|(loudest, _)| urgency > loudest) {
-                        point = Some((urgency, mark.glyph()));
+                    let candidate = mark.words();
+                    if point.is_none_or(|loudest| candidate.urgency() > loudest.urgency()) {
+                        point = Some(candidate);
                     }
                     continue;
                 }
@@ -135,11 +140,10 @@ impl App {
                 bracket = Some((range.len(), glyph));
             }
         }
-        let glyph = match bracket {
-            Some((_, glyph)) => glyph,
-            None => point.map_or("│", |(_, glyph)| glyph),
-        };
-        Some((glyph, kind))
+        Some(match bracket {
+            Some((_, glyph)) => (glyph, words),
+            None => point.map_or(("│", words), |point| (point.glyph(), point)),
+        })
     }
 }
 

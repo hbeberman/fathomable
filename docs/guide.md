@@ -450,8 +450,8 @@ the stored excerpt remains readable.
 An expanded entry in the wide main **Threads** surface places its stored
 immutable origin context before the conversation. Source uses the origin
 path's syntax, wraps without line numbers, and marks the originally selected
-rows with the File view's highlighted anchor cell: `●` for one rendered row,
-or `╭│╰` for a wrapped or multi-line range. The surrounding source keeps one
+rows with the File view's highlighted anchor cell: the thread's circle for one
+rendered row, or `╭│╰` for a wrapped or multi-line range. The surrounding source keeps one
 background and the four-cell indent. Fathomable prepares at most 16 KiB and
 256 logical source rows; an omission marker preserves the beginning and end of
 a larger selection, and a truncation row says when capture or preparation
@@ -468,11 +468,19 @@ captured reference, not a claim that the retained bytes equal that commit.
 Compact Thread-list cards omit it. Narrow full headers keep the reference
 ahead of age, reply count, optional context, and textual lifecycle status.
 
-The lifecycle marks are **● active**, **◐ resolution proposed**, and
-**○ resolved**. You resolve or reopen with `r`. Enabling `R` gives the
-agent one chance to resolve: its next reply consumes that permission.
-Without permission, an agent's completion request is a proposal for you to
-review.
+Thread circles use the **latest message author's colour**: blue for you,
+green for an agent, including an agent-authored opening comment. Append order,
+not edit time or a later lifecycle action, decides the latest author.
+**●** means active with no resolution proposal or permission, **◐** means
+an agent requested resolution or you allowed one-shot auto-resolution, and
+**○** means resolved. The same shape and colour appear in headers, thread
+cards, source anchors, and File list marks. Aggregate header counts still
+partition lifecycle as active, resolution proposed, and resolved.
+
+You resolve or reopen with `r`. Enabling `R` gives the agent one chance to
+resolve: its next reply consumes that permission. Disabling it removes the
+half-circle permission mark unless a resolution proposal remains. Without
+permission, an agent's completion request is a proposal for you to review.
 
 Use `Tab` and `Shift-Tab` from any normal pane to cycle active and
 resolution-proposed threads across the workspace. Resolved and archived

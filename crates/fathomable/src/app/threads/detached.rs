@@ -5,7 +5,8 @@
 //! and the thread's mark, `z`, and the thread motions find it there.
 
 use crate::app::App;
-use crate::app::threads::{Mark, ThreadState};
+use crate::app::threads::Mark;
+use crate::app::threads::words::Words;
 
 impl App {
     /// The source line a detached `mark` stands before: the start of its
@@ -41,13 +42,13 @@ impl App {
             .filter(move |mark| mark.is_detached() && self.detached_anchor(mark) == anchor)
     }
 
-    /// The note cell of the detached row before `anchor`: the lifecycle
-    /// glyph and colour of the most urgent thread there (ADR 0086), or
+    /// The note cell of the detached row before `anchor`: the circle and
+    /// latest-author colour of the most urgent thread there (ADR 0086), or
     /// `None` when no thread stands there any more.
-    pub(crate) fn detached_note(&self, anchor: usize) -> Option<(&'static str, ThreadState)> {
+    pub(crate) fn detached_note(&self, anchor: usize) -> Option<(&'static str, Words)> {
         self.detached_marks_at(anchor)
-            .max_by_key(|mark| mark.kind())
-            .map(|mark| (mark.glyph(), mark.kind()))
+            .max_by_key(|mark| mark.words().urgency())
+            .map(|mark| (mark.glyph(), mark.words()))
     }
 }
 

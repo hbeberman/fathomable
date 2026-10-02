@@ -14,6 +14,13 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Amended 2026-10-02: individual thread circles and source brackets use the
+latest message author's colour, including an opening comment. A half circle
+marks either current agent resolution intent or human-granted one-shot
+auto-resolve permission; resolved threads remain hollow. This replaces the
+individual lifecycle-colour rule below without changing stored lifecycle,
+authority, header count partitions, or message order.
+
 History views and cleanup actions amended 2026-09-16 by
 [0087](0087-global-comparisons-and-board-history.md): the same summary/list
 engine now serves Recently resolved and Archived threads, with archive and
@@ -92,7 +99,7 @@ jumble of metadata.
 
 A `ThreadSummary` supplies:
 
-- lifecycle glyph and style;
+- thread-circle shape and latest-author style;
 - placement and optional worktree or historical-commit context;
 - an optional neutral captured commit reference for full headers;
 - latest message author and first body line;
@@ -159,13 +166,23 @@ The factual tail is right-aligned. The preview is the first elastic field
 to disappear. At narrower widths optional context, reply count,
 modification time, and location drop before lifecycle status.
 
-### Lifecycle colours and counts
+### Author colours, circle shapes, and lifecycle counts
 
-Lifecycle and authorship are independent. Message names and stripes keep
-`thread.user` and `thread.agent`; lifecycle uses `thread.active`,
-`thread.proposed`, and `thread.resolved`. `thread.waiting` retires.
+Lifecycle and authorship are independent. Individual circles, source
+brackets, message names, and stripes use `thread.user` or `thread.agent`.
+Circle and bracket colour follows the latest message in append order, including
+the opening comment when no reply exists; edits, permission toggles, resolution,
+and reopening do not replace that author.
 
-Header and directory counts partition threads:
+Resolved threads draw `○`. Unresolved threads draw `◐` when current lifecycle
+is resolution proposed or one-shot auto-resolve is enabled, otherwise `●`.
+Human submissions with permission therefore draw a blue half circle; agent
+completion requests draw a green half circle. Toggling permission without a new
+message changes shape, not author colour. Consuming permission or withdrawing a
+proposal restores the full circle unless the thread becomes resolved.
+
+Header counts retain `thread.active`, `thread.proposed`, and `thread.resolved`
+and partition stored lifecycle, not authors or permission:
 
 ```text
 ● 4 active  ◐ 1 resolution proposed  ○ 2 resolved
@@ -173,8 +190,9 @@ Header and directory counts partition threads:
 
 A proposal is not counted again as active. Zero counts are omitted; when
 narrow, all words drop together before counts themselves drop. Aggregate
-priority is resolution proposed, active, then resolved. Placement never
-changes the lifecycle glyph or priority.
+priority is resolution proposed, permission-enabled active, ordinary active,
+then resolved. File and folded-directory marks use the selected thread's shape
+and author colour. Placement never changes the circle or priority.
 
 The status line loses waiting. It may keep a factual proposal count and
 total thread count.

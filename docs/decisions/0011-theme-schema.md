@@ -44,6 +44,10 @@ styles. A hovered direct header action composes
 added. Amended 2026-09-17: bottom key-bar actions use the same composition
 over each whole action-hotkey target. Exact-current loading means the retired
 keys are unknown.
+Amended 2026-10-02 by
+[0086](0086-one-thread-summary-and-its-actions.md#author-colours-circle-shapes-and-lifecycle-counts):
+individual circles and source brackets use the latest author's `thread.user`
+or `thread.agent` foreground. Lifecycle roles now style header counts only.
 Amended 2026-09-18 by [0091](0091-pane-focus-navigation.md):
 `ui.pane.focus` styles only the focused pane's reserved marker and pane name.
 
@@ -134,13 +138,13 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `ui.popup`, `ui.popup.key` | picker, help, and status popup surface, and key labels (0012); the space menu drew on `ui.popup` before [0056](0056-the-leader-trimmed.md) |
 | `ui.menu` | the `Space` menu and the right-click menu's surface; the built-ins share its visual ground with `ui.popup`, while a custom theme may set either independently; with no `bg` the terminal shows through ([0056](0056-the-leader-trimmed.md)) |
 | `ui.picker.match` | matched characters in pickers and help filtering (0012, [0078](0078-all-keys-stays-reachable.md)) |
-| `thread.active` | lifecycle glyph and aggregate colour for an unresolved thread without a current resolution proposal; independent of message authorship ([0085](0085-thread-lifecycle-and-auto-resolve.md)) |
-| `thread.proposed` | lifecycle glyph and aggregate colour for an unresolved thread with a current resolution proposal; independent of message authorship (0085) |
-| `thread.resolved` | lifecycle glyph and aggregate colour for a resolved thread (0085) |
+| `thread.active` | header count colour for unresolved threads without a current resolution proposal, including one-shot permission; independent of message authorship ([0085](0085-thread-lifecycle-and-auto-resolve.md)) |
+| `thread.proposed` | header count colour for unresolved threads with a current resolution proposal; independent of message authorship (0085) |
+| `thread.resolved` | header count colour for resolved threads (0085) |
 | `thread.focus` | the threads pane's current-file context tint ([0066](0066-one-circle-language.md)), overridden by actual active or remembered list selection (0079); the rows of the thread the cursor is on before [0074](0074-the-bracket-marks-the-focused-thread.md) ([0033](0033-open-thread-lines.md)); `thread.line`, the background of annotated rows (0013), was removed by 0074 |
 | `thread.bracket` | background of the gutter's note cell on the rows of the thread the cursor is on, where it draws a glyph ([0074](0074-the-bracket-marks-the-focused-thread.md)) |
 | `thread.inline` | background of a thread's stub rows under its lines; `none` marks them with `▎` instead ([0049](0049-inline-threads-and-the-rail.md)) |
-| `thread.user`, `thread.agent` | a message by the user or by an agent, in the expanded thread and the review list: `fg` the author's name, `bg` the stripe under the message's rows ([0071](0071-author-stripes.md)) |
+| `thread.user`, `thread.agent` | `fg` of a message author's name and of thread circles and source brackets when the latest message has that author kind; `bg` of message stripes only ([0071](0071-author-stripes.md), [0086](0086-one-thread-summary-and-its-actions.md)) |
 | `thread.draft` | background of a draft's author row and text rows while it is written ([0071](0071-author-stripes.md)) |
 | `thread.cursor` | the inline thread's `▎` bar down its cursor message and on its header or stub in the document ([0071](0071-author-stripes.md)); review selection uses `ui.list.cursor` since 0079, with ancestor-file bars in muted `ui.statusline.info` |
 | `ui.header` | the neutral background of pane headers and key bars: the review list's header, unselected thread entry headers, and key bar, the files and threads pane titles, the threads pane and text key bars, the checkpoint header, an expanded thread's header, and the file-info pane's path row; selected list entries use the shared list roles (0079); the draft's author row moved to `thread.draft` in [0071](0071-author-stripes.md) ([0059](0059-headers-and-the-key-bar.md), [0067](0067-the-texts-key-bar.md)) |
@@ -165,7 +169,7 @@ background. `ui.picker.match`, `ui.sidebar`, and `ui.sidebar.dir` remain.
 Since [0085](0085-thread-lifecycle-and-auto-resolve.md),
 `thread.open` and `thread.waiting` are also unknown keys. Replace them with
 `thread.active` and `thread.proposed`; keep `thread.resolved`. Author
-stripes remain separate under `thread.user` and `thread.agent`.
+stripes and individual circle colours use `thread.user` and `thread.agent`.
 
 ### Selection and built-ins
 
@@ -196,8 +200,8 @@ stripes remain separate under `thread.user` and `thread.agent`.
 
 - Both built-ins use blue for `thread.active`, bold green for
   `thread.proposed`, and bright black for `thread.resolved`. These are
-  lifecycle choices only; `thread.user` and `thread.agent` continue to
-  style message authors and stripes independently.
+  lifecycle header-count choices only; `thread.user` and `thread.agent`
+  style message names, stripes, and individual thread marks independently.
 
 - Palette names and the list colour values above are built-in authoring
   choices, not additional schema keys. A custom theme may preserve the

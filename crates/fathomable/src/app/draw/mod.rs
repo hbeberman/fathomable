@@ -5,6 +5,8 @@
 
 pub(crate) mod author;
 pub(crate) mod bar;
+#[cfg(test)]
+mod circle_tests;
 mod counts;
 pub(crate) mod gutter;
 pub(crate) mod header;
@@ -1790,7 +1792,7 @@ fn tree_marks<'a>(
     if let Some(words) = circle {
         tail.push(Span::styled(
             format!(" {}", words.glyph()),
-            on_bg(mark_style(theme, words.state())),
+            on_bg(circle_style(theme, words)),
         ));
     }
     (letters, tail)
@@ -1923,6 +1925,16 @@ fn mark_style(theme: &Theme, kind: ThreadState) -> Style {
         ThreadState::Proposed => theme.thread_proposed,
         ThreadState::Resolved => theme.thread_resolved,
     }
+}
+
+fn circle_style(theme: &Theme, words: Words) -> Style {
+    let mut style = if words.author_is_user() {
+        theme.thread_user
+    } else {
+        theme.thread_agent
+    };
+    style.bg = None;
+    style
 }
 
 fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Vec<Line<'a>> {
@@ -4065,7 +4077,7 @@ fn list_row<'a>(context: &ListRender<'a>, row: &Row) -> Line<'a> {
         Row::OriginContext {
             line,
             glyph,
-            state,
+            words,
             omitted,
             ..
         } => {
@@ -4073,8 +4085,8 @@ fn list_row<'a>(context: &ListRender<'a>, row: &Row) -> Line<'a> {
             let marker = if let Some(glyph) = glyph {
                 Span::styled(
                     *glyph,
-                    mark_style(theme, *state)
-                        .patch(surface)
+                    surface
+                        .patch(circle_style(theme, *words))
                         .patch(theme.thread_bracket),
                 )
             } else {
@@ -5351,13 +5363,19 @@ mod tests {
     fn origin_anchor_uses_file_glyph_and_only_its_cell_is_highlighted() -> anyhow::Result<()> {
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
         let theme = Theme::from_core(&core);
+        let dir = testing::workspace("origin-anchor-colour", testing::README)?;
+        let mut app = testing::source_app(&dir)?;
+        app.view_mut().goto_source_line(3);
+        app.start_new_comment();
+        app.compose_insert("opening");
+        app.compose_submit();
         let source = Layout::source("", 12);
         assert!(source.lines()[0].text().is_empty());
         let row = Row::OriginContext {
             entry: 0,
             line: source.lines()[0].clone(),
             glyph: Some("●"),
-            state: crate::app::threads::ThreadState::Active,
+            words: app.marks()[0].words(),
             omitted: false,
         };
         let context = ListRender {
@@ -5370,7 +5388,7 @@ mod tests {
         assert_eq!(line.spans[0].content, " ".repeat(3));
         assert_eq!(line.spans[1].content, "●");
         assert_eq!(line.spans[1].style.bg, theme.thread_bracket.bg);
-        assert_eq!(line.spans[1].style.fg, theme.thread_active.fg);
+        assert_eq!(line.spans[1].style.fg, theme.thread_user.fg);
         assert_eq!(line.style.bg, theme.thread_inline.bg);
         assert!(
             line.spans

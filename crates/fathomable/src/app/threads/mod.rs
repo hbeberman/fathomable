@@ -53,10 +53,8 @@ use fathomable_core::workspace::Workspace;
 use crate::app::App;
 use crate::app::threads::words::Words;
 
-/// A thread's status, which is its colour in the gutter, the file-threads
-/// pane, and the review list (ADR 0039); where the thread is placed is
-/// [`Mark::placement`]. Ordered by urgency, so the most urgent of several
-/// on one row is their `max`.
+/// A thread's lifecycle, independent of its latest author's colour.
+/// Ordered by urgency; placement is [`Mark::placement`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ThreadState {
     Resolved,
@@ -321,6 +319,7 @@ impl App {
 
     /// The most urgent mark overlapping `lines` (a rendered row can carry
     /// several source lines).
+    #[cfg(test)]
     pub(crate) fn mark_in(&self, lines: LineRange) -> Option<ThreadState> {
         self.placed_marks()
             .filter(|mark| mark.covers(lines))

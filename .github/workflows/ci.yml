@@ -29,7 +29,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ripgrep
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install development tools
-        uses: taiki-e/install-action@4076c08d76dba979c11a7285295b0716c1d67908 # v2.87.15
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-audit@0.22.1,cargo-about@0.9.2,cargo-deny@0.19.9,cargo-nextest@0.9.138,just@1.55.1,lychee@0.24.2,prek@0.5.3
       - name: Install cargo-public-api

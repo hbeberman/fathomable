@@ -141,6 +141,10 @@ variables, caches, and the network can also influence results. CI's clean
 checkout is the independent validation of committed files without local
 untracked substitutes.
 
+CI runs `cargo fetch --locked` before the contributor-helper tests. The
+package-content regression resolves dependencies offline, so a cold Cargo
+cache must be populated first; restored caches are only an optimization.
+
 The `secrets` hook deliberately copies only tracked entries to a private scan
 directory. Thus it scans staged tracked bytes during save/restore and current
 tracked bytes under `--all-files`, never ignored scratch or untracked files.

@@ -121,7 +121,7 @@ priority = 10
 [[repos.hooks]]
 id = "audit"
 name = "Dependency audit"
-entry = "cargo audit"
+entry = "env -u GIT_INDEX_FILE cargo audit"
 language = "system"
 always_run = true
 pass_filenames = false

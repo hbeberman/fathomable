@@ -7,6 +7,7 @@
 - Honor Git replacement-ref settings in viewer revision reads; exact commit
   sources continue to ignore replacements.
 - Update contributor tools, checksum-pinned Betterleaks, and CI action pins.
+- Isolate RustSec database updates from the repository's commit index.
 - Refresh the bundled third-party license notices.
 
 ## v0.1.1

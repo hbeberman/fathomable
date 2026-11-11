@@ -289,6 +289,8 @@ class CommitHooks(unittest.TestCase):
             self.assertEqual(Path(event["root"]), repo or self.repo)
             self.assertTrue(event["git"])
             self.assertEqual(event["target"], environment.get("CARGO_TARGET_DIR"))
+            if event["hook"] == "audit":
+                self.assertIsNone(event["index"])
             self.assertEqual(
                 event["rustdocflags"],
                 "-Dwarnings" if event["hook"] == "rustdoc"

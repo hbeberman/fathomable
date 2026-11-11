@@ -128,6 +128,11 @@ effective, including alternate indexes and the temporary index used by
 Stage `scripts/configs/prek.toml` when changing hook definitions: staged runs refuse an
 unstaged config change.
 
+The audit hook removes `GIT_INDEX_FILE` before invoking cargo-audit. The
+selected lockfile remains visible, but RustSec's Git database updater must use
+its own index, not overwrite the normal, alternate, or `git commit --only`
+index inherited from the commit. Other checks retain native index selection.
+
 The old exported clean snapshot has deliberately been removed.
 **Untracked and ignored files remain visible to tools.** They can mask
 missing staged files or otherwise affect checks. Local checks are not

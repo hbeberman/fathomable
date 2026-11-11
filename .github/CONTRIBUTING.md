@@ -244,7 +244,7 @@ scripts/perf-record.sh --bin fathomable -- path/to/file.md
 python3 scripts/test-perf-record.py       # helper command/quoting regression test
 python3 scripts/test-demo-repo.py         # demo isolation and argument regressions
 python3 scripts/test-rust-toolchain.py    # compiler selection and setup regressions
-python3 scripts/test-package.py           # same-version package rebuild regression
+python3 scripts/test-package.py           # package contents and same-version rebuild regressions
 ```
 
 `just perf` accepts positional `path` (default `.`) and `bin` (default

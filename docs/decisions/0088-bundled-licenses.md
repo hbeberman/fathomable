@@ -34,9 +34,9 @@ Fathomable's own source remains MIT-licensed. Third-party code and embedded
 syntax/theme data retain their respective licenses and copyright notices;
 the application's license does not replace those terms.
 
-Each Cargo package also includes the root project `LICENSE` through the
-[shared package metadata](0002-crate-layout.md#package-metadata), independently
-of the executable's embedded notice bundle.
+Each publishable Cargo package also includes the root project `LICENSE`
+through its [crate-local license link](0002-crate-layout.md#package-metadata),
+independently of the executable's embedded notice bundle.
 
 **Help > Licenses** opens the read-only, scrollable pane.
 The executable embeds the complete notice bundle at compile time, so

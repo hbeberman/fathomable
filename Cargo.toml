@@ -14,7 +14,6 @@ edition = "2024"
 rust-version = "1.95"
 authors = ["Henry Beberman"]
 license = "MIT"
-license-file = "LICENSE"
 readme = "README.md"
 repository = "https://github.com/hbeberman/fathomable"
 homepage = "https://github.com/hbeberman/fathomable"

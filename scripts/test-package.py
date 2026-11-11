@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify repeated packaging with real Cargo and a dependency-free workspace."""
+"""Verify source-package contents and repeated packaging with real Cargo."""
 
 import hashlib
 import json
@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import tomllib
@@ -17,6 +18,48 @@ SOURCE_ROOT = Path(__file__).resolve().parent.parent
 
 
 class PackageTests(unittest.TestCase):
+    def test_published_packages_include_license_without_redundant_metadata(self):
+        workspace = tomllib.loads((SOURCE_ROOT / "Cargo.toml").read_text())["workspace"]
+        version = workspace["package"]["version"]
+        license_text = (SOURCE_ROOT / "LICENSE").read_bytes()
+        with tempfile.TemporaryDirectory(prefix="fathomable license package ") as directory:
+            environment = {
+                key: value for key, value in os.environ.items()
+                if not key.startswith("GIT_") and key not in {
+                    "CARGO_BUILD_BUILD_DIR", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER",
+                }
+            }
+            environment.update({
+                "CARGO_TARGET_DIR": directory,
+                "CARGO_BUILD_BUILD_DIR": directory,
+                "CARGO_NET_OFFLINE": "true",
+            })
+            result = subprocess.run(
+                [
+                    sys.executable, str(SOURCE_ROOT / "scripts/rust-toolchain.py"),
+                    "release", "cargo", "package", "--workspace",
+                    "--exclude", "fathomable-testing", "--locked", "--allow-dirty",
+                    "--no-verify",
+                ],
+                cwd=SOURCE_ROOT, env=environment,
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn("only one of `license` or `license-file`", result.stderr)
+            for name in ("fathomable-core", "fathomable"):
+                with self.subTest(package=name):
+                    package = f"{name}-{version}"
+                    archive = Path(directory) / "package" / f"{package}.crate"
+                    with tarfile.open(archive) as bundle:
+                        notice = bundle.getmember(f"{package}/LICENSE")
+                        self.assertTrue(notice.isfile())
+                        self.assertEqual(bundle.extractfile(notice).read(), license_text)
+                        manifest = bundle.extractfile(f"{package}/Cargo.toml")
+                        self.assertIsNotNone(manifest)
+                        metadata = tomllib.loads(manifest.read().decode())["package"]
+                    self.assertEqual(metadata["license"], "MIT")
+                    self.assertNotIn("license-file", metadata)
+
     def test_repackaging_uses_current_core_at_the_same_version(self):
         with tempfile.TemporaryDirectory(prefix="fathomable package ") as directory:
             root = Path(directory)

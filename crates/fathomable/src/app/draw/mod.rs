@@ -4603,7 +4603,7 @@ mod tests {
             .collect::<Vec<_>>();
         let expected = [
             "╭ About ──────────────────────────────────────────────────)────╮",
-            "│Fathomable 0.1.1                                        (     │",
+            "│Fathomable 0.1.2                                        (     │",
             "│A read-only workspace viewer for reviewing               )    │",
             "│diffs and interactive comment threads with agents       (     │",
             "│via MCP.                                               _|_    │",
@@ -4918,7 +4918,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let expected = [
-            "Fathomable 0.1.1",
+            "Fathomable 0.1.2",
             "A read-only workspace viewer for reviewing",
             "diffs and interactive comment threads with agents",
             "via MCP.",

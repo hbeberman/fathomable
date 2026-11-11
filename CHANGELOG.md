@@ -1,14 +1,14 @@
 # Changelog
 
-## Unreleased
+## v0.1.2
 
-- Refresh Gitoxide, MCP, Tokio, filesystem notification, Markdown, and Unicode
-  dependencies for v0.1.2 while retaining the Rust 1.95 minimum.
-- Honor Git replacement-ref settings in viewer revision reads; exact commit
-  sources continue to ignore replacements.
-- Update contributor tools, checksum-pinned Betterleaks, and CI action pins.
+- Select a workspace per MCP call with opt-in multi-workspace mode.
+- Receive compact, per-conversation thread change hints in MCP results.
+- Recover review threads after unambiguous, byte-identical committed file moves.
+- Color thread circles by the latest message's author.
+- Bound commit-range discovery and honor Git replacement-ref settings.
+- Refresh dependencies, contributor tools, and bundled license notices.
 - Isolate RustSec database updates from the repository's commit index.
-- Refresh the bundled third-party license notices.
 
 ## v0.1.1
 

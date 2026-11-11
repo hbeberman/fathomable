@@ -42,7 +42,7 @@ GATE_COMMANDS = {
     "rustdoc": ["cargo", "doc", "--no-deps", "--all-features"],
     "public-api": ["scripts/check-public-api.sh"],
     "audit": ["cargo", "audit"],
-    "deny": ["cargo", "deny", "check", "--config", "scripts/configs/deny.toml"],
+    "deny": ["cargo", "deny", "--config", "scripts/configs/deny.toml", "check"],
     "licenses": ["scripts/check-licenses.sh"],
     "secrets": ["python3", "scripts/betterleaks.py", "tracked"],
 }
@@ -289,6 +289,8 @@ class CommitHooks(unittest.TestCase):
             self.assertEqual(Path(event["root"]), repo or self.repo)
             self.assertTrue(event["git"])
             self.assertEqual(event["target"], environment.get("CARGO_TARGET_DIR"))
+            if event["hook"] == "audit":
+                self.assertIsNone(event["index"])
             self.assertEqual(
                 event["rustdocflags"],
                 "-Dwarnings" if event["hook"] == "rustdoc"
@@ -465,7 +467,7 @@ class CommitHooks(unittest.TestCase):
             duration = float(text.split("duration_seconds=")[-1].splitlines()[0])
             self.assertGreaterEqual(duration, 0.08)
             native = trace.read_text()
-            self.assertIn("DEBUG prek: 0.5.3", native)
+            self.assertIn("DEBUG prek: 0.5.10", native)
             for hook in ["commit-message", *GATE_IDS]:
                 self.assertIn(f"run{{hook_id={hook} language=system}}: close time.busy=", native)
             for path in (log, trace):

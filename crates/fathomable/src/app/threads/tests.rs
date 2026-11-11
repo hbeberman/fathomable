@@ -2157,6 +2157,151 @@ fn a_rename_carries_the_threads_and_the_open_document() -> anyhow::Result<()> {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the committed move, fresh viewer, live rename, and HEAD transition share one fixture"
+)]
+fn a_fresh_viewer_recovers_exact_committed_moves_without_rewriting_threads() -> anyhow::Result<()> {
+    let dir = testing::bare("committed-thread-moves")?;
+    let root = testing::root(&dir);
+    fathomable_testing::git::init(&root)?;
+    let old = "provers/azure-linux-sonar-prover";
+    let new = "provers/azure-linux-sonar-prover-draft";
+    let first = format!("{old}/README.md");
+    let second = format!("{old}/agents/README.md");
+    let moved_first = format!("{new}/README.md");
+    let moved_second = format!("{new}/agents/README.md");
+    let text = "# Prover\n\nreview this\n";
+    fs::create_dir_all(root.join(old).join("agents"))?;
+    fs::write(root.join(&first), text)?;
+    fs::write(root.join(&second), "distinct agent content\n")?;
+    fathomable_testing::git::commit_and_stage(
+        &root,
+        &[(&first, text), (&second, "distinct agent content\n")],
+    )?;
+    let source = Workspace::discover(&root)?
+        .head_commit()
+        .context("pre-move commit")?;
+    let mut store = Store::open(testing::store_path(&dir))?;
+    let commit_thread = store.annotate(
+        Draft::on_file(Author::User, Path::new(&first), "file finding")
+            .at_source(OriginVersion::commit(&source), OriginSide::Unspecified),
+        text,
+        1,
+    )?;
+    let working_thread = store.annotate(
+        testing::at_working_tree(
+            &root,
+            Draft::on_file(Author::User, Path::new(&second), "workspace finding"),
+            "distinct agent content\n",
+        )?,
+        "distinct agent content\n",
+        2,
+    )?;
+    let unverified = store.annotate(
+        Draft::on_file(Author::User, Path::new(&first), "different working bytes")
+            .with_working_tree_facts(WorkingTreeFacts::new(
+                Some(source.clone()),
+                WorkingTreeState::Modified,
+                Some(ContentIdentity::from_text("changed since HEAD\n")),
+                Workspace::discover(&root)?.identity(),
+                FullFileDigest::from_bytes(b"changed since HEAD\n"),
+            )),
+        "changed since HEAD\n",
+        3,
+    )?;
+    drop(store);
+
+    fs::rename(root.join(old), root.join(new))?;
+    fathomable_testing::git::commit_and_stage(
+        &root,
+        &[
+            (&moved_first, text),
+            (&moved_second, "distinct agent content\n"),
+        ],
+    )?;
+    let mut app = testing::AppBuilder::new(&dir).unopened().build()?;
+    app.settle_background();
+    assert_eq!(
+        app.thread(&commit_thread)
+            .map(|thread| app.thread_path(thread)),
+        Some(Path::new(&moved_first))
+    );
+    assert_eq!(
+        app.thread(&working_thread)
+            .map(|thread| app.thread_path(thread)),
+        Some(Path::new(&moved_second))
+    );
+    assert_eq!(
+        app.thread(&unverified)
+            .map(|thread| app.thread_path(thread)),
+        Some(Path::new(&first)),
+        "observed HEAD alone is not proof of the origin's bytes"
+    );
+    let unchanged = Store::open(testing::store_path(&dir))?;
+    assert_eq!(
+        unchanged.thread(&commit_thread).map(Thread::path),
+        Some(Path::new(&first))
+    );
+
+    app.toggle_all_threads();
+    app.show_tree();
+    press(&mut app, " Fo FZ");
+    let rows: Vec<_> = app
+        .tree()
+        .context("File list")?
+        .rows()
+        .iter()
+        .map(|row| row.path().to_path_buf())
+        .collect();
+    assert!(rows.contains(&PathBuf::from(&moved_first)), "{rows:?}");
+    assert!(rows.contains(&PathBuf::from(&moved_second)), "{rows:?}");
+    assert!(!rows.contains(&PathBuf::from(&first)), "{rows:?}");
+
+    let mut pending = testing::AppBuilder::new(&dir).unopened().build()?;
+    assert_eq!(
+        pending
+            .thread(&commit_thread)
+            .map(|thread| pending.thread_path(thread)),
+        Some(Path::new(&moved_first)),
+        "fresh viewer should recover before a later live rename"
+    );
+    let live = format!("{new}-live");
+    fs::rename(root.join(new), root.join(&live))?;
+    pending.on_events(vec![crate::app::watch::Event::Renamed {
+        from: root.join(new),
+        to: root.join(&live),
+    }]);
+    pending.settle_background();
+    assert_eq!(
+        pending.local_thread_paths.get(&commit_thread),
+        Some(&PathBuf::from(format!("{live}/README.md"))),
+        "live projection must override the historical path"
+    );
+    assert_eq!(
+        pending
+            .thread(&commit_thread)
+            .map(|thread| pending.thread_path(thread)),
+        Some(Path::new(&format!("{live}/README.md"))),
+        "a live rename while recovery is pending must advance the recovered path"
+    );
+
+    let previous = source;
+    fs::write(root.join(".git/HEAD"), format!("{previous}\n"))?;
+    app.on_events(vec![crate::app::watch::Event::Change(
+        root.join(".git/HEAD"),
+    )]);
+    app.settle_background();
+    assert_eq!(
+        app.thread(&commit_thread)
+            .map(|thread| app.thread_path(thread)),
+        Some(Path::new(&first)),
+        "a different HEAD must invalidate installed path recovery"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_deleted_file_keeps_its_content_and_refuses_new_comments() -> anyhow::Result<()> {
     use crate::app::watch::Event;
     let dir = testing::workspace("threads-deleted", testing::README)?;

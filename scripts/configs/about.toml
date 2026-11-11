@@ -28,3 +28,16 @@ license = "Apache-2.0 OR BSL-1.0"
 path = "LICENSE-APACHE"
 license = "Apache-2.0"
 checksum = "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+
+# Both SDK crates now package the previously reviewed combined upstream notice.
+[rmcp.clarify]
+license = "Apache-2.0"
+[[rmcp.clarify.files]]
+path = "LICENSE"
+checksum = "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"
+
+[rmcp-macros.clarify]
+license = "Apache-2.0"
+[[rmcp-macros.clarify.files]]
+path = "LICENSE"
+checksum = "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"

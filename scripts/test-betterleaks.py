@@ -245,7 +245,7 @@ class SecretScanning(unittest.TestCase):
         tool.unlink()
         tool.write_text(
             "#!" + sys.executable + "\nimport sys\n"
-            "if sys.argv[1:] == ['version']:\n    print('1.8.1')\n"
+            f"if sys.argv[1:] == ['version']:\n    print({scanner.VERSION!r})\n"
             f"else:\n    print({self.secret!r}, file=sys.stderr)\n    print('null')\n"
         )
         tool.chmod(0o700)

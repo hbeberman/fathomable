@@ -266,7 +266,7 @@ pub(crate) enum Row {
         entry: usize,
         line: Line,
         glyph: Option<&'static str>,
-        state: ThreadState,
+        words: Words,
         omitted: bool,
     },
     /// Explicit notice that capture or preparation omitted origin source.
@@ -1046,7 +1046,7 @@ impl App {
                     entry: index,
                     line: row.line.clone(),
                     glyph: row.anchor_glyph(words.glyph()),
-                    state: words.state(),
+                    words,
                     omitted: row.omitted,
                 }));
             if layout.is_truncated() {

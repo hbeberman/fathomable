@@ -75,7 +75,7 @@ specified by [0088](0088-bundled-licenses.md).
 Rules:
 
 - Versions are locked in `Cargo.lock`; bumps are deliberate commits.
-- `cargo deny check --config scripts/configs/deny.toml` runs in the local gate
+- `cargo deny --config scripts/configs/deny.toml check` runs in the local gate
   with an explicit license allowlist
   (MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, Zlib,
   MPL-2.0, and CC0-1.0 for `notify`, added 2026-08-26), a `crates.io`-only

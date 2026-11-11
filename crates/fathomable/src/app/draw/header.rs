@@ -909,19 +909,7 @@ pub(crate) fn summary_line<'a>(
             SummaryTone::Surface => surface,
             SummaryTone::Info => on(surface, theme.info),
             SummaryTone::Status => on(surface, theme.info.add_modifier(Modifier::DIM)),
-            SummaryTone::Lifecycle(lifecycle) => on(
-                surface,
-                mark_style(
-                    theme,
-                    match lifecycle {
-                        fathomable_core::annotations::Lifecycle::Active => ThreadState::Active,
-                        fathomable_core::annotations::Lifecycle::ResolutionProposed => {
-                            ThreadState::Proposed
-                        }
-                        fathomable_core::annotations::Lifecycle::Resolved => ThreadState::Resolved,
-                    },
-                ),
-            ),
+            SummaryTone::Circle(words) => on(surface, super::circle_style(theme, *words)),
             SummaryTone::Author { user: true } => on(surface, theme.thread_user),
             SummaryTone::Author { user: false } => on(surface, theme.thread_agent),
             SummaryTone::Preview => on(surface, theme.text),

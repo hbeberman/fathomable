@@ -23,7 +23,7 @@ the repository's checks directly. A thin observer retains its native logs;
 it does not execute or schedule individual checks. `scripts/configs/prek.toml`
 is their single source of truth: each of the 14 checks is a local
 `language = "system"` hook.
-Setup and CI pin prek to **0.5.3**, and the config requires at least that
+Setup and CI pin prek to **0.5.10**, and the config requires at least that
 version. No remote hook repositories, managed hook environments, or
 additional Rust crate dependencies are used.
 
@@ -128,6 +128,11 @@ effective, including alternate indexes and the temporary index used by
 Stage `scripts/configs/prek.toml` when changing hook definitions: staged runs refuse an
 unstaged config change.
 
+The audit hook removes `GIT_INDEX_FILE` before invoking cargo-audit. The
+selected lockfile remains visible, but RustSec's Git database updater must use
+its own index, not overwrite the normal, alternate, or `git commit --only`
+index inherited from the commit. Other checks retain native index selection.
+
 The old exported clean snapshot has deliberately been removed.
 **Untracked and ignored files remain visible to tools.** They can mask
 missing staged files or otherwise affect checks. Local checks are not
@@ -135,6 +140,10 @@ clean-filesystem isolation or a sandbox: installed tools, environment
 variables, caches, and the network can also influence results. CI's clean
 checkout is the independent validation of committed files without local
 untracked substitutes.
+
+CI runs `cargo fetch --locked` before the contributor-helper tests. The
+package-content regression resolves dependencies offline, so a cold Cargo
+cache must be populated first; restored caches are only an optimization.
 
 The `secrets` hook deliberately copies only tracked entries to a private scan
 directory. Thus it scans staged tracked bytes during save/restore and current
@@ -235,7 +244,7 @@ directory; build or scan failures leave prior successful archives untouched.
 The temporary target is cleaned up on success or failure. No crates are uploaded.
 `just release` scans the executable after building it. Neither
 creates tags or releases. Contributor setup also installs checksum-pinned
-Betterleaks 1.8.1 into the current worktree's `.tmp/tools/`.
+Betterleaks 1.10.0 into the current worktree's `.tmp/tools/`.
 Other recipes run their substantive commands directly; see
 [Contributing](../.github/CONTRIBUTING.md#2-the-gate).
 

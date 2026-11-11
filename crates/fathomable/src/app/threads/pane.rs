@@ -90,6 +90,7 @@ impl PaneEntry {
         self.range
     }
 
+    #[cfg(test)]
     pub(crate) fn kind(&self) -> ThreadState {
         self.words.state()
     }

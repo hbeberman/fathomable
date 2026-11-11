@@ -83,10 +83,12 @@ README, while `fathomable-core` ships its own short library README.
 The application excludes `examples/seed.rs` from its source package; the
 example remains available in the checkout for `scripts/demo-repo.sh`.
 
-The MIT SPDX identifier remains in `license`, while `license-file` points
-to the root `LICENSE`. Members inherit both so Cargo includes that same
-copyright and permission notice as `LICENSE` in each package without
-maintaining duplicate source files. The binary separately embeds the
+Members inherit the MIT SPDX identifier through `license` without also
+setting the redundant `license-file` field. The two publishable crates
+each have a relative `LICENSE` symlink to the root project `LICENSE`.
+Cargo packages the target's text as a regular file, so both source packages
+include the same copyright and permission notice without maintaining
+duplicate source files. The binary separately embeds the
 [third-party notice bundle](0088-bundled-licenses.md).
 
 The product crates permit only the crates.io registry. Their shared test

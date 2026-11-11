@@ -22,6 +22,7 @@ pub(crate) mod file;
 pub(crate) mod fold;
 pub(crate) mod list;
 pub(crate) mod list_fold;
+pub(crate) mod moves;
 pub(crate) mod open;
 pub(crate) mod pane;
 pub(crate) mod peek;
@@ -52,10 +53,8 @@ use fathomable_core::workspace::Workspace;
 use crate::app::App;
 use crate::app::threads::words::Words;
 
-/// A thread's status, which is its colour in the gutter, the file-threads
-/// pane, and the review list (ADR 0039); where the thread is placed is
-/// [`Mark::placement`]. Ordered by urgency, so the most urgent of several
-/// on one row is their `max`.
+/// A thread's lifecycle, independent of its latest author's colour.
+/// Ordered by urgency; placement is [`Mark::placement`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ThreadState {
     Resolved,
@@ -231,6 +230,7 @@ impl App {
         if self.displayed_target_is_working_tree() {
             self.local_thread_paths
                 .get(thread.id())
+                .or_else(|| self.thread_moves.paths.get(thread.id()))
                 .map_or_else(|| thread.path(), PathBuf::as_path)
         } else {
             thread.path()
@@ -319,6 +319,7 @@ impl App {
 
     /// The most urgent mark overlapping `lines` (a rendered row can carry
     /// several source lines).
+    #[cfg(test)]
     pub(crate) fn mark_in(&self, lines: LineRange) -> Option<ThreadState> {
         self.placed_marks()
             .filter(|mark| mark.covers(lines))
@@ -486,13 +487,7 @@ impl App {
         let targets: Vec<(ThreadId, PathBuf)> = store
             .threads()
             .iter()
-            .filter_map(|thread| {
-                let path = self
-                    .local_thread_paths
-                    .get(thread.id())
-                    .map_or_else(|| thread.path(), PathBuf::as_path);
-                Some((thread.id().clone(), moved(path)?))
-            })
+            .filter_map(|thread| Some((thread.id().clone(), moved(self.thread_path(thread))?)))
             .collect();
         for (id, path) in &targets {
             self.local_thread_paths.insert(id.clone(), path.clone());
@@ -512,6 +507,7 @@ impl App {
     /// Recompute commit membership once after a store reload or viewer write.
     pub(super) fn refresh_after_thread_store_change(&mut self) {
         self.recompute_reach();
+        self.trigger_thread_moves();
         self.refresh_all_marks();
         self.reconcile_normal_thread_cursor();
     }

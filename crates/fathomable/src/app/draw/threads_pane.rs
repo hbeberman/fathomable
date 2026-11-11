@@ -20,7 +20,7 @@ use crate::app::draw::header::{threads_pane_footer, threads_pane_header};
 use crate::app::draw::nest::NEST;
 use crate::app::draw::selection::Navigation;
 use crate::app::draw::{
-    Theme, file_chevron, fit, fit_ellipsis, format_age_short, mark_style, sidebar_divider_style,
+    Theme, file_chevron, fit, fit_ellipsis, format_age_short, sidebar_divider_style,
 };
 use crate::app::threads::pane::{PaneEntry, PaneLine, PaneRow, PaneScope, pane_lines};
 use crate::app::{App, Focus};
@@ -157,7 +157,7 @@ fn file_line<'a>(theme: &Theme, row: &PaneRow, inner: usize, navigation: Navigat
     .style(style)
 }
 
-/// A thread's first row: after the nest, the circle in the state
+/// A thread's first row: after the nest, the circle in the latest author's
 /// colour, the place dim, the newest author, then `↩n age` at the
 /// right edge.
 fn first_line<'a>(
@@ -207,7 +207,7 @@ fn first_line<'a>(
         Span::styled(" ".repeat(NEST), style),
         Span::styled(
             entry.words().glyph(),
-            on(style, mark_style(theme, entry.kind())),
+            on(style, super::circle_style(theme, entry.words())),
         ),
         Span::styled(place, on(style, theme.info)),
         Span::styled(

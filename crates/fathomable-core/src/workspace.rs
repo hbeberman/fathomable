@@ -1317,32 +1317,32 @@ impl Workspace {
                 .discover(target_id)
                 .and_then(|()| inspect_commit_header(&repo, target_id, &mut budget))
                 .map_err(|message| self.revision_error(target.as_str(), &message))?;
-            if let Some(included) =
-                paint_commit_range(&repo, source_id, target_id, &mut budget, &self.cancellation)
-                    .map_err(|message| self.revision_error(target.as_str(), &message))?
-            {
-                return Ok(CommitRange {
-                    commits: included
-                        .into_iter()
-                        .map(|id| id.to_hex().to_string())
-                        .collect(),
-                });
-            }
-        }
-        let excluded = match parsed_source {
-            Some((source, source_id)) => walk_commit_graph(
+            let excluded = commit_overlap_frontier(
                 &repo,
                 source_id,
-                &HashSet::new(),
+                target_id,
                 &mut budget,
                 &self.cancellation,
             )
-            .map_err(|message| self.revision_error(source.as_str(), &message))?,
-            None => HashSet::new(),
-        };
-        let included =
-            walk_commit_graph(&repo, target_id, &excluded, &mut budget, &self.cancellation)
-                .map_err(|message| self.revision_error(target.as_str(), &message))?;
+            .map_err(|message| self.revision_error(target.as_str(), &message))?;
+            let included =
+                walk_commit_graph(&repo, target_id, &excluded, &mut budget, &self.cancellation)
+                    .map_err(|message| self.revision_error(target.as_str(), &message))?;
+            return Ok(CommitRange {
+                commits: included
+                    .into_iter()
+                    .map(|id| id.to_hex().to_string())
+                    .collect(),
+            });
+        }
+        let included = walk_commit_graph(
+            &repo,
+            target_id,
+            &HashSet::new(),
+            &mut budget,
+            &self.cancellation,
+        )
+        .map_err(|message| self.revision_error(target.as_str(), &message))?;
         Ok(CommitRange {
             commits: included
                 .into_iter()
@@ -1868,7 +1868,7 @@ impl Workspace {
                     .repo
                     .index_or_empty()
                     .map_err(|error| failure(error.to_string()))?;
-                let path = unix_path(relative);
+                let path = unix_path(relative).map_err(|error| failure(error.to_string()))?;
                 let Some(entry) = index.entry_by_path(path.as_ref()) else {
                     return Ok(None);
                 };
@@ -1968,7 +1968,7 @@ impl Workspace {
                 relative.display()
             ),
         };
-        let path = unix_path(relative);
+        let path = unix_path(relative).map_err(|error| failure(error.to_string()))?;
         if relative
             .components()
             .any(|component| !matches!(component, std::path::Component::Normal(_)))
@@ -2342,7 +2342,7 @@ impl Workspace {
         if manifest.checkout != self.identity() {
             return Err(self.scan_error("index manifest belongs to another checkout"));
         }
-        let path = unix_path(relative);
+        let path = unix_path(relative).map_err(|error| self.scan_error(error.to_string()))?;
         if !valid_git_path(path.as_ref()) {
             return Err(self.scan_error("invalid index manifest path"));
         }
@@ -2408,7 +2408,7 @@ impl Workspace {
         if manifest.checkout != self.identity() {
             return Err(self.scan_error("index manifest belongs to another checkout"));
         }
-        let path = unix_path(relative);
+        let path = unix_path(relative).map_err(|error| self.scan_error(error.to_string()))?;
         if !valid_git_path(path.as_ref()) {
             return Err(self.scan_error("invalid index manifest path"));
         }
@@ -2460,7 +2460,11 @@ impl Workspace {
             if !valid_git_path(&entry.path) {
                 return Err(self.scan_error("invalid index manifest path"));
             }
-            paths.push(gix::path::from_bstr(entry.path.as_bstr()).into_owned());
+            paths.push(
+                gix::path::from_bstr(entry.path.as_bstr())
+                    .map_err(|error| self.scan_error(error.to_string()))?
+                    .into_owned(),
+            );
         }
         Ok(paths)
     }
@@ -2492,6 +2496,113 @@ impl Workspace {
                         && left.mode == right.mode
                         && left.object == right.object
                 }))
+    }
+
+    /// Find unambiguous exact file moves from an ancestor commit to a later commit.
+    ///
+    /// A move requires one deleted regular blob and one newly added regular
+    /// blob with the same object ID, with no other occurrence in either tree.
+    /// Paths retained at both endpoints, copies, and ambiguous blobs are not
+    /// moves. This does not infer renames whose content changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when history or either complete tree is
+    /// unavailable, corrupt, cancelled, or exceeds the configured budgets.
+    pub fn exact_commit_moves(
+        &self,
+        source: &CommitId,
+        target: &CommitId,
+    ) -> Result<Vec<(PathBuf, PathBuf)>, WorkspaceError> {
+        let repo = self.exact_repository(target.as_str(), MAX_EXACT_METADATA_BYTES)?;
+        let source_id = parse_object_id(source)
+            .map_err(|message| self.revision_error(source.as_str(), &message))?;
+        let target_id = parse_object_id(target)
+            .map_err(|message| self.revision_error(target.as_str(), &message))?;
+        let mut budget = CommitGraphBudget::new(
+            self.limits.comparison_path_limit(),
+            self.limits.comparison_bytes.max(MAX_EXACT_METADATA_BYTES),
+        );
+        budget
+            .discover(target_id)
+            .map_err(|message| self.revision_error(target.as_str(), &message))?;
+        let mut pending = vec![target_id];
+        let mut ancestor = false;
+        while let Some(id) = pending.pop() {
+            self.check_scan()?;
+            if id == source_id {
+                inspect_commit_header(&repo, id, &mut budget)
+                    .map_err(|message| self.revision_error(source.as_str(), &message))?;
+                ancestor = true;
+                break;
+            }
+            for parent in commit_parents(&repo, id, &mut budget)
+                .map_err(|message| self.revision_error(target.as_str(), &message))?
+            {
+                if !budget.discovered.contains(&parent) {
+                    budget
+                        .discover(parent)
+                        .map_err(|message| self.revision_error(target.as_str(), &message))?;
+                    pending.push(parent);
+                }
+            }
+        }
+        if !ancestor || source == target {
+            return Ok(Vec::new());
+        }
+
+        let before = self.exact_commit_entries(source)?;
+        let after = self.exact_commit_entries(target)?;
+        let before_paths: HashSet<&[u8]> = before.iter().map(|entry| entry.path.as_ref()).collect();
+        let after_paths: HashSet<&[u8]> = after.iter().map(|entry| entry.path.as_ref()).collect();
+        let mut before_blobs = HashMap::<&str, usize>::new();
+        let mut after_blobs = HashMap::<&str, Vec<&IndexManifestEntry>>::new();
+        for entry in &before {
+            *before_blobs.entry(entry.object()).or_default() += 1;
+        }
+        for entry in &after {
+            after_blobs.entry(entry.object()).or_default().push(entry);
+        }
+
+        let mut moves = Vec::new();
+        for entry in &before {
+            if after_paths.contains(entry.path.as_ref())
+                || !matches!(entry.mode, FileMode::Regular | FileMode::Executable)
+                || before_blobs.get(entry.object()) != Some(&1)
+            {
+                continue;
+            }
+            let Some(destinations) = after_blobs.get(entry.object()) else {
+                continue;
+            };
+            let [destination] = destinations.as_slice() else {
+                continue;
+            };
+            if before_paths.contains(destination.path.as_ref())
+                || !matches!(destination.mode, FileMode::Regular | FileMode::Executable)
+            {
+                continue;
+            }
+            let from = gix::path::from_bstr(entry.path.as_ref().as_bstr())
+                .map_err(|error| self.revision_error(source.as_str(), &error.to_string()))?
+                .into_owned();
+            let to = gix::path::from_bstr(destination.path.as_ref().as_bstr())
+                .map_err(|error| self.revision_error(target.as_str(), &error.to_string()))?
+                .into_owned();
+            let blob_id = ObjectId::from_hex(entry.object().as_bytes())
+                .map_err(|error| self.revision_error(source.as_str(), &error.to_string()))?;
+            let header = repo.find_header(blob_id).map_err(|error| {
+                self.revision_error(
+                    source.as_str(),
+                    &format!("cannot inspect moved blob: {error}"),
+                )
+            })?;
+            if header.kind() != gix::objs::Kind::Blob {
+                return Err(self.revision_error(source.as_str(), "moved file is not a blob"));
+            }
+            moves.push((from, to));
+        }
+        Ok(moves)
     }
 
     fn exact_commit_entries(
@@ -2626,7 +2737,9 @@ impl Workspace {
         let mut files = BTreeMap::new();
         for entry in &manifest.entries {
             self.check_scan()?;
-            let path = gix::path::from_bstr(entry.path.as_bstr()).into_owned();
+            let path = gix::path::from_bstr(entry.path.as_bstr())
+                .map_err(|error| self.scan_error(error.to_string()))?
+                .into_owned();
             let info = self
                 .index_manifest_path_info(manifest, &path)?
                 .ok_or_else(|| self.scan_error("index manifest path disappeared"))?;
@@ -2862,7 +2975,7 @@ impl Workspace {
             path: self.root.join(relative),
             message: format!("cannot read the index: {error}"),
         })?;
-        let path = unix_path(relative);
+        let path = unix_path(relative).map_err(|error| self.scan_error(error.to_string()))?;
         let Some(entry) = index.entry_by_path(path.as_ref()) else {
             return Ok(None);
         };
@@ -2990,7 +3103,9 @@ impl Workspace {
             if entry.stage() != gix::index::entry::Stage::Unconflicted {
                 continue;
             }
-            let path = gix::path::from_bstr(entry.path(&index)).into_owned();
+            let path = gix::path::from_bstr(entry.path(&index))
+                .map_err(|error| self.scan_error(error.to_string()))?
+                .into_owned();
             let mode = index_mode(entry.mode);
             let size = git
                 .repo
@@ -3020,7 +3135,11 @@ impl Workspace {
                 message: format!("cannot read index paths for working-tree endpoint: {error}"),
             })?;
             for entry in index.entries() {
-                paths.insert(gix::path::from_bstr(entry.path(&index)).into_owned());
+                paths.insert(
+                    gix::path::from_bstr(entry.path(&index))
+                        .map_err(|error| self.scan_error(error.to_string()))?
+                        .into_owned(),
+                );
                 self.check_path_count(paths.len())?;
             }
         }
@@ -3331,7 +3450,7 @@ impl Workspace {
             .repo
             .index_or_empty()
             .map_err(|error| fail(format!("cannot read the index: {error}")))?;
-        let path = gix::path::to_unix_separators_on_windows(gix::path::into_bstr(relative));
+        let path = unix_path(relative).map_err(|error| fail(error.to_string()))?;
         let Some(entry) = index.entry_by_path(path.as_ref()) else {
             return Ok(Some(Vec::new()));
         };
@@ -3406,7 +3525,8 @@ impl Workspace {
                 Some(_) => Some(State::Modified),
                 None => Some(State::Added),
             };
-            let relative = gix::path::from_bstr(path.as_bstr());
+            let relative =
+                gix::path::from_bstr(path.as_bstr()).map_err(|error| fail(error.to_string()))?;
             let worktree = worktree_state(self, &relative, entry, hash, &index)?;
             if Changes::from_sides(staged, worktree).is_some() {
                 dirty.insert(path, (staged, worktree));
@@ -3433,7 +3553,9 @@ impl Workspace {
         }
         let mut entries = Vec::with_capacity(dirty.len());
         for (path, (staged, unstaged)) in dirty {
-            let relative = gix::path::from_bstr(path.as_bstr()).into_owned();
+            let relative = gix::path::from_bstr(path.as_bstr())
+                .map_err(|error| self.scan_error(error.to_string()))?
+                .into_owned();
             if let Some(changes) = Changes::from_sides(staged, unstaged) {
                 entries.push(self.dirty_entry(relative, changes)?);
             }
@@ -3539,7 +3661,9 @@ impl Workspace {
         for path in changed {
             self.check_scan()?;
             examine.insert(path.clone());
-            let mut prefix = unix_path(path).into_owned();
+            let mut prefix = unix_path(path)
+                .map_err(|error| self.scan_error(error.to_string()))?
+                .into_owned();
             if !prefix.is_empty() {
                 prefix.push(b'/');
             }
@@ -3551,7 +3675,11 @@ impl Workspace {
                 })?;
             }
             for entry in tracked {
-                examine.insert(gix::path::from_bstr(entry.path(index)).into_owned());
+                examine.insert(
+                    gix::path::from_bstr(entry.path(index))
+                        .map_err(|error| self.scan_error(error.to_string()))?
+                        .into_owned(),
+                );
                 self.check_path_count(examine.len())?;
             }
             for entry in previous.entries() {
@@ -3596,7 +3724,11 @@ impl Workspace {
     ) -> Result<Option<Changes>, WorkspaceError> {
         let absolute = self.root.join(relative);
         let tracked = index
-            .entry_by_path(unix_path(relative).as_ref())
+            .entry_by_path(
+                unix_path(relative)
+                    .map_err(|error| self.scan_error(error.to_string()))?
+                    .as_ref(),
+            )
             .filter(|entry| is_status_entry(entry));
         if let Some(entry) = tracked {
             let staged = match head.id_of(relative).map_err(|message| WorkspaceError {
@@ -4146,103 +4278,79 @@ impl CommitGraphBudget {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct CommitPaint {
     flags: u8,
-    generation: u32,
+    order: CommitPaintOrder,
     processed: bool,
+    parents: Vec<ObjectId>,
 }
 
 const TARGET_PAINT: u8 = 1 << 0;
 const SOURCE_PAINT: u8 = 1 << 1;
 const STALE_PAINT: u8 = 1 << 2;
 
-fn paint_commit_range(
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct CommitPaintOrder {
+    // Missing or stale commit-graph entries sort ahead; commit time then keeps
+    // both exact-object frontiers moving until their overlap is painted.
+    generation: u32,
+    time: gix::date::SecondsSinceUnixEpoch,
+}
+
+fn commit_overlap_frontier(
     repo: &gix::Repository,
     source: ObjectId,
     target: ObjectId,
     budget: &mut CommitGraphBudget,
     cancellation: &Cancellation,
-) -> Result<Option<HashSet<ObjectId>>, String> {
+) -> Result<HashSet<ObjectId>, String> {
     let graph = repo
         .commit_graph_if_enabled()
         .map_err(|error| format!("cannot read commit graph: {error}"))?;
-    let Some(graph) = graph else {
-        return Ok(None);
-    };
-    let Some(source_generation) = graph.commit_by_id(source).map(|commit| commit.generation())
-    else {
-        return Ok(None);
-    };
-    let Some(target_generation) = graph.commit_by_id(target).map(|commit| commit.generation())
-    else {
-        return Ok(None);
-    };
-    paint_commit_graph(
-        source,
-        source_generation,
-        target,
-        target_generation,
-        budget,
-        cancellation,
-        |id, generation, budget| {
-            let parents = commit_parents(repo, id, budget)?;
-            let mut with_generations = Vec::with_capacity(parents.len());
-            for parent in parents {
-                let Some(parent_generation) =
-                    graph.commit_by_id(parent).map(|commit| commit.generation())
-                else {
-                    return Ok(None);
-                };
-                if parent_generation >= generation {
-                    return Err(format!(
-                        "commit graph generation for parent {parent} is not below child {id}; coverage is incomplete"
-                    ));
-                }
-                with_generations.push((parent, parent_generation));
-            }
-            Ok(Some(with_generations))
-        },
-    )
+    paint_commit_frontier(source, target, budget, cancellation, |id, budget| {
+        let generation = graph
+            .as_ref()
+            .and_then(|graph| graph.commit_by_id(id))
+            .map_or(u32::MAX, |commit| commit.generation());
+        let (time, parents) = commit_paint_data(repo, id, budget)?;
+        Ok((CommitPaintOrder { generation, time }, parents))
+    })
 }
 
-fn paint_commit_graph(
+fn paint_commit_frontier(
     source: ObjectId,
-    source_generation: u32,
     target: ObjectId,
-    target_generation: u32,
     budget: &mut CommitGraphBudget,
     cancellation: &Cancellation,
-    mut parents: impl FnMut(
+    mut load: impl FnMut(
         ObjectId,
-        u32,
         &mut CommitGraphBudget,
-    ) -> Result<Option<Vec<(ObjectId, u32)>>, String>,
-) -> Result<Option<HashSet<ObjectId>>, String> {
+    ) -> Result<(CommitPaintOrder, Vec<ObjectId>), String>,
+) -> Result<HashSet<ObjectId>, String> {
     let mut states = HashMap::new();
     let mut pending = BinaryHeap::new();
     let mut live_pending = 0;
     queue_commit_paint(
         source,
-        source_generation,
         SOURCE_PAINT,
         &mut states,
         &mut pending,
         &mut live_pending,
         budget,
+        &mut load,
     )?;
     queue_commit_paint(
         target,
-        target_generation,
         TARGET_PAINT,
         &mut states,
         &mut pending,
         &mut live_pending,
         budget,
+        &mut load,
     )?;
-    let mut included = HashSet::new();
     while live_pending > 0 {
-        let Some((generation, id)) = pending.pop() else {
+        let Some((order, id)) = pending.pop() else {
             return Err("commit graph paint frontier is incomplete".to_owned());
         };
         if cancellation.is_cancelled() {
@@ -4251,83 +4359,108 @@ fn paint_commit_graph(
         let Some(state) = states.get_mut(&id) else {
             return Err("commit graph paint state is incomplete".to_owned());
         };
-        if state.processed || state.generation != generation {
+        if state.processed || state.order != order {
             continue;
         }
         state.processed = true;
         let mut flags = state.flags;
+        let parents = state.parents.clone();
         if flags & STALE_PAINT == 0 {
             live_pending -= 1;
         }
         if flags & (TARGET_PAINT | SOURCE_PAINT) == TARGET_PAINT | SOURCE_PAINT {
             flags |= STALE_PAINT;
-        } else if flags & TARGET_PAINT != 0 {
-            included.insert(id);
+            state.flags = flags;
         }
-        let Some(parents) = parents(id, generation, budget)? else {
-            return Ok(None);
-        };
-        for (parent, parent_generation) in parents {
+        if flags & STALE_PAINT != 0 && live_pending == 0 {
+            continue;
+        }
+        for parent in parents {
             queue_commit_paint(
                 parent,
-                parent_generation,
                 flags,
                 &mut states,
                 &mut pending,
                 &mut live_pending,
                 budget,
+                &mut load,
             )?;
         }
     }
-    Ok(Some(included))
+    Ok(states
+        .into_iter()
+        .filter_map(|(id, state)| {
+            (state.flags & (TARGET_PAINT | SOURCE_PAINT) == TARGET_PAINT | SOURCE_PAINT)
+                .then_some(id)
+        })
+        .collect())
 }
 
 fn queue_commit_paint(
     id: ObjectId,
-    generation: u32,
     flags: u8,
     states: &mut HashMap<ObjectId, CommitPaint>,
-    pending: &mut BinaryHeap<(u32, ObjectId)>,
+    pending: &mut BinaryHeap<(CommitPaintOrder, ObjectId)>,
     live_pending: &mut usize,
     budget: &mut CommitGraphBudget,
+    load: &mut impl FnMut(
+        ObjectId,
+        &mut CommitGraphBudget,
+    ) -> Result<(CommitPaintOrder, Vec<ObjectId>), String>,
 ) -> Result<(), String> {
     use std::collections::hash_map::Entry;
 
     match states.entry(id) {
         Entry::Vacant(entry) => {
             budget.discover(id)?;
+            let (order, parents) = load(id, budget)?;
             entry.insert(CommitPaint {
                 flags,
-                generation,
+                order,
                 processed: false,
+                parents,
             });
-            pending.push((generation, id));
+            pending.push((order, id));
             if flags & STALE_PAINT == 0 {
                 *live_pending += 1;
             }
         }
         Entry::Occupied(mut entry) => {
             let state = entry.get_mut();
-            if state.generation != generation {
-                return Err(format!(
-                    "commit graph reports inconsistent generations for {id}; coverage is incomplete"
-                ));
-            }
-            if state.processed {
-                return Err(format!(
-                    "commit graph paint reached processed commit {id}; coverage is incomplete"
-                ));
-            }
             let combined = state.flags | flags;
             if combined != state.flags {
-                if state.flags & STALE_PAINT == 0 && combined & STALE_PAINT != 0 {
-                    *live_pending -= 1;
+                if state.processed {
+                    state.processed = false;
+                    pending.push((state.order, id));
+                    if combined & STALE_PAINT == 0 {
+                        *live_pending += 1;
+                    }
+                } else if state.flags & STALE_PAINT == 0 && combined & STALE_PAINT != 0 {
+                    *live_pending = (*live_pending)
+                        .checked_sub(1)
+                        .ok_or_else(|| "commit graph paint frontier is incomplete".to_owned())?;
                 }
                 state.flags = combined;
             }
         }
     }
     Ok(())
+}
+
+fn commit_paint_data(
+    repo: &gix::Repository,
+    id: ObjectId,
+    budget: &mut CommitGraphBudget,
+) -> Result<(gix::date::SecondsSinceUnixEpoch, Vec<ObjectId>), String> {
+    inspect_commit_header(repo, id, budget)?;
+    let commit = repo
+        .find_commit(id)
+        .map_err(|error| format!("cannot read commit graph object {id}: {error}"))?;
+    let time = commit
+        .time()
+        .map_err(|error| format!("cannot read commit time for {id}: {error}"))?
+        .seconds;
+    Ok((time, commit.parent_ids().map(gix::Id::detach).collect()))
 }
 
 fn walk_commit_graph(
@@ -4428,7 +4561,8 @@ fn collect_endpoint_tree(
                 .check_path_count(out.len().saturating_add(1))
                 .map_err(|error| error.to_string())?;
             let entry = entry.map_err(|error| error.to_string())?;
-            let path = prefix.join(gix::path::from_bstr(entry.filename()));
+            let path = prefix
+                .join(gix::path::from_bstr(entry.filename()).map_err(|error| error.to_string())?);
             let mode = tree_mode(entry.mode());
             if mode.is_directory() {
                 out.insert(
@@ -4775,7 +4909,9 @@ impl Head<'_> {
     /// under it is a map hit. Nothing under `dir` in `HEAD` still counts
     /// as covered: such lookups answer `None` without a tree walk.
     fn collect(&mut self, dir: &Path) -> Result<(), String> {
-        let mut prefix = unix_path(dir).into_owned();
+        let mut prefix = unix_path(dir)
+            .map_err(|error| error.to_string())?
+            .into_owned();
         if !prefix.is_empty() {
             prefix.push(b'/');
         }
@@ -4810,7 +4946,7 @@ impl Head<'_> {
         let Some(tree) = self.tree.as_ref() else {
             return Ok(None);
         };
-        let path = unix_path(relative);
+        let path = unix_path(relative).map_err(|error| error.to_string())?;
         if self
             .covered
             .iter()
@@ -4855,8 +4991,8 @@ fn is_status_entry(entry: &gix::index::Entry) -> bool {
 }
 
 /// Root-relative `relative` as the slash-separated path the index keys.
-fn unix_path(relative: &Path) -> std::borrow::Cow<'_, gix::bstr::BStr> {
-    gix::path::to_unix_separators_on_windows(gix::path::into_bstr(relative))
+fn unix_path(relative: &Path) -> gix::Result<std::borrow::Cow<'_, gix::bstr::BStr>> {
+    gix::path::into_bstr(relative).map(gix::path::to_unix_separators_on_windows)
 }
 
 /// How the working tree differs from index `entry` at `absolute`: `None`
@@ -5294,26 +5430,25 @@ mod tests {
         let mut budget = CommitGraphBudget::new(6, 1);
         let inspected = Cell::new(0);
 
-        let range = paint_commit_graph(
+        let frontier = paint_commit_frontier(
             source,
-            3,
             target,
-            4,
             &mut budget,
             &Cancellation::default(),
-            |id, _, _| {
+            |id, _| {
                 inspected.set(inspected.get() + 1);
-                Ok(graph.get(&id).map(|(_, parents)| {
-                    parents
-                        .iter()
-                        .map(|parent| (*parent, graph[parent].0))
-                        .collect()
-                }))
+                let (generation, parents) = &graph[&id];
+                Ok((
+                    CommitPaintOrder {
+                        generation: *generation,
+                        time: i64::from(*generation),
+                    },
+                    parents.clone(),
+                ))
             },
-        )?
-        .ok_or("synthetic graph unexpectedly fell back")?;
+        )?;
 
-        assert_eq!(range, HashSet::from([side_parent, side, target]));
+        assert_eq!(frontier, HashSet::from([ancestor, source_parent, source]));
         assert_eq!(
             budget.discovered.len(),
             6,
@@ -5321,8 +5456,8 @@ mod tests {
         );
         assert_eq!(
             inspected.get(),
-            5,
-            "stale paint reaches the side frontier without scanning below it"
+            6,
+            "each discovered frontier node is loaded once"
         );
 
         let mut metadata_budget = CommitGraphBudget::new(2, 1);
@@ -5417,6 +5552,86 @@ mod tests {
         };
         assert!(cancelled.message().contains("cancelled"));
         assert!(cancelled.message().contains("coverage is incomplete"));
+        Ok(())
+    }
+
+    #[test]
+    fn commit_range_stops_at_merge_overlap_before_missing_history()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("workspace-commit-range-overlap")?;
+        init(&dir.0)?;
+        commit_and_stage(&dir.0, &[("a.md", "a\n")])?;
+        let repo = gix::open_opts(&dir.0, open_options())?;
+        let signature = gix::actor::SignatureRef {
+            name: "test".into(),
+            email: "test@example.com".into(),
+            time: "2 +0000",
+        };
+        let common_signature = gix::actor::SignatureRef {
+            time: "1 +0000",
+            ..signature
+        };
+        let target_signature = gix::actor::SignatureRef {
+            time: "3 +0000",
+            ..signature
+        };
+        let missing = ObjectId::from_hex(b"1111111111111111111111111111111111111111")?;
+        let tree = repo.head_tree_id()?.detach();
+        let common = repo
+            .write_object(&gix::objs::Commit {
+                message: "common".into(),
+                tree,
+                author: common_signature.into(),
+                committer: common_signature.into(),
+                encoding: None,
+                parents: [missing].into_iter().collect(),
+                extra_headers: Vec::default(),
+            })?
+            .detach();
+        let source = repo
+            .write_object(&gix::objs::Commit {
+                message: "source".into(),
+                tree,
+                author: signature.into(),
+                committer: signature.into(),
+                encoding: None,
+                parents: [common].into_iter().collect(),
+                extra_headers: Vec::default(),
+            })?
+            .detach();
+        let side = repo
+            .write_object(&gix::objs::Commit {
+                message: "side".into(),
+                tree,
+                author: signature.into(),
+                committer: signature.into(),
+                encoding: None,
+                parents: [common].into_iter().collect(),
+                extra_headers: Vec::default(),
+            })?
+            .detach();
+        let target = repo
+            .write_object(&gix::objs::Commit {
+                message: "merge".into(),
+                tree,
+                author: target_signature.into(),
+                committer: target_signature.into(),
+                encoding: None,
+                parents: [source, side].into_iter().collect(),
+                extra_headers: Vec::default(),
+            })?
+            .detach();
+        let workspace = Workspace::discover(&dir.0)?;
+
+        let range = workspace.commit_range(
+            Some(&CommitId::parse(source.to_hex().to_string())?),
+            &CommitId::parse(target.to_hex().to_string())?,
+        )?;
+
+        assert_eq!(
+            range.commits,
+            BTreeSet::from([target.to_hex().to_string(), side.to_hex().to_string()])
+        );
         Ok(())
     }
 

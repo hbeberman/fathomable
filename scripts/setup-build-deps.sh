@@ -39,14 +39,14 @@ release=$(python3 scripts/rust-toolchain.py release)
 rustup toolchain install "$release" --profile minimal --component clippy,rustfmt
 rustup toolchain install nightly --profile minimal
 
-cargo +stable install cargo-public-api --locked --version 0.51.0
-cargo +stable install cargo-audit --locked --version 0.22.1
-cargo +stable install cargo-about --locked --version 0.9.2 --features cli
-cargo +stable install cargo-deny --locked --version 0.19.9
-cargo +stable install cargo-nextest --locked --version 0.9.138
+cargo +stable install cargo-public-api --locked --version 0.52.0
+cargo +stable install cargo-audit --locked --version 0.23.0
+cargo +stable install cargo-about --locked --version 0.9.3 --features cli
+cargo +stable install cargo-deny --locked --version 0.20.2
+cargo +stable install cargo-nextest --locked --version 0.9.151
 cargo +stable install cargo-mutants --locked --version 27.1.0
 cargo +stable install lychee --locked --version 0.24.2
-cargo +stable install prek --locked --version 0.5.3
+cargo +stable install prek --locked --version 0.5.10
 python3 scripts/betterleaks.py install
 
 # The OKF lint imports PyYAML. Distributions package it (python3-pyyaml,

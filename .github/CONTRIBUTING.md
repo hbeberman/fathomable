@@ -53,14 +53,14 @@ Then, with rustup already installed:
 
 ```sh
 . "$HOME/.cargo/env"
-scripts/setup-build-deps.sh   # Rust tools, lychee, prek 0.5.3, Betterleaks 1.8.1
+scripts/setup-build-deps.sh   # Rust tools, lychee, prek 0.5.10, Betterleaks 1.10.0
 scripts/install-commit-hooks.sh
 # With just: just install-commit-hooks
 ```
 
 The setup script pins the Cargo tool versions it installs and requests
 stable, the recorded release compiler (with rustfmt and Clippy), and nightly.
-It also checksum-verifies Betterleaks 1.8.1 into the current worktree's
+It also checksum-verifies Betterleaks 1.10.0 into the current worktree's
 ignored `.tmp/tools/`; `python3 scripts/betterleaks.py install` installs only
 that scanner. Artifact scanning additionally uses `strings` from binutils,
 normally installed with the C compiler.
@@ -189,10 +189,10 @@ enable separately.
 The executable embeds `crates/fathomable/assets/licenses.txt`, displayed by
 **Help > Licenses**. Installing the product does not run its
 generator or need Python. Contributors need Python 3.11 or newer and
-`cargo-about` 0.9.2, installed by `scripts/setup-build-deps.sh`:
+`cargo-about` 0.9.3, installed by `scripts/setup-build-deps.sh`:
 
 ```sh
-cargo install cargo-about --locked --version 0.9.2 --features cli
+cargo install cargo-about --locked --version 0.9.3 --features cli
 ```
 
 After changing dependencies, `Cargo.lock`, the first-party license, or the
@@ -244,7 +244,7 @@ scripts/perf-record.sh --bin fathomable -- path/to/file.md
 python3 scripts/test-perf-record.py       # helper command/quoting regression test
 python3 scripts/test-demo-repo.py         # demo isolation and argument regressions
 python3 scripts/test-rust-toolchain.py    # compiler selection and setup regressions
-python3 scripts/test-package.py           # same-version package rebuild regression
+python3 scripts/test-package.py           # package contents and same-version rebuild regressions
 ```
 
 `just perf` accepts positional `path` (default `.`) and `bin` (default

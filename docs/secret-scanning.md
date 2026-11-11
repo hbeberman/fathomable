@@ -13,12 +13,12 @@ tags:
 
 # Offline secret scanning
 
-Betterleaks **1.8.1** is approved contributor tooling, not a product dependency
+Betterleaks **1.10.0** is approved contributor tooling, not a product dependency
 or a shipped component. The installer pins Linux x86_64 and aarch64 release
 archives and their SHA-256 digests, reviewed against upstream's
-[v1.8.1 checksums](https://github.com/betterleaks/betterleaks/releases/download/v1.8.1/checksums.txt).
+[v1.10.0 checksums](https://github.com/betterleaks/betterleaks/releases/download/v1.10.0/checksums.txt).
 It extracts only the executable and its MIT license into the current
-checkout's ignored `.tmp/tools/betterleaks-1.8.1/`. No global executable or
+checkout's ignored `.tmp/tools/betterleaks-1.10.0/`. No global executable or
 Git hook is installed. Each worktree needs its own tool installation:
 
 ```sh
@@ -83,10 +83,10 @@ new policy on the subsequent push.
 
 The helper supplies an explicit trusted config, removes Betterleaks/Gitleaks
 config environment overrides, disables inline allow comments, supplies an
-empty ignore file, and avoids automatic source-root ignore discovery. This
-last step matters in 1.8.1: `--gitleaks-ignore-path` alone does **not** prevent
-loading `.betterleaksignore` from the source. No baseline or repository-wide
-exception list is used. The config retains upstream detection rules and
+empty ignore file, and isolates the scanner's Git source directory so source-root
+ignore files cannot suppress findings. Automatic config loading and local Git
+configuration trust remain disabled; no baseline or repository-wide exception
+list is used. The config retains upstream detection rules and
 secret-value filters, but overrides broad upstream path/extension exclusions.
 
 Any exception must be narrowly scoped, justified using synthetic evidence,
@@ -112,8 +112,8 @@ the owner, and follow the [private reporting policy](../.github/SECURITY.md).
 
 Artifact paths are resolved using Cargo metadata, including a custom
 `CARGO_TARGET_DIR`; stale archives from other versions are not selected.
-Betterleaks 1.8.1 identifies archives by extension and does not recognize
-`.crate`. The helper scans byte-identical private copies named `.tar.gz`,
+The helper scans Cargo `.crate` archives as byte-identical private copies named
+`.tar.gz` to make their gzip-tar format explicit,
 without extracting archive-controlled paths onto disk. Supported nested
 archives are scanned up to depth eight, and encoded content to depth five.
 GNU `strings --all --bytes=4` additionally feeds the exact artifact bytes'

@@ -1,6 +1,6 @@
 // @okf-doc: /decisions/0074-the-bracket-marks-the-focused-thread.md
 //! The note cell as the text draws it (ADR 0074): the gutter's bracket
-//! or circle in the thread's state colour over the row's surface, and on
+//! or circle in the latest author's colour over the row's surface, and on
 //! the rows of the thread the cursor is on, on `thread.bracket`, so the
 //! bracket alone says which lines the focused thread is about.
 
@@ -8,17 +8,17 @@ use ratatui::style::Style;
 use ratatui::text::Span;
 
 use crate::app::App;
-use crate::app::draw::{Theme, mark_style};
+use crate::app::draw::{Theme, circle_style};
 
 /// The note cell of rendered row `row` over `surface`: the glyph
-/// `note_on_row` gives in its state colour, or a blank. The cell sits on
+/// `note_on_row` gives in its latest author's colour, or a blank. The cell sits on
 /// `thread.bracket` when it holds a glyph and the thread cursor's thread
 /// covers the row (ADR 0074).
 pub(super) fn note_cell<'a>(app: &App, theme: &Theme, row: usize, surface: Style) -> Span<'a> {
     match app.note_on_row(row) {
         None => Span::styled(" ", surface),
-        Some((glyph, kind)) => {
-            let mut style = mark_style(theme, kind).patch(surface);
+        Some((glyph, words)) => {
+            let mut style = surface.patch(circle_style(theme, words));
             if app.open_thread_on_row(row) {
                 style = style.patch(theme.thread_bracket);
             }

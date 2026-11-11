@@ -34,9 +34,9 @@ Fathomable's own source remains MIT-licensed. Third-party code and embedded
 syntax/theme data retain their respective licenses and copyright notices;
 the application's license does not replace those terms.
 
-Each Cargo package also includes the root project `LICENSE` through the
-[shared package metadata](0002-crate-layout.md#package-metadata), independently
-of the executable's embedded notice bundle.
+Each publishable Cargo package also includes the root project `LICENSE`
+through its [crate-local license link](0002-crate-layout.md#package-metadata),
+independently of the executable's embedded notice bundle.
 
 **Help > Licenses** opens the read-only, scrollable pane.
 The executable embeds the complete notice bundle at compile time, so
@@ -57,7 +57,7 @@ copyright and NOTICE content, package versions and source references, and
 source-availability information for MPL-covered code. Package-level SPDX
 metadata alone is not sufficient for syntect's embedded grammar/theme data.
 
-`cargo-about` **0.9.2** inventories the x86_64 GNU/Linux normal/build
+`cargo-about` **0.9.3** inventories the x86_64 GNU/Linux normal/build
 dependency graph and gathers license texts from cached crate sources.
 `scripts/configs/about.toml` selects accepted licenses, excludes dev/private workspace crates,
 and records hash-checked clarifications for combined or unrecognized license

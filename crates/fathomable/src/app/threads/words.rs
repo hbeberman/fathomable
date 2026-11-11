@@ -1,23 +1,30 @@
 // @okf-doc: /decisions/0032-placement-and-state.md
-//! The lifecycle circle shared by every thread surface.
+//! Author colour and status shape shared by every thread surface.
 
-use fathomable_core::annotations::{Placement, Thread};
+use fathomable_core::annotations::{AutoResolve, Placement, Thread};
 
 use crate::app::threads::ThreadState;
 
-/// The placement word, when the lines are not where the comment was
-/// written, the state word, and whether `proposed` follows them.
+/// A thread's lifecycle, latest author, and one-shot resolution permission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Words {
     state: ThreadState,
+    author_is_user: bool,
+    auto_resolve: AutoResolve,
 }
 
 impl Words {
     /// Words for `thread` at `placement`, known when its file is open.
     #[must_use]
     pub(crate) fn of(_placement: Option<Placement>, thread: &Thread) -> Self {
+        let author = thread
+            .messages()
+            .next_back()
+            .map_or(thread.author(), |message| message.author());
         Self {
             state: ThreadState::of(thread),
+            author_is_user: author.is_user(),
+            auto_resolve: thread.auto_resolve(),
         }
     }
 
@@ -33,20 +40,26 @@ impl Words {
         self.state == ThreadState::Resolved
     }
 
-    /// The one lifecycle circle every surface draws.
+    /// Whether the latest message, including the opening comment, is human.
+    pub(crate) fn author_is_user(self) -> bool {
+        self.author_is_user
+    }
+
+    /// Hollow when resolved, half for a proposal or permission, full otherwise.
     #[must_use]
     pub(crate) fn glyph(self) -> &'static str {
         match self.state {
+            ThreadState::Active if self.auto_resolve.is_enabled() => "◐",
             ThreadState::Active => "●",
             ThreadState::Proposed => "◐",
             ThreadState::Resolved => "○",
         }
     }
 
-    /// Aggregate priority: proposed, active, then resolved.
+    /// Aggregate priority: proposed, permission-enabled active, active, resolved.
     #[must_use]
-    pub(crate) fn urgency(self) -> ThreadState {
-        self.state
+    pub(crate) fn urgency(self) -> (ThreadState, bool) {
+        (self.state, self.auto_resolve.is_enabled())
     }
 }
 
@@ -54,15 +67,17 @@ impl Words {
 mod tests {
     use std::path::Path;
 
-    use fathomable_core::annotations::{Author, Draft, LineRange, Placement, Reply, Store};
+    use fathomable_core::annotations::{
+        Author, AutoResolve, Draft, LineRange, MessageTarget, Placement, Reply, Store, UserSubmit,
+    };
     use fathomable_testing::TempDir;
 
     use super::Words;
     use crate::app::threads::ThreadState;
 
-    /// One circle per lifecycle step, in the state's colour (ADR 0066).
     #[test]
-    fn the_circle_says_the_lifecycle_only() -> anyhow::Result<()> {
+    fn circle_shape_tracks_lifecycle_and_permission_but_colour_tracks_append_order()
+    -> anyhow::Result<()> {
         let dir = TempDir::new("words-circle")?;
         let mut store = Store::open(dir.0.join("threads.jsonl"))?;
         let draft = Draft::new(
@@ -81,10 +96,23 @@ mod tests {
         };
         let fresh = words(&store, anchored)?;
         assert_eq!((fresh.glyph(), fresh.state()), ("●", ThreadState::Active));
+        assert!(fresh.author_is_user());
+
+        store.set_auto_resolve(&id, AutoResolve::Enabled, 1)?;
+        let permitted = words(&store, anchored)?;
+        assert_eq!(
+            (permitted.glyph(), permitted.state()),
+            ("◐", ThreadState::Active)
+        );
+        assert!(permitted.author_is_user());
+        assert!(permitted.urgency() > fresh.urgency());
+        store.set_auto_resolve(&id, AutoResolve::Disabled, 1)?;
+        assert_eq!(words(&store, anchored)?.glyph(), "●");
 
         store.reply(&id, Reply::new(Author::agent("bot"), 1, "answer"))?;
         let active = words(&store, anchored)?;
         assert_eq!((active.glyph(), active.state()), ("●", ThreadState::Active));
+        assert!(!active.author_is_user());
         assert_eq!(active.urgency(), fresh.urgency());
 
         store.reply(
@@ -97,11 +125,13 @@ mod tests {
             ("◐", ThreadState::Proposed)
         );
         assert_eq!(proposed.state(), ThreadState::Proposed);
+        assert!(!proposed.author_is_user());
         assert!(proposed.urgency() > active.urgency());
 
         let detached = words(&store, Some(Placement::Detached(LineRange::new(1, 1))))?;
         assert_eq!(detached.glyph(), "◐");
         assert_eq!(detached.urgency(), proposed.urgency());
+        assert_eq!(detached, proposed);
 
         store.resolve(&id, None, 3)?;
         let resolved = words(&store, anchored)?;
@@ -110,6 +140,33 @@ mod tests {
             ("○", ThreadState::Resolved)
         );
         assert!(resolved.urgency() < fresh.urgency());
+        assert!(!resolved.author_is_user());
+
+        store.reopen(&id, 4)?;
+        store.edit_user(
+            &id,
+            MessageTarget::Comment,
+            "edited opening",
+            5,
+            UserSubmit::Normal,
+        )?;
+        let reopened = words(&store, anchored)?;
+        assert_eq!(
+            (reopened.glyph(), reopened.state()),
+            ("●", ThreadState::Active)
+        );
+        assert!(
+            !reopened.author_is_user(),
+            "editing an older message does not reorder it"
+        );
+
+        store.reply_user(&id, 6, "please finish", UserSubmit::EnableAutoResolve)?;
+        let permitted = words(&store, anchored)?;
+        assert_eq!(
+            (permitted.glyph(), permitted.state()),
+            ("◐", ThreadState::Active)
+        );
+        assert!(permitted.author_is_user());
         Ok(())
     }
 }

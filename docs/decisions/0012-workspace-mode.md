@@ -34,6 +34,11 @@ The API rejects missing/corrupt objects, non-commit IDs, non-blob or
 non-regular entries, and blobs over the caller's limit without exposing
 `gix` types, fetching, checking out, or consulting working-tree content.
 
+Gitoxide 0.90 corrects viewer replacement handling: normal revision reads follow
+Git replacement refs by default and honor `core.useReplaceRefs = false` to
+disable them. Exact commit, tree, and blob reads remain independent and never
+follow replacements, regardless of repository configuration.
+
 Amended 2026-09-19: the startup welcome and **Getting started** share the
 canonical product introduction and complete quick reference. `Alt-Space` has
 its own line directly below the `Space` keymap hint. **Pane navigation**,

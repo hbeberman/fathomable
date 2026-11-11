@@ -7,6 +7,7 @@ use fathomable_core::annotations::{AutoResolve, Lifecycle, Placement, Thread, Th
 use fathomable_core::layout::{display_width, graphemes};
 
 use crate::app::threads::author_label;
+use crate::app::threads::words::Words;
 
 /// Facts shared by inline headers, review headers, and sidebar cards.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,7 +19,7 @@ pub(crate) struct ThreadSummary {
     commit_reference: Option<[u8; 8]>,
     context: Option<String>,
     author: String,
-    author_is_user: bool,
+    words: Words,
     preview: String,
     replies: usize,
     modified: u64,
@@ -42,7 +43,7 @@ impl ThreadSummary {
             commit_reference: Self::short_commit_reference(thread.origin_version()),
             context: context.map(str::to_owned),
             author: author_label(author, user),
-            author_is_user: author.is_user(),
+            words: Words::of(placement, thread),
             preview: body.lines().next().unwrap_or("").to_owned(),
             replies: thread.messages().len().saturating_sub(1),
             modified: thread.modified(),
@@ -90,7 +91,11 @@ impl ThreadSummary {
     }
 
     pub(crate) fn author_is_user(&self) -> bool {
-        self.author_is_user
+        self.words.author_is_user()
+    }
+
+    pub(crate) fn words(&self) -> Words {
+        self.words
     }
 
     pub(crate) fn preview(&self) -> &str {
@@ -106,11 +111,7 @@ impl ThreadSummary {
     }
 
     pub(crate) fn glyph(&self) -> &'static str {
-        match self.lifecycle {
-            Lifecycle::Active => "●",
-            Lifecycle::ResolutionProposed => "◐",
-            Lifecycle::Resolved => "○",
-        }
+        self.words.glyph()
     }
 
     fn status(&self) -> Option<&'static str> {
@@ -141,7 +142,7 @@ pub(crate) enum SummaryTone {
     Surface,
     Info,
     Status,
-    Lifecycle(Lifecycle),
+    Circle(Words),
     Author { user: bool },
     Preview,
     Chevron,
@@ -206,7 +207,7 @@ pub(crate) fn layout(
         &mut used,
         options.width,
         summary.glyph(),
-        SummaryTone::Lifecycle(summary.lifecycle),
+        SummaryTone::Circle(summary.words()),
     );
     let gap = usize::from(prefix_budget >= 3);
     if gap > 0 {
@@ -537,6 +538,7 @@ mod tests {
             2,
         );
         let rendered = text(&row);
+        assert!(rendered.starts_with("◐"), "{rendered}");
         assert!(rendered.contains("autoresolve"), "{rendered}");
         assert!(
             row.spans

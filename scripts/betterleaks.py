@@ -21,11 +21,11 @@ import urllib.request
 
 
 ROOT = Path(__file__).resolve().parent.parent
-VERSION = "1.8.1"
-# Reviewed against the v1.8.1 release checksums.txt, not downloaded trust on use.
+VERSION = "1.10.0"
+# Reviewed against the v1.10.0 release checksums.txt, not downloaded trust on use.
 CHECKSUMS = {
-    "x86_64": ("x64", "efa407244e1ea8e35f582b8a42becdeac08bdead04f68eb752adda722d583c2a"),
-    "aarch64": ("arm64", "bbb578b12a2f65d7082ab436abf37724232bc71d8a078e3c41336574420f1b48"),
+    "x86_64": ("x64", "9d9ad503cd5d80d18a939352266c3fcca52f10da9b83cd5cfe646989b13940fe"),
+    "aarch64": ("arm64", "3d7585cbe4f947aef6e31662f65beb5b43b104381a691b6b81b157ebfbb0c02d"),
 }
 TOOL = ROOT / ".tmp" / "tools" / f"betterleaks-{VERSION}" / "betterleaks"
 POLICY_PATHS = [
@@ -105,7 +105,7 @@ def scan(repo, arguments, content=None):
         ignore = Path(directory) / "empty-ignore"
         ignore.touch(mode=0o600)
         if arguments[0] == "git":
-            # v1.8.1 also loads ignores from the source directory even with -i.
+            # Keep source-directory ignores outside the scanner's scope.
             # Bind Git to the original repository but give the scanner an empty
             # source directory. Preserve alternate-index/commit --only semantics.
             environment["GIT_DIR"] = git(repo, "rev-parse", "--absolute-git-dir").decode().strip()
@@ -267,8 +267,7 @@ def artifacts(repo, paths, packages=False, binary=False):
     with tempfile.TemporaryDirectory(prefix="secret-artifacts-", dir=scratch) as directory:
         copies = []
         for index, path in enumerate(resolved):
-            # v1.8.1 identifies archives by extension; .crate is gzip tar but
-            # not recognized. Copy exact bytes under the recognized suffix.
+            # Give Cargo package archives an explicit gzip-tar extension.
             suffix = ".tar.gz" if path.suffix == ".crate" else "".join(path.suffixes)
             destination = Path(directory) / f"artifact-{index}{suffix}"
             shutil.copyfile(path, destination)

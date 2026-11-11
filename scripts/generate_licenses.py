@@ -15,7 +15,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-CARGO_ABOUT_VERSION = "0.9.2"
+CARGO_ABOUT_VERSION = "0.9.3"
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "crates/fathomable/assets/licenses.txt"
 SEPARATOR = "=" * 79

@@ -57,7 +57,7 @@ copyright and NOTICE content, package versions and source references, and
 source-availability information for MPL-covered code. Package-level SPDX
 metadata alone is not sufficient for syntect's embedded grammar/theme data.
 
-`cargo-about` **0.9.2** inventories the x86_64 GNU/Linux normal/build
+`cargo-about` **0.9.3** inventories the x86_64 GNU/Linux normal/build
 dependency graph and gathers license texts from cached crate sources.
 `scripts/configs/about.toml` selects accepted licenses, excludes dev/private workspace crates,
 and records hash-checked clarifications for combined or unrecognized license

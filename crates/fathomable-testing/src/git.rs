@@ -343,7 +343,7 @@ pub fn worktree_add(main: &Path, linked: &Path, branch: &str) -> Result<(), GitE
         }
         let blob = git(repo.find_object(entry.oid))?;
         let path: &gix::bstr::BStr = entry.filepath.as_ref();
-        let target = linked_abs.join(gix::path::from_bstr(path));
+        let target = linked_abs.join(git(gix::path::from_bstr(path))?);
         if let Some(parent) = target.parent() {
             git(std::fs::create_dir_all(parent))?;
         }

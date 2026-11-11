@@ -1,24 +1,7 @@
 {
   "version": 1,
   "target": "x86_64-unknown-linux-gnu",
-  "package_notices": {
-    "rmcp@3.4.0": [
-      {
-        "file": "upstream/rmcp-3.4.0-LICENSE.txt",
-        "license": "Apache-2.0",
-        "source": "https://github.com/modelcontextprotocol/rust-sdk/blob/fd7811fdaa9fefa1c8034534b4d7a31c97204f89/LICENSE",
-        "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"
-      }
-    ],
-    "rmcp-macros@3.4.0": [
-      {
-        "file": "upstream/rmcp-3.4.0-LICENSE.txt",
-        "license": "Apache-2.0",
-        "source": "https://github.com/modelcontextprotocol/rust-sdk/blob/fd7811fdaa9fefa1c8034534b4d7a31c97204f89/LICENSE",
-        "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"
-      }
-    ]
-  },
+  "package_notices": {},
   "rust_standard_library": {
     "release": "1.97.0",
     "rustc_commit": "2d8144b7880597b6e6d3dfd63a9a9efae3f533d3",

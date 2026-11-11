@@ -44,7 +44,7 @@ def inventory(root, *, source_path="LICENSE"):
 class LicenseTests(unittest.TestCase):
     def test_cargo_about_is_pinned_locked_offline_and_fail_closed(self):
         calls = [
-            subprocess.CompletedProcess([], 0, "cargo-about 0.9.2\n", ""),
+            subprocess.CompletedProcess([], 0, "cargo-about 0.9.3\n", ""),
             subprocess.CompletedProcess([], 0, '{"crates": [], "licenses": []}', ""),
         ]
         with mock.patch.object(licenses.subprocess, "run", side_effect=calls) as run:

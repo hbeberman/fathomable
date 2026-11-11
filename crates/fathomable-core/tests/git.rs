@@ -1020,10 +1020,50 @@ fn create_reference(repo: &gix::Repository, name: &str, target: gix::ObjectId) -
 fn replace_object(repo: &gix::Repository, old: gix::ObjectId, new: gix::ObjectId) -> TestResult {
     let config = repo.git_dir().join("config");
     let mut text = fs::read_to_string(&config)?;
-    // gix 0.87.1 enables replacements when this setting is false.
-    text.push_str("\n[core]\nuseReplaceRefs = false\n");
+    text.push_str("\n[core]\nuseReplaceRefs = true\n");
     fs::write(config, text)?;
     create_reference(repo, &format!("refs/replace/{old}"), new)
+}
+
+#[test]
+fn viewer_respects_replacement_configuration() -> TestResult {
+    let dir = TempDir::new("git-viewer-replacements")?;
+    init(&dir.0)?;
+    commit(&dir.0, &[("original.md", "original\n")])?;
+    let repo = gix::open_opts(&dir.0, open_options())?;
+    let original = repo.head_id()?.detach();
+    let selected = CommitId::parse(original.to_hex().to_string())?;
+    let replacement = commit_source_modes(&dir.0)?;
+    let config = repo.git_dir().join("config");
+    let base = fs::read_to_string(&config)?;
+    replace_object(
+        &repo,
+        original,
+        gix::ObjectId::from_hex(replacement.as_str().as_bytes())?,
+    )?;
+    for (setting, expected) in [
+        (None, "source modes"),
+        (Some(true), "source modes"),
+        (Some(false), "commit"),
+    ] {
+        let text = setting.map_or_else(
+            || base.clone(),
+            |enabled| format!("{base}\n[core]\nuseReplaceRefs = {enabled}\n"),
+        );
+        fs::write(&config, text)?;
+        let workspace = Workspace::discover(&dir.0)?;
+        assert_eq!(
+            workspace.resolve_revision(selected.as_str())?.subject(),
+            expected,
+            "{setting:?}"
+        );
+        assert_eq!(
+            workspace.commit(&selected)?.subject(),
+            "commit",
+            "{setting:?}"
+        );
+    }
+    Ok(())
 }
 
 #[test]

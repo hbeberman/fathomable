@@ -1868,7 +1868,7 @@ impl Workspace {
                     .repo
                     .index_or_empty()
                     .map_err(|error| failure(error.to_string()))?;
-                let path = unix_path(relative);
+                let path = unix_path(relative).map_err(|error| failure(error.to_string()))?;
                 let Some(entry) = index.entry_by_path(path.as_ref()) else {
                     return Ok(None);
                 };
@@ -1968,7 +1968,7 @@ impl Workspace {
                 relative.display()
             ),
         };
-        let path = unix_path(relative);
+        let path = unix_path(relative).map_err(|error| failure(error.to_string()))?;
         if relative
             .components()
             .any(|component| !matches!(component, std::path::Component::Normal(_)))
@@ -2342,7 +2342,7 @@ impl Workspace {
         if manifest.checkout != self.identity() {
             return Err(self.scan_error("index manifest belongs to another checkout"));
         }
-        let path = unix_path(relative);
+        let path = unix_path(relative).map_err(|error| self.scan_error(error.to_string()))?;
         if !valid_git_path(path.as_ref()) {
             return Err(self.scan_error("invalid index manifest path"));
         }
@@ -2408,7 +2408,7 @@ impl Workspace {
         if manifest.checkout != self.identity() {
             return Err(self.scan_error("index manifest belongs to another checkout"));
         }
-        let path = unix_path(relative);
+        let path = unix_path(relative).map_err(|error| self.scan_error(error.to_string()))?;
         if !valid_git_path(path.as_ref()) {
             return Err(self.scan_error("invalid index manifest path"));
         }
@@ -2460,7 +2460,11 @@ impl Workspace {
             if !valid_git_path(&entry.path) {
                 return Err(self.scan_error("invalid index manifest path"));
             }
-            paths.push(gix::path::from_bstr(entry.path.as_bstr()).into_owned());
+            paths.push(
+                gix::path::from_bstr(entry.path.as_bstr())
+                    .map_err(|error| self.scan_error(error.to_string()))?
+                    .into_owned(),
+            );
         }
         Ok(paths)
     }
@@ -2579,8 +2583,12 @@ impl Workspace {
             {
                 continue;
             }
-            let from = gix::path::from_bstr(entry.path.as_ref().as_bstr()).into_owned();
-            let to = gix::path::from_bstr(destination.path.as_ref().as_bstr()).into_owned();
+            let from = gix::path::from_bstr(entry.path.as_ref().as_bstr())
+                .map_err(|error| self.revision_error(source.as_str(), &error.to_string()))?
+                .into_owned();
+            let to = gix::path::from_bstr(destination.path.as_ref().as_bstr())
+                .map_err(|error| self.revision_error(target.as_str(), &error.to_string()))?
+                .into_owned();
             let blob_id = ObjectId::from_hex(entry.object().as_bytes())
                 .map_err(|error| self.revision_error(source.as_str(), &error.to_string()))?;
             let header = repo.find_header(blob_id).map_err(|error| {
@@ -2729,7 +2737,9 @@ impl Workspace {
         let mut files = BTreeMap::new();
         for entry in &manifest.entries {
             self.check_scan()?;
-            let path = gix::path::from_bstr(entry.path.as_bstr()).into_owned();
+            let path = gix::path::from_bstr(entry.path.as_bstr())
+                .map_err(|error| self.scan_error(error.to_string()))?
+                .into_owned();
             let info = self
                 .index_manifest_path_info(manifest, &path)?
                 .ok_or_else(|| self.scan_error("index manifest path disappeared"))?;
@@ -2965,7 +2975,7 @@ impl Workspace {
             path: self.root.join(relative),
             message: format!("cannot read the index: {error}"),
         })?;
-        let path = unix_path(relative);
+        let path = unix_path(relative).map_err(|error| self.scan_error(error.to_string()))?;
         let Some(entry) = index.entry_by_path(path.as_ref()) else {
             return Ok(None);
         };
@@ -3093,7 +3103,9 @@ impl Workspace {
             if entry.stage() != gix::index::entry::Stage::Unconflicted {
                 continue;
             }
-            let path = gix::path::from_bstr(entry.path(&index)).into_owned();
+            let path = gix::path::from_bstr(entry.path(&index))
+                .map_err(|error| self.scan_error(error.to_string()))?
+                .into_owned();
             let mode = index_mode(entry.mode);
             let size = git
                 .repo
@@ -3123,7 +3135,11 @@ impl Workspace {
                 message: format!("cannot read index paths for working-tree endpoint: {error}"),
             })?;
             for entry in index.entries() {
-                paths.insert(gix::path::from_bstr(entry.path(&index)).into_owned());
+                paths.insert(
+                    gix::path::from_bstr(entry.path(&index))
+                        .map_err(|error| self.scan_error(error.to_string()))?
+                        .into_owned(),
+                );
                 self.check_path_count(paths.len())?;
             }
         }
@@ -3434,7 +3450,7 @@ impl Workspace {
             .repo
             .index_or_empty()
             .map_err(|error| fail(format!("cannot read the index: {error}")))?;
-        let path = gix::path::to_unix_separators_on_windows(gix::path::into_bstr(relative));
+        let path = unix_path(relative).map_err(|error| fail(error.to_string()))?;
         let Some(entry) = index.entry_by_path(path.as_ref()) else {
             return Ok(Some(Vec::new()));
         };
@@ -3509,7 +3525,8 @@ impl Workspace {
                 Some(_) => Some(State::Modified),
                 None => Some(State::Added),
             };
-            let relative = gix::path::from_bstr(path.as_bstr());
+            let relative =
+                gix::path::from_bstr(path.as_bstr()).map_err(|error| fail(error.to_string()))?;
             let worktree = worktree_state(self, &relative, entry, hash, &index)?;
             if Changes::from_sides(staged, worktree).is_some() {
                 dirty.insert(path, (staged, worktree));
@@ -3536,7 +3553,9 @@ impl Workspace {
         }
         let mut entries = Vec::with_capacity(dirty.len());
         for (path, (staged, unstaged)) in dirty {
-            let relative = gix::path::from_bstr(path.as_bstr()).into_owned();
+            let relative = gix::path::from_bstr(path.as_bstr())
+                .map_err(|error| self.scan_error(error.to_string()))?
+                .into_owned();
             if let Some(changes) = Changes::from_sides(staged, unstaged) {
                 entries.push(self.dirty_entry(relative, changes)?);
             }
@@ -3642,7 +3661,9 @@ impl Workspace {
         for path in changed {
             self.check_scan()?;
             examine.insert(path.clone());
-            let mut prefix = unix_path(path).into_owned();
+            let mut prefix = unix_path(path)
+                .map_err(|error| self.scan_error(error.to_string()))?
+                .into_owned();
             if !prefix.is_empty() {
                 prefix.push(b'/');
             }
@@ -3654,7 +3675,11 @@ impl Workspace {
                 })?;
             }
             for entry in tracked {
-                examine.insert(gix::path::from_bstr(entry.path(index)).into_owned());
+                examine.insert(
+                    gix::path::from_bstr(entry.path(index))
+                        .map_err(|error| self.scan_error(error.to_string()))?
+                        .into_owned(),
+                );
                 self.check_path_count(examine.len())?;
             }
             for entry in previous.entries() {
@@ -3699,7 +3724,11 @@ impl Workspace {
     ) -> Result<Option<Changes>, WorkspaceError> {
         let absolute = self.root.join(relative);
         let tracked = index
-            .entry_by_path(unix_path(relative).as_ref())
+            .entry_by_path(
+                unix_path(relative)
+                    .map_err(|error| self.scan_error(error.to_string()))?
+                    .as_ref(),
+            )
             .filter(|entry| is_status_entry(entry));
         if let Some(entry) = tracked {
             let staged = match head.id_of(relative).map_err(|message| WorkspaceError {
@@ -4532,7 +4561,8 @@ fn collect_endpoint_tree(
                 .check_path_count(out.len().saturating_add(1))
                 .map_err(|error| error.to_string())?;
             let entry = entry.map_err(|error| error.to_string())?;
-            let path = prefix.join(gix::path::from_bstr(entry.filename()));
+            let path = prefix
+                .join(gix::path::from_bstr(entry.filename()).map_err(|error| error.to_string())?);
             let mode = tree_mode(entry.mode());
             if mode.is_directory() {
                 out.insert(
@@ -4879,7 +4909,9 @@ impl Head<'_> {
     /// under it is a map hit. Nothing under `dir` in `HEAD` still counts
     /// as covered: such lookups answer `None` without a tree walk.
     fn collect(&mut self, dir: &Path) -> Result<(), String> {
-        let mut prefix = unix_path(dir).into_owned();
+        let mut prefix = unix_path(dir)
+            .map_err(|error| error.to_string())?
+            .into_owned();
         if !prefix.is_empty() {
             prefix.push(b'/');
         }
@@ -4914,7 +4946,7 @@ impl Head<'_> {
         let Some(tree) = self.tree.as_ref() else {
             return Ok(None);
         };
-        let path = unix_path(relative);
+        let path = unix_path(relative).map_err(|error| error.to_string())?;
         if self
             .covered
             .iter()
@@ -4959,8 +4991,8 @@ fn is_status_entry(entry: &gix::index::Entry) -> bool {
 }
 
 /// Root-relative `relative` as the slash-separated path the index keys.
-fn unix_path(relative: &Path) -> std::borrow::Cow<'_, gix::bstr::BStr> {
-    gix::path::to_unix_separators_on_windows(gix::path::into_bstr(relative))
+fn unix_path(relative: &Path) -> gix::Result<std::borrow::Cow<'_, gix::bstr::BStr>> {
+    gix::path::into_bstr(relative).map(gix::path::to_unix_separators_on_windows)
 }
 
 /// How the working tree differs from index `entry` at `absolute`: `None`

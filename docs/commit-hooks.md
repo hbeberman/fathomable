@@ -23,7 +23,7 @@ the repository's checks directly. A thin observer retains its native logs;
 it does not execute or schedule individual checks. `scripts/configs/prek.toml`
 is their single source of truth: each of the 14 checks is a local
 `language = "system"` hook.
-Setup and CI pin prek to **0.5.3**, and the config requires at least that
+Setup and CI pin prek to **0.5.10**, and the config requires at least that
 version. No remote hook repositories, managed hook environments, or
 additional Rust crate dependencies are used.
 
@@ -235,7 +235,7 @@ directory; build or scan failures leave prior successful archives untouched.
 The temporary target is cleaned up on success or failure. No crates are uploaded.
 `just release` scans the executable after building it. Neither
 creates tags or releases. Contributor setup also installs checksum-pinned
-Betterleaks 1.8.1 into the current worktree's `.tmp/tools/`.
+Betterleaks 1.10.0 into the current worktree's `.tmp/tools/`.
 Other recipes run their substantive commands directly; see
 [Contributing](../.github/CONTRIBUTING.md#2-the-gate).
 

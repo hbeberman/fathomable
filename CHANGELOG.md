@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Refresh Gitoxide, MCP, Tokio, filesystem notification, Markdown, and Unicode
+  dependencies for v0.1.2 while retaining the Rust 1.95 minimum.
+- Honor Git replacement-ref settings in viewer revision reads; exact commit
+  sources continue to ignore replacements.
+- Update contributor tools, checksum-pinned Betterleaks, and CI action pins.
+- Refresh the bundled third-party license notices.
+
 ## v0.1.1
 
 - Discover review threads across the selected diff's commit range.

@@ -76,9 +76,9 @@ pub(crate) fn list(repo: &gix::Repository) -> io::Result<Vec<Worktree>> {
     {
         out.push(describe(repo, canonical(root), true, None));
     }
-    let linked = repo.worktrees()?;
+    let linked = repo.worktrees().map_err(io::Error::other)?;
     for proxy in linked {
-        let base = proxy.base()?;
+        let base = proxy.base().map_err(io::Error::other)?;
         if !directory_available(&base)? {
             continue;
         }
